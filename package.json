@@ -1,0 +1,10 @@
+{
+  "name": "stellarkraal",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test:contract": "cd contracts/stellarkraal && cargo test",
+    "test:backend": "cd backend && npm test",
+    "test:frontend": "cd frontend && npm test"
+  }
+}

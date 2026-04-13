@@ -1,0 +1,37 @@
+services:
+  contract-builder:
+    image: rust:1.78
+    working_dir: /app
+    volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+    command: >
+      sh -c "rustup target add wasm32-unknown-unknown &&
+             cargo build --manifest-path contracts/stellarkraal/Cargo.toml --target wasm32-unknown-unknown --release"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    env_file: .env
+    environment:
+      - PORT=3001
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    env_file: .env
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:3001
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  cargo-cache:
