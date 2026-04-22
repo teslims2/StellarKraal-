@@ -11,6 +11,8 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { SorobanRpc } from "@stellar/stellar-sdk";
+import { z } from "zod";
+import { stellarPublicKeySchema } from "./validators/stellar";
 const { Server } = SorobanRpc;
 
 const app = express();
@@ -25,6 +27,27 @@ const NETWORK_PASSPHRASE =
     : Networks.TESTNET;
 
 const server = new Server(RPC_URL);
+
+// ── Validation Schemas ────────────────────────────────────────────────────────
+
+const registerCollateralSchema = z.object({
+  owner: stellarPublicKeySchema,
+  animal_type: z.string().min(1),
+  count: z.number().int().positive(),
+  appraised_value: z.number().int().positive(),
+});
+
+const loanRequestSchema = z.object({
+  borrower: stellarPublicKeySchema,
+  collateral_id: z.number().int().nonnegative(),
+  amount: z.number().int().positive(),
+});
+
+const loanRepaySchema = z.object({
+  borrower: stellarPublicKeySchema,
+  loan_id: z.number().int().nonnegative(),
+  amount: z.number().int().positive(),
+});
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 async function buildContractTx(
@@ -51,7 +74,16 @@ async function buildContractTx(
 // POST /api/collateral/register
 app.post("/api/collateral/register", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { owner, animal_type, count, appraised_value } = req.body;
+    const validation = registerCollateralSchema.safeParse(req.body);
+    
+    if (!validation.success) {
+      return res.status(400).json({
+        error: "Validation failed",
+        details: validation.error.errors,
+      });
+    }
+
+    const { owner, animal_type, count, appraised_value } = validation.data;
     const xdrTx = await buildContractTx(owner, "register_livestock", [
       new Address(owner).toScVal(),
       nativeToScVal(animal_type, { type: "symbol" }),
@@ -67,7 +99,16 @@ app.post("/api/collateral/register", async (req: Request, res: Response, next: N
 // POST /api/loan/request
 app.post("/api/loan/request", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { borrower, collateral_id, amount } = req.body;
+    const validation = loanRequestSchema.safeParse(req.body);
+    
+    if (!validation.success) {
+      return res.status(400).json({
+        error: "Validation failed",
+        details: validation.error.errors,
+      });
+    }
+
+    const { borrower, collateral_id, amount } = validation.data;
     const xdrTx = await buildContractTx(borrower, "request_loan", [
       new Address(borrower).toScVal(),
       nativeToScVal(BigInt(collateral_id), { type: "u64" }),
@@ -82,7 +123,16 @@ app.post("/api/loan/request", async (req: Request, res: Response, next: NextFunc
 // POST /api/loan/repay
 app.post("/api/loan/repay", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { borrower, loan_id, amount } = req.body;
+    const validation = loanRepaySchema.safeParse(req.body);
+    
+    if (!validation.success) {
+      return res.status(400).json({
+        error: "Validation failed",
+        details: validation.error.errors,
+      });
+    }
+
+    const { borrower, loan_id, amount } = validation.data;
     const xdrTx = await buildContractTx(borrower, "repay_loan", [
       new Address(borrower).toScVal(),
       nativeToScVal(BigInt(loan_id), { type: "u64" }),
