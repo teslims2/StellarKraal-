@@ -13,6 +13,7 @@ import {
 import { SorobanRpc } from "@stellar/stellar-sdk";
 import { z } from "zod";
 import { stellarPublicKeySchema } from "./validators/stellar";
+import { asyncHandler } from "./utils/asyncHandler";
 const { Server } = SorobanRpc;
 
 const app = express();
@@ -72,9 +73,8 @@ async function buildContractTx(
 // ── routes ────────────────────────────────────────────────────────────────────
 
 // POST /api/collateral/register
-app.post("/api/collateral/register", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const validation = registerCollateralSchema.safeParse(req.body);
+app.post("/api/collateral/register", asyncHandler(async (req: Request, res: Response) => {
+  const validation = registerCollateralSchema.safeParse(req.body);
     
     if (!validation.success) {
       return res.status(400).json({
@@ -91,15 +91,11 @@ app.post("/api/collateral/register", async (req: Request, res: Response, next: N
       nativeToScVal(BigInt(appraised_value), { type: "i128" }),
     ]);
     res.json({ xdr: xdrTx });
-  } catch (e) {
-    next(e);
-  }
-});
+}));
 
 // POST /api/loan/request
-app.post("/api/loan/request", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const validation = loanRequestSchema.safeParse(req.body);
+app.post("/api/loan/request", asyncHandler(async (req: Request, res: Response) => {
+  const validation = loanRequestSchema.safeParse(req.body);
     
     if (!validation.success) {
       return res.status(400).json({
@@ -115,15 +111,11 @@ app.post("/api/loan/request", async (req: Request, res: Response, next: NextFunc
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
     res.json({ xdr: xdrTx });
-  } catch (e) {
-    next(e);
-  }
-});
+}));
 
 // POST /api/loan/repay
-app.post("/api/loan/repay", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const validation = loanRepaySchema.safeParse(req.body);
+app.post("/api/loan/repay", asyncHandler(async (req: Request, res: Response) => {
+  const validation = loanRepaySchema.safeParse(req.body);
     
     if (!validation.success) {
       return res.status(400).json({
@@ -139,15 +131,11 @@ app.post("/api/loan/repay", async (req: Request, res: Response, next: NextFuncti
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
     res.json({ xdr: xdrTx });
-  } catch (e) {
-    next(e);
-  }
-});
+}));
 
 // GET /api/loan/:id
-app.get("/api/loan/:id", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const contract = new Contract(CONTRACT_ID);
+app.get("/api/loan/:id", asyncHandler(async (req: Request, res: Response) => {
+  const contract = new Contract(CONTRACT_ID);
     const account = await server.getAccount(
       "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN" // fee-less read account
     );
@@ -163,15 +151,11 @@ app.get("/api/loan/:id", async (req: Request, res: Response, next: NextFunction)
 
     const result = await server.simulateTransaction(tx);
     res.json({ result: (result as any).result?.retval });
-  } catch (e) {
-    next(e);
-  }
-});
+}));
 
 // GET /api/health/:loanId
-app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const contract = new Contract(CONTRACT_ID);
+app.get("/api/health/:loanId", asyncHandler(async (req: Request, res: Response) => {
+  const contract = new Contract(CONTRACT_ID);
     const account = await server.getAccount(
       "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN"
     );
@@ -190,15 +174,21 @@ app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFun
 
     const result = await server.simulateTransaction(tx);
     res.json({ health_factor: (result as any).result?.retval });
-  } catch (e) {
-    next(e);
-  }
-});
+}));
 
 // ── error handler ─────────────────────────────────────────────────────────────
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  const statusCode = err.statusCode || 500;
+  const isProduction = process.env.NODE_ENV === "production";
+  
   console.error(err);
-  res.status(500).json({ error: err.message });
+  
+  res.status(statusCode).json({
+    error: statusCode === 500 && isProduction ? "Internal Server Error" : err.name || "Error",
+    message: err.message,
+    statusCode,
+    ...(isProduction ? {} : { stack: err.stack })
+  });
 });
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
