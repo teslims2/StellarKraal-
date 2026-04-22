@@ -25,12 +25,32 @@ jest.mock("@stellar/stellar-sdk", () => {
         getAccount: jest.fn().mockResolvedValue({ id: "GABC", sequence: "1" }),
         prepareTransaction: jest.fn().mockResolvedValue({ toXDR: () => "prepared_xdr" }),
         simulateTransaction: jest.fn().mockResolvedValue({ result: { retval: { value: 42 } } }),
+        getHealth: jest.fn().mockResolvedValue({ status: "healthy" }),
       })),
     },
   };
 });
 
 describe("StellarKraal API", () => {
+  describe("GET /api/health", () => {
+    it("returns 200 with health status", async () => {
+      const res = await request(app).get("/api/health");
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("status");
+      expect(res.body).toHaveProperty("version");
+      expect(res.body).toHaveProperty("uptime");
+      expect(res.body).toHaveProperty("rpcReachable");
+    });
+
+    it("includes correct health data structure", async () => {
+      const res = await request(app).get("/api/health");
+      expect(res.body.status).toBe("healthy");
+      expect(typeof res.body.version).toBe("string");
+      expect(typeof res.body.uptime).toBe("number");
+      expect(typeof res.body.rpcReachable).toBe("boolean");
+    });
+  });
+
   describe("POST /api/collateral/register", () => {
     it("returns xdr for valid payload", async () => {
       const res = await request(app).post("/api/collateral/register").send({

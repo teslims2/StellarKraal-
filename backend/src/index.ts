@@ -24,6 +24,9 @@ const NETWORK_PASSPHRASE =
     ? Networks.PUBLIC
     : Networks.TESTNET;
 
+const APP_VERSION = process.env.npm_package_version || "1.0.0";
+const startTime = Date.now();
+
 const server = new Server(RPC_URL);
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -47,6 +50,37 @@ async function buildContractTx(
 }
 
 // ── routes ────────────────────────────────────────────────────────────────────
+
+// GET /api/health - Health check endpoint
+app.get("/api/health", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const uptime = Math.floor((Date.now() - startTime) / 1000);
+    
+    // Check RPC connectivity
+    let rpcReachable = false;
+    try {
+      await server.getHealth();
+      rpcReachable = true;
+    } catch (error) {
+      console.warn("RPC health check failed:", (error as Error).message);
+    }
+
+    const healthData = {
+      status: rpcReachable ? "healthy" : "degraded",
+      version: APP_VERSION,
+      uptime,
+      rpcReachable,
+    };
+
+    if (rpcReachable) {
+      res.status(200).json(healthData);
+    } else {
+      res.status(503).json(healthData);
+    }
+  } catch (error) {
+    next(error);
+  }
+});
 
 // POST /api/collateral/register
 app.post("/api/collateral/register", async (req: Request, res: Response, next: NextFunction) => {
