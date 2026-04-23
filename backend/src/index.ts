@@ -10,12 +10,35 @@ import {
   Address,
   xdr,
 } from "@stellar/stellar-sdk";
-import rpcClient from "./utils/rpcClient";
+import { SorobanRpc } from "@stellar/stellar-sdk";
+import logger, { createRequestLogger } from "./utils/logger";
+import { randomUUID } from "crypto";
+const { Server } = SorobanRpc;
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Request ID middleware
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const requestId = randomUUID();
+  (req as any).requestId = requestId;
+  (req as any).logger = createRequestLogger(requestId);
+  res.setHeader("X-Request-ID", requestId);
+  next();
+});
+
+// Request logging middleware
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const reqLogger = (req as any).logger;
+  reqLogger.info(`${req.method} ${req.path}`, {
+    method: req.method,
+    path: req.path,
+  });
+  next();
+});
+
+const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
 const NETWORK_PASSPHRASE =
   process.env.NEXT_PUBLIC_NETWORK === "mainnet"
@@ -144,21 +167,22 @@ app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFun
 });
 
 // ── error handler ─────────────────────────────────────────────────────────────
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  // Check if circuit breaker is open
-  if (err.message.includes("breaker is open")) {
-    console.error("Circuit breaker is open");
-    return res.status(503).json({
-      error: "Service temporarily unavailable",
-      message: "RPC service is currently unavailable. Please try again later.",
-    });
-  }
-  
-  console.error(err);
+app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+  const reqLogger = (req as any).logger || logger;
+  reqLogger.error("Unhandled error", {
+    error: err.message,
+    stack: err.stack,
+  });
   res.status(500).json({ error: err.message });
 });
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
-app.listen(PORT, () => console.log(`StellarKraal API running on :${PORT}`));
+app.listen(PORT, () => {
+  logger.info(`StellarKraal API running on port ${PORT}`, {
+    port: PORT,
+    environment: process.env.NODE_ENV || "development",
+    logLevel: process.env.LOG_LEVEL || "info",
+  });
+});
 
 export default app;

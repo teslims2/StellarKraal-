@@ -1,22 +1,21 @@
 import request from "supertest";
 import app from "../src/index";
 
-// Mock the RPC client
-jest.mock("./utils/rpcClient", () => ({
+// Mock the logger
+jest.mock("./utils/logger", () => ({
   __esModule: true,
   default: {
-    getAccount: jest.fn().mockResolvedValue({ id: "GABC", sequence: "1" }),
-    prepareTransaction: jest.fn().mockResolvedValue({ toXDR: () => "prepared_xdr" }),
-    simulateTransaction: jest.fn().mockResolvedValue({ result: { retval: { value: 42 } } }),
-    getHealth: jest.fn().mockResolvedValue({ status: "healthy" }),
-    getCircuitStates: jest.fn().mockReturnValue({
-      getAccount: "closed",
-      prepareTransaction: "closed",
-      simulateTransaction: "closed",
-      getHealth: "closed",
-    }),
-    isHealthy: jest.fn().mockReturnValue(true),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn(),
   },
+  createRequestLogger: jest.fn(() => ({
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn(),
+  })),
 }));
 
 // Mock stellar-sdk to avoid real network calls
@@ -104,6 +103,16 @@ describe("StellarKraal API", () => {
       const res = await request(app).get("/api/health/1");
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty("health_factor");
+    });
+  });
+
+  describe("Request ID middleware", () => {
+    it("adds X-Request-ID header to response", async () => {
+      const res = await request(app).get("/api/loan/1");
+      expect(res.headers["x-request-id"]).toBeDefined();
+      expect(res.headers["x-request-id"]).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+      );
     });
   });
 });
