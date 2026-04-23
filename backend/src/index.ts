@@ -53,7 +53,7 @@ async function buildContractTx(
   method: string,
   args: xdr.ScVal[]
 ): Promise<string> {
-  const account = await server.getAccount(sourceAddress);
+  const account = await rpcClient.getAccount(sourceAddress);
   const contract = new Contract(CONTRACT_ID);
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
@@ -63,7 +63,7 @@ async function buildContractTx(
     .setTimeout(30)
     .build();
 
-  const prepared = await server.prepareTransaction(tx);
+  const prepared = await rpcClient.prepareTransaction(tx);
   return prepared.toXDR();
 }
 
@@ -119,7 +119,7 @@ app.post("/api/loan/repay", async (req: Request, res: Response, next: NextFuncti
 app.get("/api/loan/:id", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const contract = new Contract(CONTRACT_ID);
-    const account = await server.getAccount(
+    const account = await rpcClient.getAccount(
       "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN" // fee-less read account
     );
     const tx = new TransactionBuilder(account, {
@@ -132,7 +132,7 @@ app.get("/api/loan/:id", async (req: Request, res: Response, next: NextFunction)
       .setTimeout(30)
       .build();
 
-    const result = await server.simulateTransaction(tx);
+    const result = await rpcClient.simulateTransaction(tx);
     res.json({ result: (result as any).result?.retval });
   } catch (e) {
     next(e);
@@ -143,7 +143,7 @@ app.get("/api/loan/:id", async (req: Request, res: Response, next: NextFunction)
 app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const contract = new Contract(CONTRACT_ID);
-    const account = await server.getAccount(
+    const account = await rpcClient.getAccount(
       "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN"
     );
     const tx = new TransactionBuilder(account, {
@@ -159,7 +159,7 @@ app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFun
       .setTimeout(30)
       .build();
 
-    const result = await server.simulateTransaction(tx);
+    const result = await rpcClient.simulateTransaction(tx);
     res.json({ health_factor: (result as any).result?.retval });
   } catch (e) {
     next(e);
