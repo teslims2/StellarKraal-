@@ -80,9 +80,22 @@ describe("StellarKraal API", () => {
       expect(res.body).toHaveProperty("xdr");
     });
 
-    it("returns 500 for missing fields", async () => {
+    it("returns 400 for missing fields", async () => {
       const res = await request(app).post("/api/collateral/register").send({});
-      expect(res.status).toBe(500);
+      expect(res.status).toBe(400);
+      expect(res.body).toHaveProperty("error", "Validation failed");
+    });
+
+    it("returns 400 for invalid Stellar public key", async () => {
+      const res = await request(app).post("/api/collateral/register").send({
+        owner: "INVALID_KEY",
+        animal_type: "cattle",
+        count: 5,
+        appraised_value: 1000000,
+      });
+      expect(res.status).toBe(400);
+      expect(res.body).toHaveProperty("error", "Validation failed");
+      expect(res.body.details[0].message).toContain("Stellar public key");
     });
   });
 
@@ -96,6 +109,16 @@ describe("StellarKraal API", () => {
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty("xdr");
     });
+
+    it("returns 400 for invalid Stellar public key", async () => {
+      const res = await request(app).post("/api/loan/request").send({
+        borrower: "SAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+        collateral_id: 1,
+        amount: 600000,
+      });
+      expect(res.status).toBe(400);
+      expect(res.body).toHaveProperty("error", "Validation failed");
+    });
   });
 
   describe("POST /api/loan/repay", () => {
@@ -107,6 +130,16 @@ describe("StellarKraal API", () => {
       });
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty("xdr");
+    });
+
+    it("returns 400 for invalid Stellar public key", async () => {
+      const res = await request(app).post("/api/loan/repay").send({
+        borrower: "NOT_A_VALID_KEY",
+        loan_id: 1,
+        amount: 200000,
+      });
+      expect(res.status).toBe(400);
+      expect(res.body).toHaveProperty("error", "Validation failed");
     });
   });
 
