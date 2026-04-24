@@ -4,6 +4,7 @@ mod tests;
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env, Symbol,
+    events,
 };
 
 // ── Storage keys ────────────────────────────────────────────────────────────
@@ -12,6 +13,8 @@ const ORACLE: Symbol = symbol_short!("ORACLE");
 const TOKEN: Symbol = symbol_short!("TOKEN");
 const LTV: Symbol = symbol_short!("LTV");        // loan-to-value bps  e.g. 6000 = 60%
 const LIQ_THR: Symbol = symbol_short!("LIQTHR"); // liquidation threshold bps e.g. 8000
+const SCHEMA_VER: Symbol = symbol_short!("SCHEMAVER"); // current schema version
+const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 // ── Errors ───────────────────────────────────────────────────────────────────
 #[contracterror]
@@ -27,6 +30,7 @@ pub enum Error {
     HealthFactorSafe = 7,
     InvalidAmount = 8,
     LoanAlreadyClosed = 9,
+    AlreadyMigrated = 10,
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -269,6 +273,51 @@ impl StellarKraal {
             .persistent()
             .get(&DataKey::Collateral(collateral_id))
             .ok_or(Error::CollateralNotFound)
+    }
+
+    // ── migrate ───────────────────────────────────────────────────────────
+    /// Callable only by admin after a WASM upgrade. Idempotent: if the stored
+    /// schema version already equals CURRENT_SCHEMA_VERSION it returns an error.
+    /// Emits a `Migrated` event with the old and new version numbers.
+    pub fn migrate(env: Env, admin: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        let stored_admin: Address = env.storage().instance().get(&ADMIN).unwrap();
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+        admin.require_auth();
+
+        let old_version: u32 = env
+            .storage()
+            .instance()
+            .get(&SCHEMA_VER)
+            .unwrap_or(0u32);
+
+        if old_version >= CURRENT_SCHEMA_VERSION {
+            return Err(Error::AlreadyMigrated);
+        }
+
+        // ── schema transformations go here for each version bump ──────────
+        // e.g. v0 → v1: no structural changes in this initial migration
+
+        env.storage()
+            .instance()
+            .set(&SCHEMA_VER, &CURRENT_SCHEMA_VERSION);
+
+        env.events().publish(
+            (symbol_short!("Migrated"),),
+            (old_version, CURRENT_SCHEMA_VERSION),
+        );
+
+        Ok(())
+    }
+
+    // ── get_schema_version ────────────────────────────────────────────────
+    pub fn get_schema_version(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&SCHEMA_VER)
+            .unwrap_or(0u32)
     }
 
     // ── internal helpers ──────────────────────────────────────────────────

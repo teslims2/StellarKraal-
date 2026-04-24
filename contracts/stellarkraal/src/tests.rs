@@ -278,4 +278,36 @@ mod tests {
         assert_eq!(loan.status, LoanStatus::Repaid);
         assert_eq!(loan.outstanding, 0);
     }
+
+    // ── migrate ───────────────────────────────────────────────────────────
+    #[test]
+    fn test_migrate_ok() {
+        let (env, cid, admin, oracle, token) = setup();
+        init(&env, &cid, &admin, &oracle, &token);
+        let client = StellarKraalClient::new(&env, &cid);
+        // Before migration schema version is 0
+        assert_eq!(client.get_schema_version(), 0);
+        client.migrate(&admin);
+        assert_eq!(client.get_schema_version(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "AlreadyMigrated")]
+    fn test_migrate_idempotent() {
+        let (env, cid, admin, oracle, token) = setup();
+        init(&env, &cid, &admin, &oracle, &token);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.migrate(&admin);
+        client.migrate(&admin); // second call must fail
+    }
+
+    #[test]
+    #[should_panic(expected = "Unauthorized")]
+    fn test_migrate_non_admin_fails() {
+        let (env, cid, admin, oracle, token) = setup();
+        init(&env, &cid, &admin, &oracle, &token);
+        let client = StellarKraalClient::new(&env, &cid);
+        let attacker = Address::generate(&env);
+        client.migrate(&attacker);
+    }
 }
