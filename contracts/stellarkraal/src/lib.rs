@@ -12,6 +12,9 @@ const ORACLE: Symbol = symbol_short!("ORACLE");
 const TOKEN: Symbol = symbol_short!("TOKEN");
 const LTV: Symbol = symbol_short!("LTV");        // loan-to-value bps  e.g. 6000 = 60%
 const LIQ_THR: Symbol = symbol_short!("LIQTHR"); // liquidation threshold bps e.g. 8000
+const TREASURY: Symbol = symbol_short!("TREASURY");
+const ORIG_FEE: Symbol = symbol_short!("ORIGFEE"); // origination fee bps e.g. 50 = 0.5%
+const INT_FEE: Symbol = symbol_short!("INTFEE");   // interest fee bps e.g. 1000 = 10%
 
 // ── Errors ───────────────────────────────────────────────────────────────────
 #[contracterror]
@@ -27,6 +30,7 @@ pub enum Error {
     HealthFactorSafe = 7,
     InvalidAmount = 8,
     LoanAlreadyClosed = 9,
+    InvalidFeeRate = 10,
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -59,6 +63,13 @@ pub struct LoanRecord {
     pub status: LoanStatus,
 }
 
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeConfig {
+    pub origination_fee_bps: u32,
+    pub interest_fee_bps: u32,
+}
+
 // ── Storage helpers ──────────────────────────────────────────────────────────
 #[contracttype]
 pub enum DataKey {
@@ -80,6 +91,7 @@ impl StellarKraal {
         admin: Address,
         oracle: Address,
         token: Address,
+        treasury: Address,
         ltv_bps: u32,
         liquidation_threshold_bps: u32,
     ) -> Result<(), Error> {
@@ -90,8 +102,11 @@ impl StellarKraal {
         env.storage().instance().set(&ADMIN, &admin);
         env.storage().instance().set(&ORACLE, &oracle);
         env.storage().instance().set(&TOKEN, &token);
+        env.storage().instance().set(&TREASURY, &treasury);
         env.storage().instance().set(&LTV, &ltv_bps);
         env.storage().instance().set(&LIQ_THR, &liquidation_threshold_bps);
+        env.storage().instance().set(&ORIG_FEE, &50u32); // 0.5%
+        env.storage().instance().set(&INT_FEE, &1000u32); // 10%
         Ok(())
     }
 
@@ -154,6 +169,11 @@ impl StellarKraal {
             return Err(Error::InsufficientCollateral);
         }
 
+        // Calculate origination fee
+        let orig_fee_bps: u32 = env.storage().instance().get(&ORIG_FEE).unwrap();
+        let fee = amount.checked_mul(orig_fee_bps as i128).ok_or(Error::InvalidAmount)? / 10_000;
+        let disbursement = amount.checked_sub(fee).ok_or(Error::InvalidAmount)?;
+
         let loan_id = Self::next_id(&env, DataKey::LoanCounter);
         let loan = LoanRecord {
             id: loan_id,
@@ -170,10 +190,18 @@ impl StellarKraal {
         col.loan_id = loan_id;
         env.storage().persistent().set(&DataKey::Collateral(collateral_id), &col);
 
-        // Disburse tokens
         let token_addr: Address = env.storage().instance().get(&TOKEN).unwrap();
         let token_client = token::Client::new(&env, &token_addr);
-        token_client.transfer(&env.current_contract_address(), &borrower, &amount);
+        
+        // Transfer fee to treasury
+        if fee > 0 {
+            let treasury: Address = env.storage().instance().get(&TREASURY).unwrap();
+            token_client.transfer(&env.current_contract_address(), &treasury, &fee);
+            env.events().publish((symbol_short!("FeeCollect"), loan_id), (symbol_short!("originate"), fee));
+        }
+
+        // Disburse net amount to borrower
+        token_client.transfer(&env.current_contract_address(), &borrower, &disbursement);
 
         Ok(loan_id)
     }
@@ -200,9 +228,28 @@ impl StellarKraal {
         }
 
         let repay_amount = amount.min(loan.outstanding);
+        
+        // Calculate interest (amount above principal) and fee
+        let principal_remaining = loan.outstanding.min(loan.principal);
+        let interest_portion = if repay_amount > principal_remaining {
+            repay_amount - principal_remaining
+        } else {
+            0
+        };
+        
+        let int_fee_bps: u32 = env.storage().instance().get(&INT_FEE).unwrap();
+        let interest_fee = interest_portion.checked_mul(int_fee_bps as i128).ok_or(Error::InvalidAmount)? / 10_000;
+
         let token_addr: Address = env.storage().instance().get(&TOKEN).unwrap();
         let token_client = token::Client::new(&env, &token_addr);
         token_client.transfer(&borrower, &env.current_contract_address(), &repay_amount);
+
+        // Transfer interest fee to treasury
+        if interest_fee > 0 {
+            let treasury: Address = env.storage().instance().get(&TREASURY).unwrap();
+            token_client.transfer(&env.current_contract_address(), &treasury, &interest_fee);
+            env.events().publish((symbol_short!("FeeCollect"), loan_id), (symbol_short!("interest"), interest_fee));
+        }
 
         loan.outstanding = loan.outstanding.checked_sub(repay_amount).ok_or(Error::InvalidAmount)?;
         if loan.outstanding == 0 {
@@ -269,6 +316,40 @@ impl StellarKraal {
             .persistent()
             .get(&DataKey::Collateral(collateral_id))
             .ok_or(Error::CollateralNotFound)
+    }
+
+    // ── update_fee_config ─────────────────────────────────────────────────
+    pub fn update_fee_config(
+        env: Env,
+        admin: Address,
+        origination_fee_bps: u32,
+        interest_fee_bps: u32,
+    ) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        let stored_admin: Address = env.storage().instance().get(&ADMIN).unwrap();
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+        admin.require_auth();
+
+        if origination_fee_bps > 500 || interest_fee_bps > 500 {
+            return Err(Error::InvalidFeeRate);
+        }
+
+        env.storage().instance().set(&ORIG_FEE, &origination_fee_bps);
+        env.storage().instance().set(&INT_FEE, &interest_fee_bps);
+        Ok(())
+    }
+
+    // ── get_fee_config ────────────────────────────────────────────────────
+    pub fn get_fee_config(env: Env) -> Result<FeeConfig, Error> {
+        Self::assert_initialized(&env)?;
+        let orig: u32 = env.storage().instance().get(&ORIG_FEE).unwrap();
+        let int: u32 = env.storage().instance().get(&INT_FEE).unwrap();
+        Ok(FeeConfig {
+            origination_fee_bps: orig,
+            interest_fee_bps: int,
+        })
     }
 
     // ── internal helpers ──────────────────────────────────────────────────
