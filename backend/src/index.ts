@@ -125,9 +125,8 @@ app.get("/api/health", async (req: Request, res: Response, next: NextFunction) =
 });
 
 // POST /api/collateral/register
-app.post("/api/collateral/register", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const validation = registerCollateralSchema.safeParse(req.body);
+app.post("/api/collateral/register", asyncHandler(async (req: Request, res: Response) => {
+  const validation = registerCollateralSchema.safeParse(req.body);
     
     if (!validation.success) {
       return res.status(400).json({
@@ -144,15 +143,11 @@ app.post("/api/collateral/register", async (req: Request, res: Response, next: N
       nativeToScVal(BigInt(appraised_value), { type: "i128" }),
     ]);
     res.json({ xdr: xdrTx });
-  } catch (e) {
-    next(e);
-  }
-});
+}));
 
 // POST /api/loan/request
-app.post("/api/loan/request", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const validation = loanRequestSchema.safeParse(req.body);
+app.post("/api/loan/request", asyncHandler(async (req: Request, res: Response) => {
+  const validation = loanRequestSchema.safeParse(req.body);
     
     if (!validation.success) {
       return res.status(400).json({
@@ -168,15 +163,11 @@ app.post("/api/loan/request", async (req: Request, res: Response, next: NextFunc
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
     res.json({ xdr: xdrTx });
-  } catch (e) {
-    next(e);
-  }
-});
+}));
 
 // POST /api/loan/repay
-app.post("/api/loan/repay", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const validation = loanRepaySchema.safeParse(req.body);
+app.post("/api/loan/repay", asyncHandler(async (req: Request, res: Response) => {
+  const validation = loanRepaySchema.safeParse(req.body);
     
     if (!validation.success) {
       return res.status(400).json({
@@ -192,10 +183,7 @@ app.post("/api/loan/repay", async (req: Request, res: Response, next: NextFuncti
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
     res.json({ xdr: xdrTx });
-  } catch (e) {
-    next(e);
-  }
-});
+}));
 
 // GET /api/loan/:id
 app.get("/api/loan/:id", async (req: Request, res: Response, next: NextFunction) => {
@@ -216,10 +204,7 @@ app.get("/api/loan/:id", async (req: Request, res: Response, next: NextFunction)
 
     const result = await rpcClient.simulateTransaction(tx);
     res.json({ result: (result as any).result?.retval });
-  } catch (e) {
-    next(e);
-  }
-});
+}));
 
 // GET /api/health/:loanId
 app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFunction) => {
@@ -243,10 +228,7 @@ app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFun
 
     const result = await rpcClient.simulateTransaction(tx);
     res.json({ health_factor: (result as any).result?.retval });
-  } catch (e) {
-    next(e);
-  }
-});
+}));
 
 // ── error handler ─────────────────────────────────────────────────────────────
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
