@@ -94,6 +94,10 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // Audit logging middleware — logs all requests with redacted body to audit log
 app.use(auditMiddleware);
 
+// ── Auth ──────────────────────────────────────────────────────────────────────
+app.use("/api/auth", authRouter);
+app.use(jwtMiddleware);
+
 const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
 const NETWORK_PASSPHRASE =
