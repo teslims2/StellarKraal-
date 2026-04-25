@@ -12,6 +12,9 @@ const envSchema = z.object({
   WEBHOOK_SECRET: z.string().min(16).optional(),
   // Admin key for webhook admin endpoints
   ADMIN_API_KEY: z.string().min(8).optional(),
+  // Connection pool size
+  POOL_MIN: z.string().default("2"),
+  POOL_MAX: z.string().default("10"),
 });
 
 const parsed = envSchema.safeParse(process.env);

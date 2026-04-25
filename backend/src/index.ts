@@ -13,6 +13,7 @@ import {
 } from "@stellar/stellar-sdk";
 import { SorobanRpc } from "@stellar/stellar-sdk";
 import logger, { createRequestLogger } from "./utils/logger";
+import { pool, PoolExhaustedError } from "./utils/connectionPool";
 import { auditMiddleware } from "./middleware/audit";
 import { randomUUID } from "crypto";
 const { Server } = SorobanRpc;
@@ -124,11 +125,10 @@ async function buildContractTx(
 app.get("/api/health", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const uptime = Math.floor((Date.now() - startTime) / 1000);
-    
-    // Check RPC connectivity
+
     let rpcReachable = false;
     try {
-      await server.getHealth();
+      await pool.run((server) => server.getHealth());
       rpcReachable = true;
     } catch (error) {
       console.warn("RPC health check failed:", (error as Error).message);
@@ -139,13 +139,10 @@ app.get("/api/health", async (req: Request, res: Response, next: NextFunction) =
       version: APP_VERSION,
       uptime,
       rpcReachable,
+      pool: pool.stats(),
     };
 
-    if (rpcReachable) {
-      res.status(200).json(healthData);
-    } else {
-      res.status(503).json(healthData);
-    }
+    res.status(rpcReachable ? 200 : 503).json(healthData);
   } catch (error) {
     next(error);
   }
@@ -231,7 +228,10 @@ app.get("/api/loan/:id", async (req: Request, res: Response, next: NextFunction)
 
     const result = await rpcClient.simulateTransaction(tx);
     res.json({ result: (result as any).result?.retval });
-}));
+  } catch (error) {
+    next(error);
+  }
+});
 
 // GET /api/health/:loanId
 app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFunction) => {
@@ -255,7 +255,10 @@ app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFun
 
     const result = await rpcClient.simulateTransaction(tx);
     res.json({ health_factor: (result as any).result?.retval });
-}));
+  } catch (error) {
+    next(error);
+  }
+});
 
 // ── webhook routes ────────────────────────────────────────────────────────────
 
@@ -282,6 +285,9 @@ app.get("/api/admin/webhooks/logs", (req: Request, res: Response) => {
 // ── error handler ─────────────────────────────────────────────────────────────
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
   const reqLogger = (req as any).logger || logger;
+  if (err instanceof PoolExhaustedError) {
+    return res.status(503).json({ error: "Service unavailable: connection pool exhausted" });
+  }
   reqLogger.error("Unhandled error", {
     error: err.message,
     stack: err.stack,
