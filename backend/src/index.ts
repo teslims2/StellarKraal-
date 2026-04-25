@@ -18,8 +18,30 @@ import { auditMiddleware } from "./middleware/audit";
 import { timeoutMiddleware } from "./middleware/timeout";
 import { getAppraisal, setAppraisal, invalidateAll, configureCacheTTL } from "./utils/appraisalCache";
 import { randomUUID } from "crypto";
-import { v1Router } from "./routes/v1";
+import { z } from "zod";
+import { globalLimiter } from "./middleware/rateLimit";
+import { asyncHandler } from "./utils/asyncHandler";
+import { stellarPublicKeySchema } from "./validators/stellar";
+import rpcClient from "./utils/rpcClient";
+import { registerWebhook, getWebhooks, getDeliveryLogs } from "./webhooks";
 const { Server } = SorobanRpc;
+
+// ── Idempotency cache (in-memory, 24h TTL) ───────────────────────────────────
+interface IdempotencyEntry { status: number; body: unknown; createdAt: number }
+const idempotencyCache = new Map<string, IdempotencyEntry>();
+const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+function getIdempotencyEntry(key: string): IdempotencyEntry | undefined {
+  const entry = idempotencyCache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() - entry.createdAt > IDEMPOTENCY_TTL_MS) {
+    idempotencyCache.delete(key);
+    return undefined;
+  }
+  return entry;
+}
+function setIdempotencyEntry(key: string, status: number, body: unknown): void {
+  idempotencyCache.set(key, { status, body, createdAt: Date.now() });
+}
 
 const app = express();
 
@@ -72,28 +94,9 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // Audit logging middleware — logs all requests with redacted body to audit log
 app.use(auditMiddleware);
 
-// ── API v1 router ─────────────────────────────────────────────────────────────
-app.use("/api/v1", v1Router);
-
-// Redirect unversioned /api/* routes to /api/v1/* with deprecation warning
-const UNVERSIONED_PATHS = [
-  "/collateral/register",
-  "/loan/request",
-  "/loan/repay",
-  "/loan/:id",
-  "/health/:loanId",
-  "/oracle/price-update",
-  "/webhooks",
-  "/admin/webhooks",
-  "/admin/webhooks/logs",
-];
-for (const p of UNVERSIONED_PATHS) {
-  app.all(`/api${p}`, (req: Request, res: Response) => {
-    res.setHeader("Deprecation", "true");
-    res.setHeader("Link", `</api/v1${req.path.replace(/^\/api/, "")}>; rel="successor-version"`);
-    res.redirect(301, `/api/v1${req.path.replace(/^\/api/, "")}`);
-  });
-}
+// ── Auth ──────────────────────────────────────────────────────────────────────
+app.use("/api/auth", authRouter);
+app.use(jwtMiddleware);
 
 const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
@@ -232,22 +235,57 @@ app.post("/api/loan/request", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS
 
 // POST /api/loan/repay
 app.post("/api/loan/repay", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), asyncHandler(async (req: Request, res: Response) => {
-  const validation = loanRepaySchema.safeParse(req.body);
-    
-    if (!validation.success) {
-      return res.status(400).json({
-        error: "Validation failed",
-        details: validation.error.errors,
-      });
-    }
+  const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
+  if (!idempotencyKey) {
+    return res.status(400).json({ error: "Idempotency-Key header is required for repay requests" });
+  }
 
-    const { borrower, loan_id, amount } = validation.data;
-    const xdrTx = await buildContractTx(borrower, "repay_loan", [
-      new Address(borrower).toScVal(),
-      nativeToScVal(BigInt(loan_id), { type: "u64" }),
-      nativeToScVal(BigInt(amount), { type: "i128" }),
-    ]);
-    res.json({ xdr: xdrTx });
+  const cached = getIdempotencyEntry(idempotencyKey);
+  if (cached) {
+    res.setHeader("X-Idempotent-Replayed", "true");
+    return res.status(cached.status).json(cached.body);
+  }
+
+  const validation = loanRepaySchema.safeParse(req.body);
+  if (!validation.success) {
+    const body = { error: "Validation failed", details: validation.error.errors };
+    setIdempotencyEntry(idempotencyKey, 400, body);
+    return res.status(400).json(body);
+  }
+
+  const { borrower, loan_id, amount } = validation.data;
+  const xdrTx = await buildContractTx(borrower, "repay_loan", [
+    new Address(borrower).toScVal(),
+    nativeToScVal(BigInt(loan_id), { type: "u64" }),
+    nativeToScVal(BigInt(amount), { type: "i128" }),
+  ]);
+  const body = { xdr: xdrTx };
+  setIdempotencyEntry(idempotencyKey, 200, body);
+  res.json(body);
+}));
+
+// GET /api/loans — paginated loan listing
+// Deprecated: unpaginated usage will be removed in a future version.
+app.get("/api/loans", asyncHandler(async (req: Request, res: Response) => {
+  const pageRaw = req.query.page !== undefined ? Number(req.query.page) : 1;
+  const pageSizeRaw = req.query.pageSize !== undefined ? Number(req.query.pageSize) : 20;
+
+  if (!Number.isInteger(pageRaw) || pageRaw < 1) {
+    return res.status(400).json({ error: "page must be a positive integer" });
+  }
+  if (!Number.isInteger(pageSizeRaw) || pageSizeRaw < 1 || pageSizeRaw > 100) {
+    return res.status(400).json({ error: "pageSize must be between 1 and 100" });
+  }
+
+  if (req.query.page === undefined) {
+    res.setHeader("Deprecation", "true");
+    res.setHeader("Warning", '299 - "Unpaginated usage is deprecated; use ?page=1&pageSize=20"');
+  }
+
+  // Placeholder: in production this would query a DB. Returns empty list with envelope.
+  const total = 0;
+  const data: unknown[] = [];
+  res.json({ data, total, page: pageRaw, pageSize: pageSizeRaw });
 }));
 
 // GET /api/loan/:id

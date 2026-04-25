@@ -284,8 +284,8 @@ mod tests {
     // ── pause / unpause ───────────────────────────────────────────────────
     #[test]
     fn test_pause_by_admin_ok() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         client.pause(&admin);
         assert!(client.is_paused());
@@ -294,8 +294,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "Unauthorized")]
     fn test_pause_by_non_admin_fails() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let attacker = Address::generate(&env);
         client.pause(&attacker);
@@ -303,8 +303,8 @@ mod tests {
 
     #[test]
     fn test_unpause_by_admin_ok() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         client.pause(&admin);
         client.unpause(&admin);
@@ -314,8 +314,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "NotPaused")]
     fn test_unpause_when_not_paused_fails() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         client.unpause(&admin);
     }
@@ -323,8 +323,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "ContractPaused")]
     fn test_register_livestock_blocked_when_paused() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         client.pause(&admin);
         let owner = Address::generate(&env);
@@ -334,10 +334,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "ContractPaused")]
     fn test_request_loan_blocked_when_paused() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
-        // Register before pausing
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
         client.pause(&admin);
@@ -347,8 +346,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "ContractPaused")]
     fn test_liquidate_blocked_when_paused() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let liquidator = Address::generate(&env);
@@ -360,14 +359,13 @@ mod tests {
 
     #[test]
     fn test_repay_allowed_when_paused() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
         let loan_id = client.request_loan(&borrower, &col_id, &600_000i128);
         client.pause(&admin);
-        // Repayment must succeed even while paused
         client.repay_loan(&borrower, &loan_id, &200_000i128);
         let loan = client.get_loan(&loan_id);
         assert_eq!(loan.outstanding, 400_000);
@@ -375,28 +373,167 @@ mod tests {
 
     #[test]
     fn test_auto_unpause_after_expiry() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
-        // Set a very short pause duration (1 second)
         client.set_pause_duration(&admin, &1u64);
         client.pause(&admin);
         assert!(client.is_paused());
-        // Advance ledger time past expiry
-        env.ledger().with_mut(|li| {
-            li.timestamp += 2;
-        });
+        env.ledger().with_mut(|li| { li.timestamp += 2; });
         assert!(!client.is_paused());
     }
 
     #[test]
     fn test_pause_emits_event() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         client.pause(&admin);
-        // Events are published; verify no panic and paused state is set
         assert!(client.is_paused());
+    }
+
+    // ── multi-oracle ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_add_oracle_ok() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let oracle2 = Address::generate(&env);
+        client.add_oracle(&admin, &oracle2);
+        let oracles = client.get_oracles();
+        assert_eq!(oracles.len(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Unauthorized")]
+    fn test_add_oracle_non_admin_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let attacker = Address::generate(&env);
+        let oracle2 = Address::generate(&env);
+        client.add_oracle(&attacker, &oracle2);
+    }
+
+    #[test]
+    #[should_panic(expected = "OracleAlreadyRegistered")]
+    fn test_add_duplicate_oracle_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.add_oracle(&admin, &oracle);
+    }
+
+    #[test]
+    #[should_panic(expected = "OracleLimitReached")]
+    fn test_add_oracle_beyond_limit_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        // Already 1; add 4 more to reach 5, then try a 6th
+        for _ in 0..4 {
+            client.add_oracle(&admin, &Address::generate(&env));
+        }
+        client.add_oracle(&admin, &Address::generate(&env)); // 6th — should panic
+    }
+
+    #[test]
+    fn test_remove_oracle_ok() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let oracle2 = Address::generate(&env);
+        client.add_oracle(&admin, &oracle2);
+        client.remove_oracle(&admin, &oracle2);
+        let oracles = client.get_oracles();
+        assert_eq!(oracles.len(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "OracleNotFound")]
+    fn test_remove_nonexistent_oracle_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let unknown = Address::generate(&env);
+        client.remove_oracle(&admin, &unknown);
+    }
+
+    #[test]
+    fn test_submit_oracle_prices_median_odd() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        // Add 2 more oracles → 3 total (meets min quorum of 3)
+        client.add_oracle(&admin, &Address::generate(&env));
+        client.add_oracle(&admin, &Address::generate(&env));
+
+        let submitter = Address::generate(&env);
+        let prices = vec![&env, 100i128, 200i128, 300i128];
+        let result = client.submit_oracle_prices(&submitter, &prices);
+        // Sorted: [100, 200, 300] → median = 200
+        assert_eq!(result.median, 200);
+        assert_eq!(result.responses, 3);
+        assert_eq!(result.flagged_count, 0);
+    }
+
+    #[test]
+    fn test_submit_oracle_prices_median_even() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.add_oracle(&admin, &Address::generate(&env));
+        client.add_oracle(&admin, &Address::generate(&env));
+        client.add_oracle(&admin, &Address::generate(&env));
+        // 4 oracles total
+        let submitter = Address::generate(&env);
+        let prices = vec![&env, 100i128, 200i128, 300i128, 400i128];
+        let result = client.submit_oracle_prices(&submitter, &prices);
+        // Sorted: [100,200,300,400] → median = (200+300)/2 = 250
+        assert_eq!(result.median, 250);
+        assert_eq!(result.responses, 4);
+    }
+
+    #[test]
+    fn test_submit_oracle_prices_flags_deviant() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.add_oracle(&admin, &Address::generate(&env));
+        client.add_oracle(&admin, &Address::generate(&env));
+        // 3 oracles; prices: 100, 100, 500 → median=100; 500 deviates >15%
+        let submitter = Address::generate(&env);
+        let prices = vec![&env, 100i128, 100i128, 500i128];
+        let result = client.submit_oracle_prices(&submitter, &prices);
+        assert_eq!(result.median, 100);
+        assert_eq!(result.flagged_count, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "InsufficientOracleQuorum")]
+    fn test_submit_oracle_prices_below_quorum_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.add_oracle(&admin, &Address::generate(&env));
+        client.add_oracle(&admin, &Address::generate(&env));
+        // 3 oracles; only 2 non-zero prices → below quorum of 3
+        let submitter = Address::generate(&env);
+        let prices = vec![&env, 100i128, 200i128, 0i128];
+        client.submit_oracle_prices(&submitter, &prices);
+    }
+
+    #[test]
+    #[should_panic(expected = "InvalidPrice")]
+    fn test_submit_oracle_prices_wrong_length_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        // 1 oracle registered, submit 2 prices
+        let submitter = Address::generate(&env);
+        let prices = vec![&env, 100i128, 200i128];
+        client.submit_oracle_prices(&submitter, &prices);
     }
 
     // ── proptests ─────────────────────────────────────────────────────────
@@ -405,8 +542,8 @@ mod tests {
 
         #[test]
         fn prop_repayment_bounds(amount in 1..2_000_000i128, repay in 1..2_000_000i128) {
-            let (env, cid, admin, oracle, token) = setup();
-            init(&env, &cid, &admin, &oracle, &token);
+            let (env, cid, admin, oracle, token, treasury) = setup();
+            init(&env, &cid, &admin, &oracle, &token, &treasury);
             let client = StellarKraalClient::new(&env, &cid);
             let borrower = Address::generate(&env);
             
@@ -428,8 +565,8 @@ mod tests {
 
         #[test]
         fn prop_health_factor_post_repayment(amount in 1..1_000_000i128) {
-            let (env, cid, admin, oracle, token) = setup();
-            init(&env, &cid, &admin, &oracle, &token);
+            let (env, cid, admin, oracle, token, treasury) = setup();
+            init(&env, &cid, &admin, &oracle, &token, &treasury);
             let client = StellarKraalClient::new(&env, &cid);
             let borrower = Address::generate(&env);
             let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &1, &(amount * 2));
@@ -448,8 +585,8 @@ mod tests {
 
         #[test]
         fn prop_liquidation_eligibility(amount in 1..1_000_000i128) {
-            let (env, cid, admin, oracle, token) = setup();
-            init(&env, &cid, &admin, &oracle, &token);
+            let (env, cid, admin, oracle, token, treasury) = setup();
+            init(&env, &cid, &admin, &oracle, &token, &treasury);
             let client = StellarKraalClient::new(&env, &cid);
             let borrower = Address::generate(&env);
             let liquidator = Address::generate(&env);
@@ -479,8 +616,8 @@ mod tests {
         
         #[test]
         fn prop_loan_invariants(val in 1..1_000_000i128, amount_pct in 1..6000u32) {
-            let (env, cid, admin, oracle, token) = setup();
-            init(&env, &cid, &admin, &oracle, &token);
+            let (env, cid, admin, oracle, token, treasury) = setup();
+            init(&env, &cid, &admin, &oracle, &token, &treasury);
             let client = StellarKraalClient::new(&env, &cid);
             let borrower = Address::generate(&env);
             
