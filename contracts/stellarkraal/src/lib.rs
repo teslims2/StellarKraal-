@@ -4,20 +4,18 @@ mod tests;
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env, Symbol,
+    events,
 };
 
 // ── Storage keys ────────────────────────────────────────────────────────────
 const ADMIN: Symbol = symbol_short!("ADMIN");
 const ORACLE: Symbol = symbol_short!("ORACLE");
 const TOKEN: Symbol = symbol_short!("TOKEN");
-const LTV: Symbol = symbol_short!("LTV");
-const LIQ_THR: Symbol = symbol_short!("LIQTHR");
-const PAUSED: Symbol = symbol_short!("PAUSED");
-const PAUSE_EXP: Symbol = symbol_short!("PAUSEEXP");
-const PAUSE_DUR: Symbol = symbol_short!("PAUSEDUR");
-
-// Default pause duration: 72 hours in seconds
-const DEFAULT_PAUSE_DURATION: u64 = 72 * 3600;
+const LTV: Symbol = symbol_short!("LTV");        // loan-to-value bps  e.g. 6000 = 60%
+const LIQ_THR: Symbol = symbol_short!("LIQTHR"); // liquidation threshold bps e.g. 8000
+const TREASURY: Symbol = symbol_short!("TREASURY");
+const ORIG_FEE: Symbol = symbol_short!("ORIGFEE"); // origination fee bps e.g. 50 = 0.5%
+const INT_FEE: Symbol = symbol_short!("INTFEE");   // interest fee bps e.g. 1000 = 10%
 
 // ── Errors ───────────────────────────────────────────────────────────────────
 #[contracterror]
@@ -33,8 +31,7 @@ pub enum Error {
     HealthFactorSafe = 7,
     InvalidAmount = 8,
     LoanAlreadyClosed = 9,
-    ContractPaused = 10,
-    NotPaused = 11,
+    InvalidFeeRate = 10,
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -62,9 +59,17 @@ pub struct LoanRecord {
     pub id: u64,
     pub borrower: Address,
     pub collateral_id: u64,
+    pub collateral_value: i128, // Packed from CollateralRecord to save reads
     pub principal: i128,
     pub outstanding: i128,
     pub status: LoanStatus,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeConfig {
+    pub origination_fee_bps: u32,
+    pub interest_fee_bps: u32,
 }
 
 // ── Storage helpers ──────────────────────────────────────────────────────────
@@ -88,6 +93,7 @@ impl StellarKraal {
         admin: Address,
         oracle: Address,
         token: Address,
+        treasury: Address,
         ltv_bps: u32,
         liquidation_threshold_bps: u32,
     ) -> Result<(), Error> {
@@ -98,61 +104,11 @@ impl StellarKraal {
         env.storage().instance().set(&ADMIN, &admin);
         env.storage().instance().set(&ORACLE, &oracle);
         env.storage().instance().set(&TOKEN, &token);
+        env.storage().instance().set(&TREASURY, &treasury);
         env.storage().instance().set(&LTV, &ltv_bps);
         env.storage().instance().set(&LIQ_THR, &liquidation_threshold_bps);
-        env.storage().instance().set(&PAUSE_DUR, &DEFAULT_PAUSE_DURATION);
-        Ok(())
-    }
-
-    // ── pause ─────────────────────────────────────────────────────────────
-    /// Pause all state-changing functions (except repayment).
-    /// Callable by admin. Auto-expires after configured duration (default 72h).
-    pub fn pause(env: Env, caller: Address) -> Result<(), Error> {
-        Self::assert_initialized(&env)?;
-        Self::assert_admin(&env, &caller)?;
-        caller.require_auth();
-
-        let now = env.ledger().timestamp();
-        let duration: u64 = env.storage().instance().get(&PAUSE_DUR).unwrap_or(DEFAULT_PAUSE_DURATION);
-        let expires_at = now + duration;
-
-        env.storage().instance().set(&PAUSED, &true);
-        env.storage().instance().set(&PAUSE_EXP, &expires_at);
-
-        env.events().publish(
-            (symbol_short!("Paused"),),
-            (caller, expires_at),
-        );
-        Ok(())
-    }
-
-    // ── unpause ───────────────────────────────────────────────────────────
-    /// Manually unpause before expiry. Callable by admin only.
-    pub fn unpause(env: Env, caller: Address) -> Result<(), Error> {
-        Self::assert_initialized(&env)?;
-        Self::assert_admin(&env, &caller)?;
-        caller.require_auth();
-
-        if !Self::is_paused_raw(&env) {
-            return Err(Error::NotPaused);
-        }
-
-        env.storage().instance().set(&PAUSED, &false);
-
-        env.events().publish(
-            (symbol_short!("Unpaused"),),
-            (caller,),
-        );
-        Ok(())
-    }
-
-    // ── set_pause_duration ────────────────────────────────────────────────
-    /// Configure the auto-unpause duration (in seconds). Admin only.
-    pub fn set_pause_duration(env: Env, caller: Address, duration_secs: u64) -> Result<(), Error> {
-        Self::assert_initialized(&env)?;
-        Self::assert_admin(&env, &caller)?;
-        caller.require_auth();
-        env.storage().instance().set(&PAUSE_DUR, &duration_secs);
+        env.storage().instance().set(&ORIG_FEE, &50u32); // 0.5%
+        env.storage().instance().set(&INT_FEE, &1000u32); // 10%
         Ok(())
     }
 
@@ -222,11 +178,17 @@ impl StellarKraal {
             return Err(Error::InsufficientCollateral);
         }
 
+        // Calculate origination fee
+        let orig_fee_bps: u32 = env.storage().instance().get(&ORIG_FEE).unwrap();
+        let fee = amount.checked_mul(orig_fee_bps as i128).ok_or(Error::InvalidAmount)? / 10_000;
+        let disbursement = amount.checked_sub(fee).ok_or(Error::InvalidAmount)?;
+
         let loan_id = Self::next_id(&env, DataKey::LoanCounter);
         let loan = LoanRecord {
             id: loan_id,
             borrower: borrower.clone(),
             collateral_id,
+            collateral_value: collateral.appraised_value,
             principal: amount,
             outstanding: amount,
             status: LoanStatus::Active,
@@ -239,7 +201,16 @@ impl StellarKraal {
 
         let token_addr: Address = env.storage().instance().get(&TOKEN).unwrap();
         let token_client = token::Client::new(&env, &token_addr);
-        token_client.transfer(&env.current_contract_address(), &borrower, &amount);
+        
+        // Transfer fee to treasury
+        if fee > 0 {
+            let treasury: Address = env.storage().instance().get(&TREASURY).unwrap();
+            token_client.transfer(&env.current_contract_address(), &treasury, &fee);
+            env.events().publish((symbol_short!("FeeCollect"), loan_id), (symbol_short!("originate"), fee));
+        }
+
+        // Disburse net amount to borrower
+        token_client.transfer(&env.current_contract_address(), &borrower, &disbursement);
 
         Ok(loan_id)
     }
@@ -268,9 +239,28 @@ impl StellarKraal {
         }
 
         let repay_amount = amount.min(loan.outstanding);
+        
+        // Calculate interest (amount above principal) and fee
+        let principal_remaining = loan.outstanding.min(loan.principal);
+        let interest_portion = if repay_amount > principal_remaining {
+            repay_amount - principal_remaining
+        } else {
+            0
+        };
+        
+        let int_fee_bps: u32 = env.storage().instance().get(&INT_FEE).unwrap();
+        let interest_fee = interest_portion.checked_mul(int_fee_bps as i128).ok_or(Error::InvalidAmount)? / 10_000;
+
         let token_addr: Address = env.storage().instance().get(&TOKEN).unwrap();
         let token_client = token::Client::new(&env, &token_addr);
         token_client.transfer(&borrower, &env.current_contract_address(), &repay_amount);
+
+        // Transfer interest fee to treasury
+        if interest_fee > 0 {
+            let treasury: Address = env.storage().instance().get(&TREASURY).unwrap();
+            token_client.transfer(&env.current_contract_address(), &treasury, &interest_fee);
+            env.events().publish((symbol_short!("FeeCollect"), loan_id), (symbol_short!("interest"), interest_fee));
+        }
 
         loan.outstanding = loan.outstanding.checked_sub(repay_amount).ok_or(Error::InvalidAmount)?;
         if loan.outstanding == 0 {
@@ -338,6 +328,40 @@ impl StellarKraal {
             .ok_or(Error::CollateralNotFound)
     }
 
+    // ── update_fee_config ─────────────────────────────────────────────────
+    pub fn update_fee_config(
+        env: Env,
+        admin: Address,
+        origination_fee_bps: u32,
+        interest_fee_bps: u32,
+    ) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        let stored_admin: Address = env.storage().instance().get(&ADMIN).unwrap();
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+        admin.require_auth();
+
+        if origination_fee_bps > 500 || interest_fee_bps > 500 {
+            return Err(Error::InvalidFeeRate);
+        }
+
+        env.storage().instance().set(&ORIG_FEE, &origination_fee_bps);
+        env.storage().instance().set(&INT_FEE, &interest_fee_bps);
+        Ok(())
+    }
+
+    // ── get_fee_config ────────────────────────────────────────────────────
+    pub fn get_fee_config(env: Env) -> Result<FeeConfig, Error> {
+        Self::assert_initialized(&env)?;
+        let orig: u32 = env.storage().instance().get(&ORIG_FEE).unwrap();
+        let int: u32 = env.storage().instance().get(&INT_FEE).unwrap();
+        Ok(FeeConfig {
+            origination_fee_bps: orig,
+            interest_fee_bps: int,
+        })
+    }
+
     // ── internal helpers ──────────────────────────────────────────────────
     fn assert_initialized(env: &Env) -> Result<(), Error> {
         if !env.storage().instance().has(&ADMIN) {
@@ -383,15 +407,11 @@ impl StellarKraal {
         if loan.outstanding == 0 {
             return Ok(i128::MAX);
         }
-        let collateral: CollateralRecord = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Collateral(loan.collateral_id))
-            .ok_or(Error::CollateralNotFound)?;
-
+        
         let liq_thr: u32 = env.storage().instance().get(&LIQ_THR).unwrap();
-        let numerator = collateral
-            .appraised_value
+        // health = (collateral_value * liq_threshold) / (outstanding * 10_000)
+        let numerator = loan
+            .collateral_value
             .checked_mul(liq_thr as i128)
             .ok_or(Error::InvalidAmount)?;
         let denominator = loan.outstanding.checked_mul(10_000).ok_or(Error::InvalidAmount)?;

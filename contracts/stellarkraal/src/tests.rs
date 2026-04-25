@@ -8,41 +8,42 @@ mod tests {
     };
     use proptest::prelude::*;
 
-    fn setup() -> (Env, Address, Address, Address, Address) {
+    fn setup() -> (Env, Address, Address, Address, Address, Address) {
         let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register_contract(None, StellarKraal);
         let admin = Address::generate(&env);
         let oracle = Address::generate(&env);
         let token = Address::generate(&env);
-        (env, contract_id, admin, oracle, token)
+        let treasury = Address::generate(&env);
+        (env, contract_id, admin, oracle, token, treasury)
     }
 
-    fn init(env: &Env, contract_id: &Address, admin: &Address, oracle: &Address, token: &Address) {
+    fn init(env: &Env, contract_id: &Address, admin: &Address, oracle: &Address, token: &Address, treasury: &Address) {
         let client = StellarKraalClient::new(env, contract_id);
-        client.initialize(admin, oracle, token, &6000u32, &8000u32);
+        client.initialize(admin, oracle, token, treasury, &6000u32, &8000u32);
     }
 
     // ── initialize ────────────────────────────────────────────────────────
     #[test]
     fn test_initialize_ok() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
     }
 
     #[test]
     #[should_panic(expected = "AlreadyInitialized")]
     fn test_initialize_twice_fails() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
     }
 
     // ── register_livestock ────────────────────────────────────────────────
     #[test]
     fn test_register_livestock_ok() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let owner = Address::generate(&env);
         let id = client.register_livestock(&owner, &symbol_short!("cattle"), &5u32, &1_000_000i128);
@@ -52,8 +53,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "InvalidAmount")]
     fn test_register_zero_count_fails() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let owner = Address::generate(&env);
         client.register_livestock(&owner, &symbol_short!("goat"), &0u32, &500_000i128);
@@ -62,8 +63,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "InvalidAmount")]
     fn test_register_zero_value_fails() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let owner = Address::generate(&env);
         client.register_livestock(&owner, &symbol_short!("sheep"), &3u32, &0i128);
@@ -72,8 +73,8 @@ mod tests {
     // ── request_loan ──────────────────────────────────────────────────────
     #[test]
     fn test_request_loan_within_ltv() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
@@ -85,8 +86,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "InsufficientCollateral")]
     fn test_request_loan_exceeds_ltv() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
@@ -96,8 +97,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "Unauthorized")]
     fn test_request_loan_wrong_owner() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let owner = Address::generate(&env);
         let attacker = Address::generate(&env);
@@ -108,8 +109,8 @@ mod tests {
     // ── repay_loan ────────────────────────────────────────────────────────
     #[test]
     fn test_partial_repay() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
@@ -121,8 +122,8 @@ mod tests {
 
     #[test]
     fn test_full_repay_marks_repaid() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
@@ -135,8 +136,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "LoanAlreadyClosed")]
     fn test_repay_closed_loan_fails() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
@@ -148,8 +149,8 @@ mod tests {
     // ── health_factor ─────────────────────────────────────────────────────
     #[test]
     fn test_health_factor_healthy() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
@@ -163,8 +164,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "HealthFactorSafe")]
     fn test_liquidate_healthy_loan_fails() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let liquidator = Address::generate(&env);
@@ -176,8 +177,8 @@ mod tests {
     // ── get_loan / get_collateral ─────────────────────────────────────────
     #[test]
     fn test_get_loan_ok() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("sheep"), &10u32, &2_000_000i128);
@@ -189,8 +190,8 @@ mod tests {
 
     #[test]
     fn test_get_collateral_ok() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let owner = Address::generate(&env);
         let col_id = client.register_livestock(&owner, &symbol_short!("goat"), &7u32, &700_000i128);
@@ -202,8 +203,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "LoanNotFound")]
     fn test_get_nonexistent_loan_fails() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         client.get_loan(&999u64);
     }
@@ -211,8 +212,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "CollateralNotFound")]
     fn test_get_nonexistent_collateral_fails() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         client.get_collateral(&999u64);
     }
@@ -233,8 +234,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "InvalidAmount")]
     fn test_request_zero_amount_fails() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
@@ -244,8 +245,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "InvalidAmount")]
     fn test_repay_zero_amount_fails() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
@@ -256,8 +257,8 @@ mod tests {
     // ── multiple loans counter ────────────────────────────────────────────
     #[test]
     fn test_multiple_collaterals_increment_ids() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let owner = Address::generate(&env);
         let id1 = client.register_livestock(&owner, &symbol_short!("cattle"), &1u32, &500_000i128);
@@ -267,8 +268,8 @@ mod tests {
 
     #[test]
     fn test_repay_more_than_outstanding_caps_at_outstanding() {
-        let (env, cid, admin, oracle, token) = setup();
-        init(&env, &cid, &admin, &oracle, &token);
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
@@ -496,7 +497,9 @@ mod tests {
             assert_eq!(loan.borrower, borrower);
             // Invariant 9: Collateral ID matches
             assert_eq!(loan.collateral_id, col_id);
-            // Invariant 10: Initial outstanding == principal
+            // Invariant 10: Packed collateral value matches
+            assert_eq!(loan.collateral_value, val);
+            // Invariant 11: Initial outstanding == principal
             assert_eq!(loan.outstanding, loan.principal);
         }
     }

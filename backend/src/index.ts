@@ -1,4 +1,5 @@
-import "dotenv/config";
+import "./config"; // validate env at startup
+import { config } from "./config";
 import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import {
@@ -12,12 +13,37 @@ import {
 } from "@stellar/stellar-sdk";
 import { SorobanRpc } from "@stellar/stellar-sdk";
 import logger, { createRequestLogger } from "./utils/logger";
+import { auditMiddleware } from "./middleware/audit";
 import { randomUUID } from "crypto";
 const { Server } = SorobanRpc;
 
 const app = express();
-app.use(cors());
+
+const isProduction = process.env.NODE_ENV === "production";
+const FRONTEND_URL = process.env.FRONTEND_URL;
+
+// Startup warning for CORS misconfiguration
+if (isProduction && !FRONTEND_URL) {
+  logger.warn("CORS misconfiguration: FRONTEND_URL is not set in production environment. Requests may be blocked.");
+}
+
+// Secure CORS configuration
+app.use((req: Request, res: Response, next: NextFunction) => {
+  // Allow credentials only for authenticated routes (e.g., API endpoints excluding health check)
+  const isAuthRoute = req.path.startsWith("/api") && req.path !== "/api/health";
+  
+  const corsOptions: cors.CorsOptions = {
+    origin: isProduction 
+      ? (FRONTEND_URL || false) 
+      : (isAuthRoute ? true : "*"),
+    credentials: isAuthRoute,
+    maxAge: 86400, // Cache preflight requests for 24 hours
+  };
+  
+  cors(corsOptions)(req, res, next);
+});
 app.use(express.json());
+app.use(globalLimiter);
 
 // Request ID middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -38,12 +64,13 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+// Audit logging middleware — logs all requests with redacted body to audit log
+app.use(auditMiddleware);
+
 const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
 const NETWORK_PASSPHRASE =
-  process.env.NEXT_PUBLIC_NETWORK === "mainnet"
-    ? Networks.PUBLIC
-    : Networks.TESTNET;
+  config.NEXT_PUBLIC_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
 
 const APP_VERSION = process.env.npm_package_version || "1.0.0";
 const startTime = Date.now();
@@ -125,9 +152,8 @@ app.get("/api/health", async (req: Request, res: Response, next: NextFunction) =
 });
 
 // POST /api/collateral/register
-app.post("/api/collateral/register", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const validation = registerCollateralSchema.safeParse(req.body);
+app.post("/api/collateral/register", asyncHandler(async (req: Request, res: Response) => {
+  const validation = registerCollateralSchema.safeParse(req.body);
     
     if (!validation.success) {
       return res.status(400).json({
@@ -144,15 +170,11 @@ app.post("/api/collateral/register", async (req: Request, res: Response, next: N
       nativeToScVal(BigInt(appraised_value), { type: "i128" }),
     ]);
     res.json({ xdr: xdrTx });
-  } catch (e) {
-    next(e);
-  }
-});
+}));
 
 // POST /api/loan/request
-app.post("/api/loan/request", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const validation = loanRequestSchema.safeParse(req.body);
+app.post("/api/loan/request", asyncHandler(async (req: Request, res: Response) => {
+  const validation = loanRequestSchema.safeParse(req.body);
     
     if (!validation.success) {
       return res.status(400).json({
@@ -168,15 +190,11 @@ app.post("/api/loan/request", async (req: Request, res: Response, next: NextFunc
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
     res.json({ xdr: xdrTx });
-  } catch (e) {
-    next(e);
-  }
-});
+}));
 
 // POST /api/loan/repay
-app.post("/api/loan/repay", async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const validation = loanRepaySchema.safeParse(req.body);
+app.post("/api/loan/repay", asyncHandler(async (req: Request, res: Response) => {
+  const validation = loanRepaySchema.safeParse(req.body);
     
     if (!validation.success) {
       return res.status(400).json({
@@ -192,10 +210,7 @@ app.post("/api/loan/repay", async (req: Request, res: Response, next: NextFuncti
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
     res.json({ xdr: xdrTx });
-  } catch (e) {
-    next(e);
-  }
-});
+}));
 
 // GET /api/loan/:id
 app.get("/api/loan/:id", async (req: Request, res: Response, next: NextFunction) => {
@@ -216,10 +231,7 @@ app.get("/api/loan/:id", async (req: Request, res: Response, next: NextFunction)
 
     const result = await rpcClient.simulateTransaction(tx);
     res.json({ result: (result as any).result?.retval });
-  } catch (e) {
-    next(e);
-  }
-});
+}));
 
 // GET /api/health/:loanId
 app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFunction) => {
@@ -243,9 +255,28 @@ app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFun
 
     const result = await rpcClient.simulateTransaction(tx);
     res.json({ health_factor: (result as any).result?.retval });
-  } catch (e) {
-    next(e);
+}));
+
+// ── webhook routes ────────────────────────────────────────────────────────────
+
+// POST /api/webhooks — register a webhook URL
+app.post("/api/webhooks", (req: Request, res: Response) => {
+  const { url } = req.body;
+  if (!url || typeof url !== "string") {
+    return res.status(400).json({ error: "url is required" });
   }
+  const reg = registerWebhook(url);
+  res.status(201).json(reg);
+});
+
+// GET /api/admin/webhooks — list registered webhooks
+app.get("/api/admin/webhooks", (req: Request, res: Response) => {
+  res.json(getWebhooks());
+});
+
+// GET /api/admin/webhooks/logs — delivery logs
+app.get("/api/admin/webhooks/logs", (req: Request, res: Response) => {
+  res.json(getDeliveryLogs());
 });
 
 // ── error handler ─────────────────────────────────────────────────────────────
