@@ -1,4 +1,5 @@
-import "dotenv/config";
+import "./config"; // validate env at startup
+import { config } from "./config";
 import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import {
@@ -18,6 +19,7 @@ const { Server } = SorobanRpc;
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(globalLimiter);
 
 // Request ID middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -41,9 +43,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
 const NETWORK_PASSPHRASE =
-  process.env.NEXT_PUBLIC_NETWORK === "mainnet"
-    ? Networks.PUBLIC
-    : Networks.TESTNET;
+  config.NEXT_PUBLIC_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
 
 const APP_VERSION = process.env.npm_package_version || "1.0.0";
 const startTime = Date.now();
@@ -229,6 +229,28 @@ app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFun
     const result = await rpcClient.simulateTransaction(tx);
     res.json({ health_factor: (result as any).result?.retval });
 }));
+
+// ── webhook routes ────────────────────────────────────────────────────────────
+
+// POST /api/webhooks — register a webhook URL
+app.post("/api/webhooks", (req: Request, res: Response) => {
+  const { url } = req.body;
+  if (!url || typeof url !== "string") {
+    return res.status(400).json({ error: "url is required" });
+  }
+  const reg = registerWebhook(url);
+  res.status(201).json(reg);
+});
+
+// GET /api/admin/webhooks — list registered webhooks
+app.get("/api/admin/webhooks", (req: Request, res: Response) => {
+  res.json(getWebhooks());
+});
+
+// GET /api/admin/webhooks/logs — delivery logs
+app.get("/api/admin/webhooks/logs", (req: Request, res: Response) => {
+  res.json(getDeliveryLogs());
+});
 
 // ── error handler ─────────────────────────────────────────────────────────────
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
