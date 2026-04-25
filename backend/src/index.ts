@@ -1,6 +1,21 @@
 import "./config"; // validate env at startup
 import { config } from "./config";
 import express, { Request, Response, NextFunction } from "express";
+import {
+  runMigrations,
+  insertCollateral,
+  listCollateral,
+  getCollateral,
+  softDeleteCollateral,
+  restoreCollateral,
+  listDeletedCollateral,
+  insertLoan,
+  listLoans,
+  getLoan,
+  softDeleteLoan,
+  restoreLoan,
+  listDeletedLoans,
+} from "./db/store";
 import cors from "cors";
 import {
   Networks,
@@ -83,6 +98,9 @@ const server = new Server(RPC_URL);
 
 // Configure appraisal cache TTL from env
 configureCacheTTL(parseInt(config.APPRAISAL_CACHE_TTL_MS, 10));
+
+// Run DB migrations on startup
+runMigrations();
 
 // ── Validation Schemas ────────────────────────────────────────────────────────
 
@@ -303,6 +321,46 @@ app.get("/api/admin/webhooks", (req: Request, res: Response) => {
 // GET /api/admin/webhooks/logs — delivery logs
 app.get("/api/admin/webhooks/logs", (req: Request, res: Response) => {
   res.json(getDeliveryLogs());
+});
+
+// ── soft-delete admin routes ──────────────────────────────────────────────────
+
+// GET /api/admin/deleted/collateral — list soft-deleted collateral records
+app.get("/api/admin/deleted/collateral", (req: Request, res: Response) => {
+  res.json(listDeletedCollateral());
+});
+
+// POST /api/admin/restore/collateral/:id — restore a soft-deleted collateral record
+app.post("/api/admin/restore/collateral/:id", (req: Request, res: Response) => {
+  const ok = restoreCollateral(req.params.id);
+  if (!ok) return res.status(404).json({ error: "Record not found or not deleted" });
+  res.json({ restored: true, id: req.params.id });
+});
+
+// DELETE /api/collateral/:id — soft delete a collateral record
+app.delete("/api/collateral/:id", (req: Request, res: Response) => {
+  const ok = softDeleteCollateral(req.params.id);
+  if (!ok) return res.status(404).json({ error: "Record not found" });
+  res.json({ deleted: true, id: req.params.id });
+});
+
+// GET /api/admin/deleted/loans — list soft-deleted loan records
+app.get("/api/admin/deleted/loans", (req: Request, res: Response) => {
+  res.json(listDeletedLoans());
+});
+
+// POST /api/admin/restore/loans/:id — restore a soft-deleted loan record
+app.post("/api/admin/restore/loans/:id", (req: Request, res: Response) => {
+  const ok = restoreLoan(req.params.id);
+  if (!ok) return res.status(404).json({ error: "Record not found or not deleted" });
+  res.json({ restored: true, id: req.params.id });
+});
+
+// DELETE /api/loan/:id — soft delete a loan record
+app.delete("/api/loan/:id", (req: Request, res: Response) => {
+  const ok = softDeleteLoan(req.params.id);
+  if (!ok) return res.status(404).json({ error: "Record not found" });
+  res.json({ deleted: true, id: req.params.id });
 });
 
 // ── error handler ─────────────────────────────────────────────────────────────
