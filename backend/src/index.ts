@@ -16,6 +16,7 @@ import logger, { createRequestLogger } from "./utils/logger";
 import { pool, PoolExhaustedError } from "./utils/connectionPool";
 import { auditMiddleware } from "./middleware/audit";
 import { timeoutMiddleware } from "./middleware/timeout";
+import { getAppraisal, setAppraisal, invalidateAll, configureCacheTTL } from "./utils/appraisalCache";
 import { randomUUID } from "crypto";
 const { Server } = SorobanRpc;
 
@@ -79,6 +80,9 @@ const APP_VERSION = process.env.npm_package_version || "1.0.0";
 const startTime = Date.now();
 
 const server = new Server(RPC_URL);
+
+// Configure appraisal cache TTL from env
+configureCacheTTL(parseInt(config.APPRAISAL_CACHE_TTL_MS, 10));
 
 // ── Validation Schemas ────────────────────────────────────────────────────────
 
@@ -183,12 +187,23 @@ app.post("/api/loan/request", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS
     }
 
     const { borrower, collateral_id, amount } = validation.data;
+    const cacheKey = String(collateral_id);
+    const cached = getAppraisal(cacheKey);
+
+    if (!cached) {
+      // No cached value — fetch appraised_value from request body and cache it
+      const appraised_value: number | undefined = req.body.appraised_value;
+      if (appraised_value !== undefined) {
+        setAppraisal(cacheKey, appraised_value);
+      }
+    }
+
     const xdrTx = await buildContractTx(borrower, "request_loan", [
       new Address(borrower).toScVal(),
       nativeToScVal(BigInt(collateral_id), { type: "u64" }),
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
-    res.json({ xdr: xdrTx });
+    res.json({ xdr: xdrTx, ...(cached?.stale ? { stale: true } : {}) });
 }));
 
 // POST /api/loan/repay
@@ -260,6 +275,12 @@ app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFun
   } catch (error) {
     next(error);
   }
+});
+
+// POST /api/oracle/price-update — invalidate appraisal cache on oracle update
+app.post("/api/oracle/price-update", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), (req: Request, res: Response) => {
+  invalidateAll();
+  res.json({ invalidated: true });
 });
 
 // ── webhook routes ────────────────────────────────────────────────────────────
