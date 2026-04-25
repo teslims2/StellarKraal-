@@ -20,6 +20,8 @@ const envSchema = z.object({
   POOL_MAX: z.string().default("10"),
   // Appraisal cache TTL in milliseconds
   APPRAISAL_CACHE_TTL_MS: z.string().default("300000"),
+  // JWT secret (min 32 chars recommended)
+  JWT_SECRET: z.string().min(16).optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
