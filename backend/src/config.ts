@@ -8,6 +8,9 @@ const envSchema = z.object({
   // Rate limiting (optional with defaults)
   RATE_LIMIT_GLOBAL: z.string().default("60"),
   RATE_LIMIT_WRITE: z.string().default("10"),
+  // Request timeouts in milliseconds
+  TIMEOUT_GLOBAL_MS: z.string().default("30000"),
+  TIMEOUT_WRITE_MS: z.string().default("15000"),
   // Webhook secret
   WEBHOOK_SECRET: z.string().min(16).optional(),
   // Admin key for webhook admin endpoints
