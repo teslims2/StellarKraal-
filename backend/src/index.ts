@@ -15,6 +15,7 @@ import { SorobanRpc } from "@stellar/stellar-sdk";
 import logger, { createRequestLogger } from "./utils/logger";
 import { pool, PoolExhaustedError } from "./utils/connectionPool";
 import { auditMiddleware } from "./middleware/audit";
+import { timeoutMiddleware } from "./middleware/timeout";
 import { randomUUID } from "crypto";
 const { Server } = SorobanRpc;
 
@@ -45,6 +46,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 app.use(express.json());
 app.use(globalLimiter);
+app.use(timeoutMiddleware(parseInt(config.TIMEOUT_GLOBAL_MS, 10)));
 
 // Request ID middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -149,7 +151,7 @@ app.get("/api/health", async (req: Request, res: Response, next: NextFunction) =
 });
 
 // POST /api/collateral/register
-app.post("/api/collateral/register", asyncHandler(async (req: Request, res: Response) => {
+app.post("/api/collateral/register", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), asyncHandler(async (req: Request, res: Response) => {
   const validation = registerCollateralSchema.safeParse(req.body);
     
     if (!validation.success) {
@@ -170,7 +172,7 @@ app.post("/api/collateral/register", asyncHandler(async (req: Request, res: Resp
 }));
 
 // POST /api/loan/request
-app.post("/api/loan/request", asyncHandler(async (req: Request, res: Response) => {
+app.post("/api/loan/request", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), asyncHandler(async (req: Request, res: Response) => {
   const validation = loanRequestSchema.safeParse(req.body);
     
     if (!validation.success) {
@@ -190,7 +192,7 @@ app.post("/api/loan/request", asyncHandler(async (req: Request, res: Response) =
 }));
 
 // POST /api/loan/repay
-app.post("/api/loan/repay", asyncHandler(async (req: Request, res: Response) => {
+app.post("/api/loan/repay", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), asyncHandler(async (req: Request, res: Response) => {
   const validation = loanRepaySchema.safeParse(req.body);
     
     if (!validation.success) {
@@ -263,7 +265,7 @@ app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFun
 // ── webhook routes ────────────────────────────────────────────────────────────
 
 // POST /api/webhooks — register a webhook URL
-app.post("/api/webhooks", (req: Request, res: Response) => {
+app.post("/api/webhooks", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), (req: Request, res: Response) => {
   const { url } = req.body;
   if (!url || typeof url !== "string") {
     return res.status(400).json({ error: "url is required" });
