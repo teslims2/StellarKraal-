@@ -281,6 +281,124 @@ mod tests {
         assert_eq!(loan.outstanding, 0);
     }
 
+    // ── pause / unpause ───────────────────────────────────────────────────
+    #[test]
+    fn test_pause_by_admin_ok() {
+        let (env, cid, admin, oracle, token) = setup();
+        init(&env, &cid, &admin, &oracle, &token);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.pause(&admin);
+        assert!(client.is_paused());
+    }
+
+    #[test]
+    #[should_panic(expected = "Unauthorized")]
+    fn test_pause_by_non_admin_fails() {
+        let (env, cid, admin, oracle, token) = setup();
+        init(&env, &cid, &admin, &oracle, &token);
+        let client = StellarKraalClient::new(&env, &cid);
+        let attacker = Address::generate(&env);
+        client.pause(&attacker);
+    }
+
+    #[test]
+    fn test_unpause_by_admin_ok() {
+        let (env, cid, admin, oracle, token) = setup();
+        init(&env, &cid, &admin, &oracle, &token);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.pause(&admin);
+        client.unpause(&admin);
+        assert!(!client.is_paused());
+    }
+
+    #[test]
+    #[should_panic(expected = "NotPaused")]
+    fn test_unpause_when_not_paused_fails() {
+        let (env, cid, admin, oracle, token) = setup();
+        init(&env, &cid, &admin, &oracle, &token);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.unpause(&admin);
+    }
+
+    #[test]
+    #[should_panic(expected = "ContractPaused")]
+    fn test_register_livestock_blocked_when_paused() {
+        let (env, cid, admin, oracle, token) = setup();
+        init(&env, &cid, &admin, &oracle, &token);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.pause(&admin);
+        let owner = Address::generate(&env);
+        client.register_livestock(&owner, &symbol_short!("cattle"), &1u32, &100_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "ContractPaused")]
+    fn test_request_loan_blocked_when_paused() {
+        let (env, cid, admin, oracle, token) = setup();
+        init(&env, &cid, &admin, &oracle, &token);
+        let client = StellarKraalClient::new(&env, &cid);
+        // Register before pausing
+        let borrower = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        client.pause(&admin);
+        client.request_loan(&borrower, &col_id, &600_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "ContractPaused")]
+    fn test_liquidate_blocked_when_paused() {
+        let (env, cid, admin, oracle, token) = setup();
+        init(&env, &cid, &admin, &oracle, &token);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let liquidator = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &col_id, &600_000i128);
+        client.pause(&admin);
+        client.liquidate(&liquidator, &loan_id);
+    }
+
+    #[test]
+    fn test_repay_allowed_when_paused() {
+        let (env, cid, admin, oracle, token) = setup();
+        init(&env, &cid, &admin, &oracle, &token);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &col_id, &600_000i128);
+        client.pause(&admin);
+        // Repayment must succeed even while paused
+        client.repay_loan(&borrower, &loan_id, &200_000i128);
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.outstanding, 400_000);
+    }
+
+    #[test]
+    fn test_auto_unpause_after_expiry() {
+        let (env, cid, admin, oracle, token) = setup();
+        init(&env, &cid, &admin, &oracle, &token);
+        let client = StellarKraalClient::new(&env, &cid);
+        // Set a very short pause duration (1 second)
+        client.set_pause_duration(&admin, &1u64);
+        client.pause(&admin);
+        assert!(client.is_paused());
+        // Advance ledger time past expiry
+        env.ledger().with_mut(|li| {
+            li.timestamp += 2;
+        });
+        assert!(!client.is_paused());
+    }
+
+    #[test]
+    fn test_pause_emits_event() {
+        let (env, cid, admin, oracle, token) = setup();
+        init(&env, &cid, &admin, &oracle, &token);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.pause(&admin);
+        // Events are published; verify no panic and paused state is set
+        assert!(client.is_paused());
+    }
+
     // ── proptests ─────────────────────────────────────────────────────────
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(10000))]

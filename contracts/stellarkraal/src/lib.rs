@@ -47,9 +47,9 @@ pub enum LoanStatus {
 #[derive(Clone, Debug)]
 pub struct CollateralRecord {
     pub owner: Address,
-    pub animal_type: Symbol,  // "cattle" | "goat" | "sheep"
+    pub animal_type: Symbol,
     pub count: u32,
-    pub appraised_value: i128, // in stroops
+    pub appraised_value: i128,
     pub loan_id: u64,
 }
 
@@ -112,6 +112,11 @@ impl StellarKraal {
         Ok(())
     }
 
+    // ── is_paused ─────────────────────────────────────────────────────────
+    pub fn is_paused(env: Env) -> bool {
+        Self::is_paused_raw(&env)
+    }
+
     // ── register_livestock ────────────────────────────────────────────────
     pub fn register_livestock(
         env: Env,
@@ -121,6 +126,7 @@ impl StellarKraal {
         appraised_value: i128,
     ) -> Result<u64, Error> {
         Self::assert_initialized(&env)?;
+        Self::assert_not_paused(&env)?;
         if appraised_value <= 0 || count == 0 {
             return Err(Error::InvalidAmount);
         }
@@ -146,6 +152,7 @@ impl StellarKraal {
         amount: i128,
     ) -> Result<u64, Error> {
         Self::assert_initialized(&env)?;
+        Self::assert_not_paused(&env)?;
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
@@ -188,7 +195,6 @@ impl StellarKraal {
         };
         env.storage().persistent().set(&DataKey::Loan(loan_id), &loan);
 
-        // Mark collateral as used
         let mut col = collateral;
         col.loan_id = loan_id;
         env.storage().persistent().set(&DataKey::Collateral(collateral_id), &col);
@@ -210,8 +216,10 @@ impl StellarKraal {
     }
 
     // ── repay_loan ────────────────────────────────────────────────────────
+    /// Repayment is allowed even when paused (per spec).
     pub fn repay_loan(env: Env, borrower: Address, loan_id: u64, amount: i128) -> Result<(), Error> {
         Self::assert_initialized(&env)?;
+        // NOTE: repayment intentionally NOT blocked by pause
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
@@ -265,6 +273,7 @@ impl StellarKraal {
     // ── liquidate ─────────────────────────────────────────────────────────
     pub fn liquidate(env: Env, liquidator: Address, loan_id: u64) -> Result<(), Error> {
         Self::assert_initialized(&env)?;
+        Self::assert_not_paused(&env)?;
         liquidator.require_auth();
 
         let mut loan: LoanRecord = env
@@ -282,7 +291,6 @@ impl StellarKraal {
             return Err(Error::HealthFactorSafe);
         }
 
-        // Transfer outstanding debt from liquidator to contract
         let token_addr: Address = env.storage().instance().get(&TOKEN).unwrap();
         let token_client = token::Client::new(&env, &token_addr);
         token_client.transfer(&liquidator, &env.current_contract_address(), &loan.outstanding);
@@ -294,7 +302,6 @@ impl StellarKraal {
     }
 
     // ── health_factor ─────────────────────────────────────────────────────
-    /// Returns health factor in bps (10_000 = 1.0). Below 10_000 = liquidatable.
     pub fn health_factor(env: Env, loan_id: u64) -> Result<i128, Error> {
         Self::assert_initialized(&env)?;
         let loan: LoanRecord = env
@@ -359,6 +366,32 @@ impl StellarKraal {
     fn assert_initialized(env: &Env) -> Result<(), Error> {
         if !env.storage().instance().has(&ADMIN) {
             return Err(Error::NotInitialized);
+        }
+        Ok(())
+    }
+
+    fn assert_admin(env: &Env, caller: &Address) -> Result<(), Error> {
+        let admin: Address = env.storage().instance().get(&ADMIN).unwrap();
+        if *caller != admin {
+            return Err(Error::Unauthorized);
+        }
+        Ok(())
+    }
+
+    fn is_paused_raw(env: &Env) -> bool {
+        let paused: bool = env.storage().instance().get(&PAUSED).unwrap_or(false);
+        if !paused {
+            return false;
+        }
+        // Check auto-expiry
+        let expires_at: u64 = env.storage().instance().get(&PAUSE_EXP).unwrap_or(0);
+        let now = env.ledger().timestamp();
+        now < expires_at
+    }
+
+    fn assert_not_paused(env: &Env) -> Result<(), Error> {
+        if Self::is_paused_raw(env) {
+            return Err(Error::ContractPaused);
         }
         Ok(())
     }
