@@ -17,7 +17,30 @@ import { randomUUID } from "crypto";
 const { Server } = SorobanRpc;
 
 const app = express();
-app.use(cors());
+
+const isProduction = process.env.NODE_ENV === "production";
+const FRONTEND_URL = process.env.FRONTEND_URL;
+
+// Startup warning for CORS misconfiguration
+if (isProduction && !FRONTEND_URL) {
+  logger.warn("CORS misconfiguration: FRONTEND_URL is not set in production environment. Requests may be blocked.");
+}
+
+// Secure CORS configuration
+app.use((req: Request, res: Response, next: NextFunction) => {
+  // Allow credentials only for authenticated routes (e.g., API endpoints excluding health check)
+  const isAuthRoute = req.path.startsWith("/api") && req.path !== "/api/health";
+  
+  const corsOptions: cors.CorsOptions = {
+    origin: isProduction 
+      ? (FRONTEND_URL || false) 
+      : (isAuthRoute ? true : "*"),
+    credentials: isAuthRoute,
+    maxAge: 86400, // Cache preflight requests for 24 hours
+  };
+  
+  cors(corsOptions)(req, res, next);
+});
 app.use(express.json());
 app.use(globalLimiter);
 
