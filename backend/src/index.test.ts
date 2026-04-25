@@ -1,5 +1,5 @@
 import request from "supertest";
-import app from "../src/index";
+import app from "./index";
 
 // Mock the logger
 jest.mock("./utils/logger", () => ({
@@ -122,24 +122,87 @@ describe("StellarKraal API", () => {
   });
 
   describe("POST /api/loan/repay", () => {
-    it("returns xdr for valid payload", async () => {
+    it("returns xdr for valid payload with idempotency key", async () => {
+      const res = await request(app)
+        .post("/api/loan/repay")
+        .set("Idempotency-Key", "test-key-001")
+        .send({
+          borrower: "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+          loan_id: 1,
+          amount: 200000,
+        });
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("xdr");
+    });
+
+    it("returns 400 when Idempotency-Key header is missing", async () => {
       const res = await request(app).post("/api/loan/repay").send({
         borrower: "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
         loan_id: 1,
         amount: 200000,
       });
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty("xdr");
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/Idempotency-Key/);
+    });
+
+    it("returns cached response for duplicate idempotency key", async () => {
+      const key = `idem-dup-${Date.now()}`;
+      const payload = {
+        borrower: "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+        loan_id: 2,
+        amount: 100000,
+      };
+      const first = await request(app).post("/api/loan/repay").set("Idempotency-Key", key).send(payload);
+      const second = await request(app).post("/api/loan/repay").set("Idempotency-Key", key).send(payload);
+      expect(second.status).toBe(first.status);
+      expect(second.body).toEqual(first.body);
+      expect(second.headers["x-idempotent-replayed"]).toBe("true");
     });
 
     it("returns 400 for invalid Stellar public key", async () => {
-      const res = await request(app).post("/api/loan/repay").send({
-        borrower: "NOT_A_VALID_KEY",
-        loan_id: 1,
-        amount: 200000,
-      });
+      const res = await request(app)
+        .post("/api/loan/repay")
+        .set("Idempotency-Key", "test-key-invalid")
+        .send({
+          borrower: "NOT_A_VALID_KEY",
+          loan_id: 1,
+          amount: 200000,
+        });
       expect(res.status).toBe(400);
       expect(res.body).toHaveProperty("error", "Validation failed");
+    });
+  });
+
+  describe("GET /api/loans (pagination)", () => {
+    it("returns paginated envelope with defaults", async () => {
+      const res = await request(app).get("/api/loans");
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("data");
+      expect(res.body).toHaveProperty("total");
+      expect(res.body).toHaveProperty("page", 1);
+      expect(res.body).toHaveProperty("pageSize", 20);
+    });
+
+    it("respects ?page and ?pageSize params", async () => {
+      const res = await request(app).get("/api/loans?page=2&pageSize=10");
+      expect(res.status).toBe(200);
+      expect(res.body.page).toBe(2);
+      expect(res.body.pageSize).toBe(10);
+    });
+
+    it("returns 400 for invalid page param", async () => {
+      const res = await request(app).get("/api/loans?page=0");
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 400 for pageSize > 100", async () => {
+      const res = await request(app).get("/api/loans?pageSize=101");
+      expect(res.status).toBe(400);
+    });
+
+    it("adds deprecation warning header when no pagination params", async () => {
+      const res = await request(app).get("/api/loans");
+      expect(res.headers["deprecation"]).toBe("true");
     });
   });
 
