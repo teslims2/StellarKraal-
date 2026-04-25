@@ -54,6 +54,7 @@ pub struct LoanRecord {
     pub id: u64,
     pub borrower: Address,
     pub collateral_id: u64,
+    pub collateral_value: i128, // Packed from CollateralRecord to save reads
     pub principal: i128,
     pub outstanding: i128,
     pub status: LoanStatus,
@@ -159,6 +160,7 @@ impl StellarKraal {
             id: loan_id,
             borrower: borrower.clone(),
             collateral_id,
+            collateral_value: collateral.appraised_value,
             principal: amount,
             outstanding: amount,
             status: LoanStatus::Active,
@@ -290,16 +292,11 @@ impl StellarKraal {
         if loan.outstanding == 0 {
             return Ok(i128::MAX);
         }
-        let collateral: CollateralRecord = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Collateral(loan.collateral_id))
-            .ok_or(Error::CollateralNotFound)?;
-
+        
         let liq_thr: u32 = env.storage().instance().get(&LIQ_THR).unwrap();
         // health = (collateral_value * liq_threshold) / (outstanding * 10_000)
-        let numerator = collateral
-            .appraised_value
+        let numerator = loan
+            .collateral_value
             .checked_mul(liq_thr as i128)
             .ok_or(Error::InvalidAmount)?;
         let denominator = loan.outstanding.checked_mul(10_000).ok_or(Error::InvalidAmount)?;

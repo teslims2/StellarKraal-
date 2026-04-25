@@ -11,14 +11,32 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { SorobanRpc } from "@stellar/stellar-sdk";
-import { z } from "zod";
-import { stellarPublicKeySchema } from "./validators/stellar";
-import { asyncHandler } from "./utils/asyncHandler";
+import logger, { createRequestLogger } from "./utils/logger";
+import { randomUUID } from "crypto";
 const { Server } = SorobanRpc;
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Request ID middleware
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const requestId = randomUUID();
+  (req as any).requestId = requestId;
+  (req as any).logger = createRequestLogger(requestId);
+  res.setHeader("X-Request-ID", requestId);
+  next();
+});
+
+// Request logging middleware
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const reqLogger = (req as any).logger;
+  reqLogger.info(`${req.method} ${req.path}`, {
+    method: req.method,
+    path: req.path,
+  });
+  next();
+});
 
 const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
@@ -26,6 +44,9 @@ const NETWORK_PASSPHRASE =
   process.env.NEXT_PUBLIC_NETWORK === "mainnet"
     ? Networks.PUBLIC
     : Networks.TESTNET;
+
+const APP_VERSION = process.env.npm_package_version || "1.0.0";
+const startTime = Date.now();
 
 const server = new Server(RPC_URL);
 
@@ -56,7 +77,7 @@ async function buildContractTx(
   method: string,
   args: xdr.ScVal[]
 ): Promise<string> {
-  const account = await server.getAccount(sourceAddress);
+  const account = await rpcClient.getAccount(sourceAddress);
   const contract = new Contract(CONTRACT_ID);
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
@@ -66,11 +87,42 @@ async function buildContractTx(
     .setTimeout(30)
     .build();
 
-  const prepared = await server.prepareTransaction(tx);
+  const prepared = await rpcClient.prepareTransaction(tx);
   return prepared.toXDR();
 }
 
 // ── routes ────────────────────────────────────────────────────────────────────
+
+// GET /api/health - Health check endpoint
+app.get("/api/health", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const uptime = Math.floor((Date.now() - startTime) / 1000);
+    
+    // Check RPC connectivity
+    let rpcReachable = false;
+    try {
+      await server.getHealth();
+      rpcReachable = true;
+    } catch (error) {
+      console.warn("RPC health check failed:", (error as Error).message);
+    }
+
+    const healthData = {
+      status: rpcReachable ? "healthy" : "degraded",
+      version: APP_VERSION,
+      uptime,
+      rpcReachable,
+    };
+
+    if (rpcReachable) {
+      res.status(200).json(healthData);
+    } else {
+      res.status(503).json(healthData);
+    }
+  } catch (error) {
+    next(error);
+  }
+});
 
 // POST /api/collateral/register
 app.post("/api/collateral/register", asyncHandler(async (req: Request, res: Response) => {
@@ -134,9 +186,10 @@ app.post("/api/loan/repay", asyncHandler(async (req: Request, res: Response) => 
 }));
 
 // GET /api/loan/:id
-app.get("/api/loan/:id", asyncHandler(async (req: Request, res: Response) => {
-  const contract = new Contract(CONTRACT_ID);
-    const account = await server.getAccount(
+app.get("/api/loan/:id", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const contract = new Contract(CONTRACT_ID);
+    const account = await rpcClient.getAccount(
       "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN" // fee-less read account
     );
     const tx = new TransactionBuilder(account, {
@@ -149,14 +202,15 @@ app.get("/api/loan/:id", asyncHandler(async (req: Request, res: Response) => {
       .setTimeout(30)
       .build();
 
-    const result = await server.simulateTransaction(tx);
+    const result = await rpcClient.simulateTransaction(tx);
     res.json({ result: (result as any).result?.retval });
 }));
 
 // GET /api/health/:loanId
-app.get("/api/health/:loanId", asyncHandler(async (req: Request, res: Response) => {
-  const contract = new Contract(CONTRACT_ID);
-    const account = await server.getAccount(
+app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const contract = new Contract(CONTRACT_ID);
+    const account = await rpcClient.getAccount(
       "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN"
     );
     const tx = new TransactionBuilder(account, {
@@ -172,26 +226,27 @@ app.get("/api/health/:loanId", asyncHandler(async (req: Request, res: Response) 
       .setTimeout(30)
       .build();
 
-    const result = await server.simulateTransaction(tx);
+    const result = await rpcClient.simulateTransaction(tx);
     res.json({ health_factor: (result as any).result?.retval });
 }));
 
 // ── error handler ─────────────────────────────────────────────────────────────
-app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-  const statusCode = err.statusCode || 500;
-  const isProduction = process.env.NODE_ENV === "production";
-  
-  console.error(err);
-  
-  res.status(statusCode).json({
-    error: statusCode === 500 && isProduction ? "Internal Server Error" : err.name || "Error",
-    message: err.message,
-    statusCode,
-    ...(isProduction ? {} : { stack: err.stack })
+app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+  const reqLogger = (req as any).logger || logger;
+  reqLogger.error("Unhandled error", {
+    error: err.message,
+    stack: err.stack,
   });
+  res.status(500).json({ error: err.message });
 });
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
-app.listen(PORT, () => console.log(`StellarKraal API running on :${PORT}`));
+app.listen(PORT, () => {
+  logger.info(`StellarKraal API running on port ${PORT}`, {
+    port: PORT,
+    environment: process.env.NODE_ENV || "development",
+    logLevel: process.env.LOG_LEVEL || "info",
+  });
+});
 
 export default app;
