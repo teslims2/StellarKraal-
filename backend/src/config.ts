@@ -18,6 +18,8 @@ const envSchema = z.object({
   // Connection pool size
   POOL_MIN: z.string().default("2"),
   POOL_MAX: z.string().default("10"),
+  // Appraisal cache TTL in milliseconds
+  APPRAISAL_CACHE_TTL_MS: z.string().default("300000"),
 });
 
 const parsed = envSchema.safeParse(process.env);
