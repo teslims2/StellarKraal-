@@ -1,0 +1,6 @@
+# Trivy Vulnerability Suppression File
+# Add CVE IDs here that are accepted false positives or have been risk-accepted
+# Format: CVE-YYYY-NNNNN
+# Example: CVE-2023-12345
+
+# Add your suppressions below with justification comments
