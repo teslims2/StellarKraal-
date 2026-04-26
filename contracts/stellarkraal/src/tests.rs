@@ -2,7 +2,7 @@
 mod tests {
     use super::*;
     use soroban_sdk::{
-        symbol_short,
+        symbol_short, vec,
         testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation},
         Address, Env, IntoVal,
     };
@@ -79,7 +79,7 @@ mod tests {
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
         // max loan = 1_000_000 * 60% = 600_000
-        let loan_id = client.request_loan(&borrower, &col_id, &600_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
         assert_eq!(loan_id, 1);
     }
 
@@ -91,7 +91,7 @@ mod tests {
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
-        client.request_loan(&borrower, &col_id, &700_000i128);
+        client.request_loan(&borrower, &vec![&env, col_id], &700_000i128);
     }
 
     #[test]
@@ -103,7 +103,60 @@ mod tests {
         let owner = Address::generate(&env);
         let attacker = Address::generate(&env);
         let col_id = client.register_livestock(&owner, &symbol_short!("goat"), &3u32, &500_000i128);
-        client.request_loan(&attacker, &col_id, &100_000i128);
+        client.request_loan(&attacker, &vec![&env, col_id], &100_000i128);
+    }
+
+    #[test]
+    fn test_request_loan_multi_collateral() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        // cattle=600_000 + goats=400_000 = 1_000_000 total; max loan = 600_000
+        let col1 = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &600_000i128);
+        let col2 = client.register_livestock(&borrower, &symbol_short!("goat"), &5u32, &400_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col1, col2], &600_000i128);
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.total_collateral_value, 1_000_000);
+        assert_eq!(loan.collateral_ids.len(), 2);
+    }
+
+    #[test]
+    fn test_request_loan_three_collaterals() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let col1 = client.register_livestock(&borrower, &symbol_short!("cattle"), &1u32, &300_000i128);
+        let col2 = client.register_livestock(&borrower, &symbol_short!("goat"), &3u32, &200_000i128);
+        let col3 = client.register_livestock(&borrower, &symbol_short!("sheep"), &5u32, &100_000i128);
+        // total = 600_000; max loan = 360_000
+        let loan_id = client.request_loan(&borrower, &vec![&env, col1, col2, col3], &360_000i128);
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.total_collateral_value, 600_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "InsufficientCollateral")]
+    fn test_multi_collateral_exceeds_combined_ltv() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let col1 = client.register_livestock(&borrower, &symbol_short!("cattle"), &1u32, &500_000i128);
+        let col2 = client.register_livestock(&borrower, &symbol_short!("goat"), &2u32, &500_000i128);
+        // total = 1_000_000; max = 600_000; request 700_000 → fail
+        client.request_loan(&borrower, &vec![&env, col1, col2], &700_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "CollateralNotFound")]
+    fn test_request_loan_empty_collateral_ids_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        client.request_loan(&borrower, &vec![&env], &100_000i128);
     }
 
     // ── repay_loan ────────────────────────────────────────────────────────
@@ -114,7 +167,7 @@ mod tests {
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
-        let loan_id = client.request_loan(&borrower, &col_id, &600_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
         client.repay_loan(&borrower, &loan_id, &200_000i128);
         let loan = client.get_loan(&loan_id);
         assert_eq!(loan.outstanding, 400_000);
@@ -127,7 +180,7 @@ mod tests {
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
-        let loan_id = client.request_loan(&borrower, &col_id, &600_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
         client.repay_loan(&borrower, &loan_id, &600_000i128);
         let loan = client.get_loan(&loan_id);
         assert_eq!(loan.status, LoanStatus::Repaid);
@@ -141,7 +194,7 @@ mod tests {
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
-        let loan_id = client.request_loan(&borrower, &col_id, &600_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
         client.repay_loan(&borrower, &loan_id, &600_000i128);
         client.repay_loan(&borrower, &loan_id, &1i128); // should panic
     }
@@ -154,7 +207,7 @@ mod tests {
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
-        let loan_id = client.request_loan(&borrower, &col_id, &600_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
         let hf = client.health_factor(&loan_id);
         // hf = (1_000_000 * 8000) / (600_000 * 10_000) * 10_000 = 13_333
         assert!(hf >= 10_000, "health factor should be >= 1.0");
@@ -170,7 +223,7 @@ mod tests {
         let borrower = Address::generate(&env);
         let liquidator = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
-        let loan_id = client.request_loan(&borrower, &col_id, &600_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
         client.liquidate(&liquidator, &loan_id);
     }
 
@@ -182,7 +235,7 @@ mod tests {
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("sheep"), &10u32, &2_000_000i128);
-        let loan_id = client.request_loan(&borrower, &col_id, &500_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &500_000i128);
         let loan = client.get_loan(&loan_id);
         assert_eq!(loan.principal, 500_000);
         assert_eq!(loan.borrower, borrower);
@@ -198,6 +251,21 @@ mod tests {
         let col = client.get_collateral(&col_id);
         assert_eq!(col.count, 7);
         assert_eq!(col.appraised_value, 700_000);
+    }
+
+    #[test]
+    fn test_get_loan_collaterals_ok() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let col1 = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &600_000i128);
+        let col2 = client.register_livestock(&borrower, &symbol_short!("goat"), &3u32, &400_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col1, col2], &600_000i128);
+        let collaterals = client.get_loan_collaterals(&loan_id);
+        assert_eq!(collaterals.len(), 2);
+        assert_eq!(collaterals.get(0).unwrap().animal_type, symbol_short!("cattle"));
+        assert_eq!(collaterals.get(1).unwrap().animal_type, symbol_short!("goat"));
     }
 
     #[test]
@@ -239,7 +307,7 @@ mod tests {
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
-        client.request_loan(&borrower, &col_id, &0i128);
+        client.request_loan(&borrower, &vec![&env, col_id], &0i128);
     }
 
     #[test]
@@ -250,7 +318,7 @@ mod tests {
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
-        let loan_id = client.request_loan(&borrower, &col_id, &600_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
         client.repay_loan(&borrower, &loan_id, &0i128);
     }
 
@@ -273,7 +341,7 @@ mod tests {
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
-        let loan_id = client.request_loan(&borrower, &col_id, &600_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
         // Repay more than outstanding — should cap and mark Repaid
         client.repay_loan(&borrower, &loan_id, &999_999_999i128);
         let loan = client.get_loan(&loan_id);
@@ -340,7 +408,7 @@ mod tests {
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
         client.pause(&admin);
-        client.request_loan(&borrower, &col_id, &600_000i128);
+        client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
     }
 
     #[test]
@@ -352,7 +420,7 @@ mod tests {
         let borrower = Address::generate(&env);
         let liquidator = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
-        let loan_id = client.request_loan(&borrower, &col_id, &600_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
         client.pause(&admin);
         client.liquidate(&liquidator, &loan_id);
     }
@@ -364,7 +432,7 @@ mod tests {
         let client = StellarKraalClient::new(&env, &cid);
         let borrower = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
-        let loan_id = client.request_loan(&borrower, &col_id, &600_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
         client.pause(&admin);
         client.repay_loan(&borrower, &loan_id, &200_000i128);
         let loan = client.get_loan(&loan_id);
@@ -550,7 +618,7 @@ mod tests {
             // Register enough collateral for the amount
             let val = amount * 2; 
             let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &1, &val);
-            let loan_id = client.request_loan(&borrower, &col_id, &amount);
+            let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &amount);
             
             client.repay_loan(&borrower, &loan_id, &repay);
             let loan = client.get_loan(&loan_id);
@@ -570,7 +638,7 @@ mod tests {
             let client = StellarKraalClient::new(&env, &cid);
             let borrower = Address::generate(&env);
             let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &1, &(amount * 2));
-            let loan_id = client.request_loan(&borrower, &col_id, &amount);
+            let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &amount);
             
             client.repay_loan(&borrower, &loan_id, &amount);
             let hf = client.health_factor(&loan_id);
@@ -598,7 +666,7 @@ mod tests {
             
             let val = amount * 10 / 7; // So amount is ~70% of val (between 60% and 80%)
             let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &1, &val);
-            let loan_id = client.request_loan(&borrower, &col_id, &amount);
+            let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &amount);
             
             let hf = client.health_factor(&loan_id);
             
@@ -625,17 +693,17 @@ mod tests {
             if amount <= 0 { return Ok(()); }
             
             let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &1, &val);
-            let loan_id = client.request_loan(&borrower, &col_id, &amount);
+            let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &amount);
             
             let loan = client.get_loan(&loan_id);
             // Invariant 7: Status is Active after request
             assert_eq!(loan.status, LoanStatus::Active);
             // Invariant 8: Borrower matches
             assert_eq!(loan.borrower, borrower);
-            // Invariant 9: Collateral ID matches
-            assert_eq!(loan.collateral_id, col_id);
-            // Invariant 10: Packed collateral value matches
-            assert_eq!(loan.collateral_value, val);
+            // Invariant 9: Collateral IDs contains the registered collateral
+            assert_eq!(loan.collateral_ids.get(0).unwrap(), col_id);
+            // Invariant 10: Packed total collateral value matches
+            assert_eq!(loan.total_collateral_value, val);
             // Invariant 11: Initial outstanding == principal
             assert_eq!(loan.outstanding, loan.principal);
         }

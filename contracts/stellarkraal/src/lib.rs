@@ -4,7 +4,7 @@ mod tests;
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env, Symbol,
-    events,
+    Vec, events,
 };
 
 // ── Storage keys ────────────────────────────────────────────────────────────
@@ -58,8 +58,8 @@ pub struct CollateralRecord {
 pub struct LoanRecord {
     pub id: u64,
     pub borrower: Address,
-    pub collateral_id: u64,
-    pub collateral_value: i128, // Packed from CollateralRecord to save reads
+    pub collateral_ids: Vec<u64>,
+    pub total_collateral_value: i128,
     pub principal: i128,
     pub outstanding: i128,
     pub status: LoanStatus,
@@ -148,7 +148,7 @@ impl StellarKraal {
     pub fn request_loan(
         env: Env,
         borrower: Address,
-        collateral_id: u64,
+        collateral_ids: Vec<u64>,
         amount: i128,
     ) -> Result<u64, Error> {
         Self::assert_initialized(&env)?;
@@ -156,20 +156,29 @@ impl StellarKraal {
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
+        if collateral_ids.is_empty() {
+            return Err(Error::CollateralNotFound);
+        }
         borrower.require_auth();
 
-        let collateral: CollateralRecord = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Collateral(collateral_id))
-            .ok_or(Error::CollateralNotFound)?;
-
-        if collateral.owner != borrower {
-            return Err(Error::Unauthorized);
+        // Sum appraised values across all collaterals, verify ownership
+        let mut total_collateral_value: i128 = 0;
+        for col_id in collateral_ids.iter() {
+            let collateral: CollateralRecord = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Collateral(col_id))
+                .ok_or(Error::CollateralNotFound)?;
+            if collateral.owner != borrower {
+                return Err(Error::Unauthorized);
+            }
+            total_collateral_value = total_collateral_value
+                .checked_add(collateral.appraised_value)
+                .ok_or(Error::InvalidAmount)?;
         }
 
         let ltv: u32 = env.storage().instance().get(&LTV).unwrap();
-        let max_loan = collateral.appraised_value
+        let max_loan = total_collateral_value
             .checked_mul(ltv as i128)
             .ok_or(Error::InvalidAmount)?
             / 10_000;
@@ -187,21 +196,28 @@ impl StellarKraal {
         let loan = LoanRecord {
             id: loan_id,
             borrower: borrower.clone(),
-            collateral_id,
-            collateral_value: collateral.appraised_value,
+            collateral_ids: collateral_ids.clone(),
+            total_collateral_value,
             principal: amount,
             outstanding: amount,
             status: LoanStatus::Active,
         };
         env.storage().persistent().set(&DataKey::Loan(loan_id), &loan);
 
-        let mut col = collateral;
-        col.loan_id = loan_id;
-        env.storage().persistent().set(&DataKey::Collateral(collateral_id), &col);
+        // Mark all collaterals as locked to this loan
+        for col_id in collateral_ids.iter() {
+            let mut col: CollateralRecord = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Collateral(col_id))
+                .unwrap();
+            col.loan_id = loan_id;
+            env.storage().persistent().set(&DataKey::Collateral(col_id), &col);
+        }
 
         let token_addr: Address = env.storage().instance().get(&TOKEN).unwrap();
         let token_client = token::Client::new(&env, &token_addr);
-        
+
         // Transfer fee to treasury
         if fee > 0 {
             let treasury: Address = env.storage().instance().get(&TREASURY).unwrap();
@@ -328,6 +344,25 @@ impl StellarKraal {
             .ok_or(Error::CollateralNotFound)
     }
 
+    // ── get_loan_collaterals ──────────────────────────────────────────────
+    pub fn get_loan_collaterals(env: Env, loan_id: u64) -> Result<Vec<CollateralRecord>, Error> {
+        let loan: LoanRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Loan(loan_id))
+            .ok_or(Error::LoanNotFound)?;
+        let mut records: Vec<CollateralRecord> = Vec::new(&env);
+        for col_id in loan.collateral_ids.iter() {
+            let col: CollateralRecord = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Collateral(col_id))
+                .ok_or(Error::CollateralNotFound)?;
+            records.push_back(col);
+        }
+        Ok(records)
+    }
+
     // ── update_fee_config ─────────────────────────────────────────────────
     pub fn update_fee_config(
         env: Env,
@@ -407,11 +442,10 @@ impl StellarKraal {
         if loan.outstanding == 0 {
             return Ok(i128::MAX);
         }
-        
         let liq_thr: u32 = env.storage().instance().get(&LIQ_THR).unwrap();
-        // health = (collateral_value * liq_threshold) / (outstanding * 10_000)
+        // health = (total_collateral_value * liq_threshold) / (outstanding * 10_000)
         let numerator = loan
-            .collateral_value
+            .total_collateral_value
             .checked_mul(liq_thr as i128)
             .ok_or(Error::InvalidAmount)?;
         let denominator = loan.outstanding.checked_mul(10_000).ok_or(Error::InvalidAmount)?;
