@@ -1,11 +1,14 @@
 # Features Completed
 
 ## Summary
-Successfully implemented 4 major features for the StellarKraal platform:
+Successfully implemented 7 major features for the StellarKraal platform:
 1. API versioning with /api/v1/ prefix
 2. Comprehensive integration tests with 80%+ coverage
 3. Collateral registration form with real-time validation
 4. Form auto-save functionality with localStorage
+5. Graceful shutdown for Express server
+6. Environment variable validation on startup
+7. Stellar RPC client with retry and circuit breaker
 
 ---
 
@@ -256,8 +259,15 @@ Unversioned routes (e.g., `/api/collateral/register`) now:
 - ✅ `backend/src/routes/v1.ts` (created)
 - ✅ `backend/src/routes/v1.test.ts` (created)
 - ✅ `backend/src/routes/v1.integration.test.ts` (created)
-- ✅ `backend/src/index.ts` (modified)
+- ✅ `backend/src/index.ts` (modified - graceful shutdown, health check)
+- ✅ `backend/src/config.ts` (modified - enhanced validation)
+- ✅ `backend/src/config.test.ts` (created)
+- ✅ `backend/src/utils/connectionPool.ts` (modified - added close method)
+- ✅ `backend/src/utils/rpcClient.ts` (already implemented)
+- ✅ `backend/src/utils/rpcClient.test.ts` (created)
+- ✅ `backend/src/gracefulShutdown.test.ts` (created)
 - ✅ `backend/TEST_COVERAGE.md` (created)
+- ✅ `env.example` (modified - added NODE_ENV and FRONTEND_URL)
 
 ### Frontend
 - ✅ `frontend/src/components/CollateralRegistrationForm.tsx` (created)
@@ -269,7 +279,7 @@ Unversioned routes (e.g., `/api/collateral/register`) now:
 
 ### Documentation
 - ✅ `IMPLEMENTATION_SUMMARY.md` (created)
-- ✅ `FEATURES_COMPLETED.md` (created)
+- ✅ `FEATURES_COMPLETED.md` (updated)
 
 ---
 
@@ -329,6 +339,236 @@ Unversioned routes (e.g., `/api/collateral/register`) now:
 - ✅ Saved data cleared on successful form submission
 - ✅ Auto-save indicator shown in the form UI
 - ✅ Works across all multi-field forms in the app
+
+### Feature #11 (Graceful Shutdown)
+- ✅ SIGTERM and SIGINT handled gracefully
+- ✅ In-flight requests allowed to complete (30s timeout)
+- ✅ New connections rejected during shutdown
+- ✅ Database pool closed after all requests complete
+- ✅ Shutdown sequence logged at each step
+
+### Feature #14 (Environment Validation)
+- ✅ All required env vars defined in Zod schema
+- ✅ Missing or invalid vars cause process to exit with code 1
+- ✅ Error message lists all missing/invalid variables
+- ✅ Optional vars have documented defaults
+- ✅ env.example kept in sync with the schema
+
+### Feature #12 (RPC Client Resilience)
+- ✅ RPC calls retry up to 3 times with exponential backoff
+- ✅ Circuit breaker opens after 5 consecutive failures (50% error rate)
+- ✅ Open circuit returns 503 immediately without calling RPC
+- ✅ Circuit resets after 60 seconds
+- ✅ Circuit state visible in /api/health endpoint
+
+---
+
+## Feature #11: Graceful Shutdown for Express Server
+
+### Status: ✅ COMPLETE
+
+### What Was Built
+- SIGTERM and SIGINT signal handlers for graceful shutdown
+- Middleware to reject new connections during shutdown
+- 30-second timeout for in-flight requests to complete
+- Database connection pool cleanup
+- Comprehensive shutdown logging at each step
+- Uncaught exception and unhandled rejection handlers
+
+### Shutdown Sequence
+1. **Signal received** (SIGTERM/SIGINT)
+2. **Stop accepting new connections** - HTTP server closes
+3. **Reject new requests** - Return 503 with "Connection: close" header
+4. **Wait for in-flight requests** - Monitor connection pool (max 30s)
+5. **Close database connections** - Clean up connection pool
+6. **Exit gracefully** - Process exits with code 0
+
+### Key Features
+- **Timeout protection:** Forces exit after 30 seconds if graceful shutdown hangs
+- **Request tracking:** Monitors in-flight requests via connection pool stats
+- **Idempotent:** Ignores duplicate signals during shutdown
+- **Error handling:** Catches errors during shutdown and exits with code 1
+- **Logging:** Detailed logs at each shutdown step
+
+### Key Files
+- `backend/src/index.ts` - Shutdown handlers and middleware
+- `backend/src/utils/connectionPool.ts` - Added close() method
+- `backend/src/gracefulShutdown.test.ts` - Shutdown tests
+
+### Usage Example
+```bash
+# Send SIGTERM to gracefully shutdown
+kill -TERM <pid>
+
+# Or use SIGINT (Ctrl+C)
+# Server will:
+# 1. Stop accepting new connections
+# 2. Wait for in-flight requests (max 30s)
+# 3. Close database connections
+# 4. Exit cleanly
+```
+
+### Logs During Shutdown
+```
+[INFO] Received SIGTERM, starting graceful shutdown...
+[INFO] HTTP server closed, no longer accepting connections
+[INFO] Waiting for in-flight requests to complete (inUse: 3)
+[INFO] Waiting for in-flight requests to complete (inUse: 1)
+[INFO] All in-flight requests completed
+[INFO] Database connection pool closed
+[INFO] Graceful shutdown complete
+```
+
+---
+
+## Feature #14: Environment Variable Validation on Startup
+
+### Status: ✅ COMPLETE
+
+### What Was Built
+- Comprehensive Zod schema for all environment variables
+- Validation runs before server starts (import "./config" at top)
+- Clear error messages listing missing/invalid variables
+- Process exits with code 1 on validation failure
+- Separate reporting for missing vs invalid variables
+- Enhanced error messages with field-specific validation
+
+### Validated Variables
+
+#### Required
+- `RPC_URL` - Must be valid URL
+- `CONTRACT_ID` - Must be non-empty string
+
+#### Optional with Defaults
+- `PORT` - Must be numeric string (default: "3001")
+- `NEXT_PUBLIC_NETWORK` - Must be "testnet" or "mainnet" (default: "testnet")
+- `RATE_LIMIT_GLOBAL` - Must be numeric string (default: "60")
+- `RATE_LIMIT_WRITE` - Must be numeric string (default: "10")
+- `TIMEOUT_GLOBAL_MS` - Must be numeric string (default: "30000")
+- `TIMEOUT_WRITE_MS` - Must be numeric string (default: "15000")
+- `POOL_MIN` - Must be numeric string (default: "2")
+- `POOL_MAX` - Must be numeric string (default: "10")
+- `APPRAISAL_CACHE_TTL_MS` - Must be numeric string (default: "300000")
+- `NODE_ENV` - Must be "development", "production", or "test" (default: "development")
+
+#### Optional with Validation
+- `WEBHOOK_SECRET` - Min 16 characters if provided
+- `ADMIN_API_KEY` - Min 8 characters if provided
+- `JWT_SECRET` - Min 16 characters if provided
+- `FRONTEND_URL` - Must be valid URL if provided
+
+### Error Output Example
+```
+❌ Environment validation failed
+
+Missing required variables:
+  - RPC_URL: Required
+  - CONTRACT_ID: Required
+
+Invalid variable values:
+  - PORT: PORT must be a valid number
+  - WEBHOOK_SECRET: WEBHOOK_SECRET must be at least 16 characters
+
+Please check your .env file or environment configuration.
+See env.example for reference.
+```
+
+### Key Files
+- `backend/src/config.ts` - Enhanced validation schema and error reporting
+- `backend/src/config.test.ts` - Validation tests
+- `env.example` - Updated with all variables and documentation
+
+### Benefits
+- **Fail fast:** Catches configuration errors before server starts
+- **Clear errors:** Lists all missing/invalid variables at once
+- **Type safety:** Zod schema provides TypeScript types
+- **Documentation:** env.example kept in sync with schema
+- **Production ready:** Prevents misconfigured deployments
+
+---
+
+## Feature #12: Stellar RPC Client with Retry and Circuit Breaker
+
+### Status: ✅ COMPLETE (Already Implemented)
+
+### What Was Built
+- RPC client wrapper with exponential backoff retry logic
+- Circuit breaker pattern using opossum library
+- Separate circuit breakers for each RPC method
+- Circuit state exposed in health check endpoint
+- Comprehensive logging of circuit events
+
+### Retry Configuration
+- **Max retries:** 3 attempts
+- **Backoff strategy:** Exponential (1s, 2s, 4s)
+- **Retry on:** All RPC errors
+- **Logging:** Warns on each retry attempt
+
+### Circuit Breaker Configuration
+- **Timeout:** 10 seconds per RPC call
+- **Error threshold:** 50% error rate triggers opening
+- **Volume threshold:** 5 requests minimum before circuit can open
+- **Reset timeout:** 60 seconds before attempting to close
+- **Rolling window:** 10 seconds for error calculation
+
+### Circuit States
+- **Closed:** Normal operation, requests pass through
+- **Open:** Circuit tripped, returns 503 immediately without calling RPC
+- **Half-Open:** Testing if service recovered (automatic after 60s)
+
+### Protected Methods
+1. `getAccount(address)` - Fetch account details
+2. `prepareTransaction(tx)` - Prepare transaction for submission
+3. `simulateTransaction(tx)` - Simulate transaction execution
+4. `getHealth()` - Check RPC node health
+
+### Health Check Integration
+```json
+GET /api/health
+
+{
+  "status": "healthy",
+  "version": "1.0.0",
+  "uptime": 3600,
+  "rpcReachable": true,
+  "circuitBreaker": {
+    "healthy": true,
+    "states": {
+      "getAccount": "closed",
+      "prepareTransaction": "closed",
+      "simulateTransaction": "closed",
+      "getHealth": "closed"
+    }
+  },
+  "pool": {
+    "size": 5,
+    "available": 3,
+    "inUse": 2,
+    "min": 2,
+    "max": 10
+  }
+}
+```
+
+### Circuit Breaker Events
+```
+[ERROR] Circuit breaker opened for stellar-rpc
+[INFO] Circuit breaker half-open for stellar-rpc
+[INFO] Circuit breaker closed for stellar-rpc
+```
+
+### Key Files
+- `backend/src/utils/rpcClient.ts` - RPC client with retry and circuit breaker
+- `backend/src/utils/rpcClient.test.ts` - RPC client tests
+- `backend/src/index.ts` - Health check integration
+- `backend/package.json` - Added opossum dependency
+
+### Benefits
+- **Resilience:** Automatic retry on transient failures
+- **Protection:** Circuit breaker prevents cascading failures
+- **Observability:** Circuit state visible in health check
+- **Fast failure:** Open circuit returns 503 immediately
+- **Auto-recovery:** Circuit resets after 60 seconds
 
 ---
 

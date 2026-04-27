@@ -107,6 +107,19 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+// Shutdown middleware - reject new requests during graceful shutdown
+let isShuttingDown = false;
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (isShuttingDown) {
+    res.setHeader("Connection", "close");
+    return res.status(503).json({
+      error: "Server is shutting down",
+      message: "Please retry your request",
+    });
+  }
+  next();
+});
+
 // Request logging middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
   const reqLogger = (req as any).logger;
@@ -311,15 +324,22 @@ app.get(
         console.warn("RPC health check failed:", (error as Error).message);
       }
 
+      const circuitStates = rpcClient.getCircuitStates();
+      const circuitHealthy = rpcClient.isHealthy();
+
       const healthData = {
-        status: rpcReachable ? "healthy" : "degraded",
+        status: rpcReachable && circuitHealthy ? "healthy" : "degraded",
         version: APP_VERSION,
         uptime,
         rpcReachable,
+        circuitBreaker: {
+          healthy: circuitHealthy,
+          states: circuitStates,
+        },
         pool: pool.stats(),
       };
 
-      res.status(rpcReachable ? 200 : 503).json(healthData);
+      res.status(rpcReachable && circuitHealthy ? 200 : 503).json(healthData);
     } catch (error) {
       next(error);
     }
@@ -705,12 +725,92 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
 });
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
-app.listen(PORT, () => {
+const httpServer = app.listen(PORT, () => {
   logger.info(`StellarKraal API running on port ${PORT}`, {
     port: PORT,
     environment: process.env.NODE_ENV || "development",
     logLevel: process.env.LOG_LEVEL || "info",
   });
+});
+
+// ── Graceful Shutdown ─────────────────────────────────────────────────────────
+
+const SHUTDOWN_TIMEOUT_MS = 30000; // 30 seconds
+
+async function gracefulShutdown(signal: string): Promise<void> {
+  if (isShuttingDown) {
+    logger.warn("Shutdown already in progress, ignoring signal", { signal });
+    return;
+  }
+
+  isShuttingDown = true;
+  logger.info(`Received ${signal}, starting graceful shutdown...`, { signal });
+
+  // Stop accepting new connections
+  httpServer.close(() => {
+    logger.info("HTTP server closed, no longer accepting connections");
+  });
+
+  // Set a timeout to force shutdown if graceful shutdown takes too long
+  const forceShutdownTimer = setTimeout(() => {
+    logger.error("Graceful shutdown timeout exceeded, forcing exit", {
+      timeoutMs: SHUTDOWN_TIMEOUT_MS,
+    });
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+
+  try {
+    // Wait for in-flight requests to complete
+    await new Promise<void>((resolve) => {
+      const checkInterval = setInterval(() => {
+        const stats = pool.stats();
+        if (stats.inUse === 0) {
+          clearInterval(checkInterval);
+          resolve();
+        } else {
+          logger.info("Waiting for in-flight requests to complete", {
+            inUse: stats.inUse,
+          });
+        }
+      }, 1000);
+    });
+
+    logger.info("All in-flight requests completed");
+
+    // Close database connections
+    pool.close();
+    logger.info("Database connection pool closed");
+
+    clearTimeout(forceShutdownTimer);
+    logger.info("Graceful shutdown complete");
+    process.exit(0);
+  } catch (error) {
+    logger.error("Error during graceful shutdown", {
+      error: (error as Error).message,
+    });
+    clearTimeout(forceShutdownTimer);
+    process.exit(1);
+  }
+}
+
+// Register signal handlers
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+// Handle uncaught errors
+process.on("uncaughtException", (error: Error) => {
+  logger.error("Uncaught exception", {
+    error: error.message,
+    stack: error.stack,
+  });
+  gracefulShutdown("uncaughtException");
+});
+
+process.on("unhandledRejection", (reason: unknown) => {
+  logger.error("Unhandled promise rejection", {
+    reason: reason instanceof Error ? reason.message : String(reason),
+  });
+  gracefulShutdown("unhandledRejection");
 });
 
 export default app;
