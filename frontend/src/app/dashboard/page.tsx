@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import WalletConnect from "@/components/WalletConnect";
 import CollateralCard from "@/components/CollateralCard";
 import RepayPanel from "@/components/RepayPanel";
@@ -12,20 +12,24 @@ export default function Dashboard() {
   const [healthFactor, setHealthFactor] = useState<number | null>(null);
   const [repayLoanId, setRepayLoanId] = useState("");
   const [repayAmount, setRepayAmount] = useState("");
+  const [activeLoanId, setActiveLoanId] = useState<string | null>(null);
 
   function handleProceedToRepay(nextLoanId: string, nextAmount: string) {
     setRepayLoanId(nextLoanId);
     setRepayAmount(nextAmount);
   }
 
-  async function fetchHealth() {
-    if (!loanId) return;
-    const res = await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL}/api/health/${loanId}`,
-    );
-    const data = await res.json();
-    setHealthFactor(Number(data.health_factor ?? 0));
-  }
+  useEffect(() => {
+    if (!activeLoanId) return;
+    async function fetchHealth() {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/health/${activeLoanId}`,
+      );
+      const data = await res.json();
+      setHealthFactor(Number(data.health_factor ?? 0));
+    }
+    void fetchHealth();
+  }, [activeLoanId]);
 
   return (
     <main className="max-w-2xl mx-auto px-4 py-10">
@@ -52,7 +56,7 @@ export default function Dashboard() {
                 onChange={(e) => setLoanId(e.target.value)}
               />
               <button
-                onClick={fetchHealth}
+                onClick={() => setActiveLoanId(loanId)}
                 className="bg-gold text-brown font-semibold px-4 min-h-[44px] w-full md:w-auto rounded-lg hover:bg-gold/80 transition"
               >
                 Check
