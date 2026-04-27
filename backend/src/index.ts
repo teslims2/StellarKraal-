@@ -46,7 +46,29 @@ import { asyncHandler } from "./utils/asyncHandler";
 import { stellarPublicKeySchema } from "./validators/stellar";
 import rpcClient from "./utils/rpcClient";
 import { registerWebhook, getWebhooks, getDeliveryLogs } from "./webhooks";
+import { fireAlert } from "./utils/alerting";
+import { rules } from "./utils/alertRules";
 const { Server } = SorobanRpc;
+
+// ── 5xx spike tracking (rolling 60s window) ───────────────────────────────────
+const fivexxTimestamps: number[] = [];
+const FIVEXX_WINDOW_MS = 60_000;
+const FIVEXX_THRESHOLD = 10;
+
+function track5xx() {
+  const now = Date.now();
+  fivexxTimestamps.push(now);
+  // evict old entries
+  while (fivexxTimestamps.length && fivexxTimestamps[0] < now - FIVEXX_WINDOW_MS) {
+    fivexxTimestamps.shift();
+  }
+  if (fivexxTimestamps.length >= FIVEXX_THRESHOLD) {
+    fireAlert(rules.fivexxSpike, `${fivexxTimestamps.length} 5xx errors in the last 60s`, {
+      count: fivexxTimestamps.length,
+      window: "60s",
+    });
+  }
+}
 
 // ── Idempotency cache (in-memory, 24h TTL) ───────────────────────────────────
 interface IdempotencyEntry {
@@ -713,6 +735,8 @@ app.delete("/api/loan/:id", (req: Request, res: Response) => {
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
   const reqLogger = (req as any).logger || logger;
   if (err instanceof PoolExhaustedError) {
+    track5xx();
+    fireAlert(rules.dbError, "Connection pool exhausted", { path: req.path });
     return res
       .status(503)
       .json({ error: "Service unavailable: connection pool exhausted" });
@@ -721,6 +745,7 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
     error: err.message,
     stack: err.stack,
   });
+  track5xx();
   res.status(500).json({ error: err.message });
 });
 

@@ -1,5 +1,7 @@
 import { SorobanRpc } from "@stellar/stellar-sdk";
 import CircuitBreaker from "opossum";
+import { fireAlert } from "./alerting";
+import { rules } from "./alertRules";
 
 const { Server } = SorobanRpc;
 
@@ -124,7 +126,7 @@ const getHealthBreaker = new CircuitBreaker(
   circuitBreakerOptions
 );
 
-// Circuit breaker event logging
+// Circuit breaker event logging + alerting
 [
   getAccountBreaker,
   prepareTransactionBreaker,
@@ -133,6 +135,9 @@ const getHealthBreaker = new CircuitBreaker(
 ].forEach((breaker) => {
   breaker.on("open", () => {
     console.error(`Circuit breaker opened for ${breaker.name}`);
+    fireAlert(rules.rpcCircuitOpen, `Circuit breaker opened for ${breaker.name}`, {
+      breaker: breaker.name,
+    });
   });
 
   breaker.on("halfOpen", () => {
@@ -141,6 +146,13 @@ const getHealthBreaker = new CircuitBreaker(
 
   breaker.on("close", () => {
     console.info(`Circuit breaker closed for ${breaker.name}`);
+  });
+
+  breaker.on("failure", (error: Error) => {
+    fireAlert(rules.rpcFailure, `RPC call failed: ${error.message}`, {
+      breaker: breaker.name,
+      error: error.message,
+    });
   });
 });
 
