@@ -3,6 +3,7 @@ import { config } from "./config";
 import express, { Request, Response, NextFunction } from "express";
 import {
   runMigrations,
+  getMigrationStatus,
   insertCollateral,
   listCollateral,
   getCollateral,
@@ -176,8 +177,21 @@ const server = new Server(RPC_URL);
 // Configure appraisal cache TTL from env
 configureCacheTTL(parseInt(config.APPRAISAL_CACHE_TTL_MS, 10));
 
-// Run DB migrations on startup
-runMigrations();
+// Run DB migrations on startup (automatic in development, manual in production)
+(async () => {
+  try {
+    await runMigrations();
+  } catch (error) {
+    logger.error("Failed to run migrations on startup", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    // In production, fail fast if migrations haven't been run
+    if (process.env.NODE_ENV === "production") {
+      logger.error("Production startup aborted due to migration failure");
+      process.exit(1);
+    }
+  }
+})();
 
 // ── Validation Schemas ────────────────────────────────────────────────────────
 
@@ -678,6 +692,15 @@ app.get("/api/admin/webhooks", (req: Request, res: Response) => {
 app.get("/api/admin/webhooks/logs", (req: Request, res: Response) => {
   res.json(getDeliveryLogs());
 });
+
+// GET /api/admin/migrations/status — migration status
+app.get(
+  "/api/admin/migrations/status",
+  asyncHandler(async (req: Request, res: Response) => {
+    const status = await getMigrationStatus();
+    res.json({ status });
+  }),
+);
 
 // ── soft-delete admin routes ──────────────────────────────────────────────────
 
