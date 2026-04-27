@@ -45,7 +45,7 @@ import { globalLimiter } from "./middleware/rateLimit";
 import { asyncHandler } from "./utils/asyncHandler";
 import { stellarPublicKeySchema } from "./validators/stellar";
 import rpcClient from "./utils/rpcClient";
-import { registerWebhook, getWebhooks, getDeliveryLogs } from "./webhooks";
+import { registerWebhook, getWebhooks, getDeliveryLogs, fireWebhooks } from "./webhooks";
 const { Server } = SorobanRpc;
 
 // ── Idempotency cache (in-memory, 24h TTL) ───────────────────────────────────
@@ -342,6 +342,7 @@ app.post(
       nativeToScVal(BigInt(collateral_id), { type: "u64" }),
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
+    fireWebhooks("loan.approved", { borrower, collateral_id, amount });
     res.json({ xdr: xdrTx, ...(cached?.stale ? { stale: true } : {}) });
   }),
 );
@@ -382,6 +383,7 @@ app.post(
     ]);
     const body = { xdr: xdrTx };
     setIdempotencyEntry(idempotencyKey, 200, body);
+    fireWebhooks("loan.repaid", { borrower, loan_id, amount });
     res.json(body);
   }),
 );

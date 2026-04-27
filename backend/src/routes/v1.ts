@@ -19,7 +19,7 @@ import { pool } from "../utils/connectionPool";
 import { getAppraisal, setAppraisal, invalidateAll } from "../utils/appraisalCache";
 import { asyncHandler } from "../utils/asyncHandler";
 import { stellarPublicKeySchema } from "../validators/stellar";
-import { registerWebhook, getWebhooks, getDeliveryLogs } from "../webhooks";
+import { registerWebhook, getWebhooks, getDeliveryLogs, fireWebhooks } from "../webhooks";
 import { timeoutMiddleware } from "../middleware/timeout";
 import { writeLimiter } from "../middleware/rateLimit";
 
@@ -160,6 +160,7 @@ v1Router.post(
       idsScVal,
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
+    fireWebhooks("loan.approved", { borrower, collateral_ids, amount });
     res.json({ xdr: xdrTx });
   })
 );
@@ -180,6 +181,7 @@ v1Router.post(
       nativeToScVal(BigInt(loan_id), { type: "u64" }),
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
+    fireWebhooks("loan.repaid", { borrower, loan_id, amount });
     res.json({ xdr: xdrTx });
   })
 );
@@ -200,6 +202,7 @@ v1Router.post(
       nativeToScVal(BigInt(loan_id), { type: "u64" }),
       nativeToScVal(BigInt(repay_amount), { type: "i128" }),
     ]);
+    fireWebhooks("loan.liquidated", { liquidator, loan_id, repay_amount });
     res.json({ xdr: xdrTx });
   })
 );

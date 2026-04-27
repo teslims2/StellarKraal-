@@ -21,6 +21,12 @@ export interface DeliveryLog {
 const webhooks = new Map<string, WebhookRegistration>();
 const deliveryLogs: DeliveryLog[] = [];
 
+/** Reset in-memory state — for use in tests only. */
+export function __resetForTests(): void {
+  webhooks.clear();
+  deliveryLogs.length = 0;
+}
+
 export function registerWebhook(url: string): WebhookRegistration {
   const id = crypto.randomUUID();
   const reg: WebhookRegistration = { id, url, createdAt: Date.now() };
