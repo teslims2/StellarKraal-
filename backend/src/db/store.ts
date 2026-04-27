@@ -23,9 +23,25 @@ export interface LoanRecord {
   deletedAt: string | null;
 }
 
+export type TransactionType = "loan" | "repayment" | "liquidation";
+export type TransactionStatus = "pending" | "completed" | "failed";
+
+export interface TransactionRecord {
+  id: string;
+  borrower: string;
+  type: TransactionType;
+  status: TransactionStatus;
+  amount: number;
+  loanId?: string;
+  collateralId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // In-memory tables (replace with a real DB in production)
 const collateralTable: Map<string, CollateralRecord> = new Map();
 const loanTable: Map<string, LoanRecord> = new Map();
+const transactionTable: Map<string, TransactionRecord> = new Map();
 
 // ── Collateral ────────────────────────────────────────────────────────────────
 
@@ -110,4 +126,68 @@ export function listDeletedLoans(): LoanRecord[] {
  */
 export function runMigrations(): void {
   // No-op for in-memory store; documents intent for real DB migration
+}
+
+
+// ── Transactions ──────────────────────────────────────────────────────────────
+
+export function insertTransaction(data: Omit<TransactionRecord, "id" | "createdAt" | "updatedAt">): TransactionRecord {
+  const id = `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const now = new Date().toISOString();
+  const record: TransactionRecord = { ...data, id, createdAt: now, updatedAt: now };
+  transactionTable.set(record.id, record);
+  return record;
+}
+
+export function listTransactions(filters?: {
+  borrower?: string;
+  type?: TransactionType;
+  status?: TransactionStatus;
+  startDate?: string;
+  endDate?: string;
+  page?: number;
+  pageSize?: number;
+}): { data: TransactionRecord[]; total: number; page: number; pageSize: number } {
+  const pageSize = filters?.pageSize || 20;
+  const page = filters?.page || 1;
+  
+  let results = [...transactionTable.values()];
+
+  if (filters?.borrower) {
+    results = results.filter((t) => t.borrower === filters.borrower);
+  }
+  if (filters?.type) {
+    results = results.filter((t) => t.type === filters.type);
+  }
+  if (filters?.status) {
+    results = results.filter((t) => t.status === filters.status);
+  }
+  if (filters?.startDate) {
+    results = results.filter((t) => new Date(t.createdAt) >= new Date(filters.startDate!));
+  }
+  if (filters?.endDate) {
+    results = results.filter((t) => new Date(t.createdAt) <= new Date(filters.endDate!));
+  }
+
+  // Sort by date descending (newest first)
+  results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  const total = results.length;
+  const start = (page - 1) * pageSize;
+  const end = start + pageSize;
+  const data = results.slice(start, end);
+
+  return { data, total, page, pageSize };
+}
+
+export function getTransaction(id: string): TransactionRecord | undefined {
+  return transactionTable.get(id);
+}
+
+export function updateTransaction(id: string, updates: Partial<Omit<TransactionRecord, "id" | "createdAt">>): TransactionRecord | undefined {
+  const record = transactionTable.get(id);
+  if (!record) return undefined;
+  const updated = { ...record, ...updates, updatedAt: new Date().toISOString() };
+  transactionTable.set(id, updated);
+  return updated;
 }
