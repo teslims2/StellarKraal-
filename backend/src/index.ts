@@ -52,7 +52,29 @@ import { asyncHandler } from "./utils/asyncHandler";
 import { stellarPublicKeySchema } from "./validators/stellar";
 import rpcClient from "./utils/rpcClient";
 import { registerWebhook, getWebhooks, getDeliveryLogs } from "./webhooks";
+import { fireAlert } from "./utils/alerting";
+import { rules } from "./utils/alertRules";
 const { Server } = SorobanRpc;
+
+// ── 5xx spike tracking (rolling 60s window) ───────────────────────────────────
+const fivexxTimestamps: number[] = [];
+const FIVEXX_WINDOW_MS = 60_000;
+const FIVEXX_THRESHOLD = 10;
+
+function track5xx() {
+  const now = Date.now();
+  fivexxTimestamps.push(now);
+  // evict old entries
+  while (fivexxTimestamps.length && fivexxTimestamps[0] < now - FIVEXX_WINDOW_MS) {
+    fivexxTimestamps.shift();
+  }
+  if (fivexxTimestamps.length >= FIVEXX_THRESHOLD) {
+    fireAlert(rules.fivexxSpike, `${fivexxTimestamps.length} 5xx errors in the last 60s`, {
+      count: fivexxTimestamps.length,
+      window: "60s",
+    });
+  }
+}
 
 // ── Idempotency cache (in-memory, 24h TTL) ───────────────────────────────────
 interface IdempotencyEntry {
@@ -113,6 +135,19 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+// Shutdown middleware - reject new requests during graceful shutdown
+let isShuttingDown = false;
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (isShuttingDown) {
+    res.setHeader("Connection", "close");
+    return res.status(503).json({
+      error: "Server is shutting down",
+      message: "Please retry your request",
+    });
+  }
+  next();
+});
+
 // Request logging middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
   const reqLogger = (req as any).logger;
@@ -129,6 +164,25 @@ app.use(auditMiddleware);
 // ── Auth ──────────────────────────────────────────────────────────────────────
 app.use("/api/auth", authRouter);
 app.use(jwtMiddleware);
+
+// ── API Versioning ────────────────────────────────────────────────────────────
+import { v1Router } from "./routes/v1";
+
+// Mount v1 routes
+app.use("/api/v1", v1Router);
+
+// Redirect unversioned routes to v1 with deprecation warning
+app.use("/api/:endpoint(*)", (req: Request, res: Response, next: NextFunction) => {
+  // Skip if already versioned or is auth/health
+  if (req.path.startsWith("/api/v1") || req.path === "/api/health" || req.path.startsWith("/api/auth")) {
+    return next();
+  }
+  
+  const newPath = req.path.replace(/^\/api/, "/api/v1");
+  res.setHeader("Deprecation", "true");
+  res.setHeader("Warning", '299 - "Unversioned API routes are deprecated. Use /api/v1/ prefix."');
+  res.redirect(301, newPath + (req.url.includes("?") ? req.url.substring(req.url.indexOf("?")) : ""));
+});
 
 const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
@@ -298,15 +352,22 @@ app.get(
         console.warn("RPC health check failed:", (error as Error).message);
       }
 
+      const circuitStates = rpcClient.getCircuitStates();
+      const circuitHealthy = rpcClient.isHealthy();
+
       const healthData = {
-        status: rpcReachable ? "healthy" : "degraded",
+        status: rpcReachable && circuitHealthy ? "healthy" : "degraded",
         version: APP_VERSION,
         uptime,
         rpcReachable,
+        circuitBreaker: {
+          healthy: circuitHealthy,
+          states: circuitStates,
+        },
         pool: pool.stats(),
       };
 
-      res.status(rpcReachable ? 200 : 503).json(healthData);
+      res.status(rpcReachable && circuitHealthy ? 200 : 503).json(healthData);
     } catch (error) {
       next(error);
     }
@@ -733,6 +794,8 @@ app.get(
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
   const reqLogger = (req as any).logger || logger;
   if (err instanceof PoolExhaustedError) {
+    track5xx();
+    fireAlert(rules.dbError, "Connection pool exhausted", { path: req.path });
     return res
       .status(503)
       .json({ error: "Service unavailable: connection pool exhausted" });
@@ -741,16 +804,97 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
     error: err.message,
     stack: err.stack,
   });
+  track5xx();
   res.status(500).json({ error: err.message });
 });
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
-app.listen(PORT, () => {
+const httpServer = app.listen(PORT, () => {
   logger.info(`StellarKraal API running on port ${PORT}`, {
     port: PORT,
     environment: process.env.NODE_ENV || "development",
     logLevel: process.env.LOG_LEVEL || "info",
   });
+}
+
+// ── Graceful Shutdown ─────────────────────────────────────────────────────────
+
+const SHUTDOWN_TIMEOUT_MS = 30000; // 30 seconds
+
+async function gracefulShutdown(signal: string): Promise<void> {
+  if (isShuttingDown) {
+    logger.warn("Shutdown already in progress, ignoring signal", { signal });
+    return;
+  }
+
+  isShuttingDown = true;
+  logger.info(`Received ${signal}, starting graceful shutdown...`, { signal });
+
+  // Stop accepting new connections
+  httpServer.close(() => {
+    logger.info("HTTP server closed, no longer accepting connections");
+  });
+
+  // Set a timeout to force shutdown if graceful shutdown takes too long
+  const forceShutdownTimer = setTimeout(() => {
+    logger.error("Graceful shutdown timeout exceeded, forcing exit", {
+      timeoutMs: SHUTDOWN_TIMEOUT_MS,
+    });
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+
+  try {
+    // Wait for in-flight requests to complete
+    await new Promise<void>((resolve) => {
+      const checkInterval = setInterval(() => {
+        const stats = pool.stats();
+        if (stats.inUse === 0) {
+          clearInterval(checkInterval);
+          resolve();
+        } else {
+          logger.info("Waiting for in-flight requests to complete", {
+            inUse: stats.inUse,
+          });
+        }
+      }, 1000);
+    });
+
+    logger.info("All in-flight requests completed");
+
+    // Close database connections
+    pool.close();
+    logger.info("Database connection pool closed");
+
+    clearTimeout(forceShutdownTimer);
+    logger.info("Graceful shutdown complete");
+    process.exit(0);
+  } catch (error) {
+    logger.error("Error during graceful shutdown", {
+      error: (error as Error).message,
+    });
+    clearTimeout(forceShutdownTimer);
+    process.exit(1);
+  }
+}
+
+// Register signal handlers
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+// Handle uncaught errors
+process.on("uncaughtException", (error: Error) => {
+  logger.error("Uncaught exception", {
+    error: error.message,
+    stack: error.stack,
+  });
+  gracefulShutdown("uncaughtException");
+});
+
+process.on("unhandledRejection", (reason: unknown) => {
+  logger.error("Unhandled promise rejection", {
+    reason: reason instanceof Error ? reason.message : String(reason),
+  });
+  gracefulShutdown("unhandledRejection");
 });
 
 export default app;

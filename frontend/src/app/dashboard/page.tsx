@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import WalletConnect from "@/components/WalletConnect";
 import CollateralCard from "@/components/CollateralCard";
 import RepayPanel from "@/components/RepayPanel";
@@ -8,6 +9,7 @@ import LoanRepaymentCalculator from "@/components/LoanRepaymentCalculator";
 import TransactionHistory from "@/components/TransactionHistory";
 
 export default function Dashboard() {
+  const router = useRouter();
   const [wallet, setWallet] = useState<string | null>(null);
   const [loanId, setLoanId] = useState("");
   const [healthFactor, setHealthFactor] = useState<number | null>(null);
@@ -34,13 +36,20 @@ export default function Dashboard() {
       <WalletConnect onConnect={setWallet} />
       {wallet && (
         <>
-          <CollateralCard walletAddress={wallet} />
-          <LoanRepaymentCalculator onProceed={handleProceedToRepay} />
+          <CollateralCard
+            walletAddress={wallet}
+            onRegisterCollateral={() => router.push("/borrow")}
+          />
+          <LoanRepaymentCalculator
+            onProceed={handleProceedToRepay}
+            onApplyForLoan={() => router.push("/borrow")}
+          />
           <RepayPanel
             walletAddress={wallet}
             initialLoanId={repayLoanId}
             initialAmount={repayAmount}
           />
+          <TransactionHistory walletAddress={wallet} />
           <div className="mt-8 bg-white rounded-2xl p-6 shadow">
             <h2 className="text-xl font-semibold text-brown mb-3">
               Health Factor
