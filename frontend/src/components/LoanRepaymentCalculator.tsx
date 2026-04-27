@@ -1,26 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import HealthGauge from "@/components/HealthGauge";
+import { useLoans, useRepaymentPreview, RepaymentPreview } from "@/hooks/use-queries";
 
 interface Props {
   onProceed: (loanId: string, amount: string) => void;
 }
-
-interface RepaymentPreview {
-  loan_id: number;
-  repayment_amount: number;
-  breakdown: {
-    principal: number;
-    interest: number;
-    fees: number;
-    remaining_balance: number;
-  };
-  projected_health_factor_bps: number | null;
-  fully_repaid: boolean;
-}
-
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
 function formatAmount(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
@@ -29,81 +15,28 @@ function formatAmount(value: number): string {
 export default function LoanRepaymentCalculator({ onProceed }: Props) {
   const [loanId, setLoanId] = useState("");
   const [amount, setAmount] = useState("");
-  const [loanOptions, setLoanOptions] = useState<number[]>([]);
-  const [preview, setPreview] = useState<RepaymentPreview | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const parsedLoanId = useMemo(() => Number(loanId), [loanId]);
   const parsedAmount = useMemo(() => Number(amount), [amount]);
 
-  useEffect(() => {
-    let mounted = true;
+  const { data: loansData } = useLoans(1, 50);
+  const loanOptions = useMemo(() => {
+    if (!loansData?.data) return [];
+    return loansData.data
+      .map((item) => Number(item?.id))
+      .filter((id) => Number.isFinite(id));
+  }, [loansData]);
 
-    async function loadLoans() {
-      try {
-        const res = await fetch(`${API}/api/loans?page=1&pageSize=50`);
-        if (!res.ok) return;
-        const body = await res.json();
-        const ids = Array.isArray(body?.data)
-          ? body.data
-              .map((item: { id?: number | string }) => Number(item?.id))
-              .filter((id: number) => Number.isFinite(id))
-          : [];
-        if (mounted) {
-          setLoanOptions(ids);
-        }
-      } catch {
-        // Optional enhancement: loan options are non-blocking.
-      }
-    }
+  const {
+    data: preview,
+    isLoading: loading,
+    error,
+  } = useRepaymentPreview(
+    Number.isInteger(parsedLoanId) && parsedLoanId >= 0 ? parsedLoanId : null,
+    Number.isFinite(parsedAmount) && parsedAmount > 0 ? parsedAmount : null
+  );
 
-    void loadLoans();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (
-      !Number.isInteger(parsedLoanId) ||
-      parsedLoanId < 0 ||
-      !Number.isFinite(parsedAmount) ||
-      parsedAmount <= 0
-    ) {
-      setPreview(null);
-      setError(null);
-      return;
-    }
-
-    const timeout = setTimeout(async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const res = await fetch(`${API}/api/loan/repayment-preview`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ loan_id: parsedLoanId, amount: parsedAmount }),
-        });
-
-        const body = await res.json();
-        if (!res.ok) {
-          setPreview(null);
-          setError(body?.error || "Unable to calculate repayment preview");
-          return;
-        }
-
-        setPreview(body as RepaymentPreview);
-      } catch (e: any) {
-        setPreview(null);
-        setError(e?.message || "Unable to calculate repayment preview");
-      } finally {
-        setLoading(false);
-      }
-    }, 300);
-
-    return () => clearTimeout(timeout);
-  }, [parsedAmount, parsedLoanId]);
+  const errorMessage = error ? (error as Error).message : null;
 
   return (
     <div className="bg-white rounded-2xl p-6 shadow mb-4">

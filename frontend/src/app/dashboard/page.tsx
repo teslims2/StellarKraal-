@@ -1,31 +1,33 @@
 "use client";
+
 import { useState } from "react";
 import WalletConnect from "@/components/WalletConnect";
 import CollateralCard from "@/components/CollateralCard";
+import LoanRepaymentCalculator from "@/components/LoanRepaymentCalculator";
 import RepayPanel from "@/components/RepayPanel";
 import HealthGauge from "@/components/HealthGauge";
-import LoanRepaymentCalculator from "@/components/LoanRepaymentCalculator";
+import { useHealthFactor } from "@/hooks/use-queries";
 
 export default function Dashboard() {
   const [wallet, setWallet] = useState<string | null>(null);
   const [loanId, setLoanId] = useState("");
-  const [healthFactor, setHealthFactor] = useState<number | null>(null);
   const [repayLoanId, setRepayLoanId] = useState("");
   const [repayAmount, setRepayAmount] = useState("");
+
+  const parsedLoanId = loanId ? Number(loanId) : null;
+  const {
+    data: healthData,
+    isLoading: healthLoading,
+    error: healthError,
+    refetch: fetchHealth,
+  } = useHealthFactor(parsedLoanId);
 
   function handleProceedToRepay(nextLoanId: string, nextAmount: string) {
     setRepayLoanId(nextLoanId);
     setRepayAmount(nextAmount);
   }
 
-  async function fetchHealth() {
-    if (!loanId) return;
-    const res = await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL}/api/health/${loanId}`,
-    );
-    const data = await res.json();
-    setHealthFactor(Number(data.health_factor ?? 0));
-  }
+  const healthFactor = healthData?.health_factor ?? null;
 
   return (
     <main className="max-w-2xl mx-auto px-4 py-10">
@@ -50,15 +52,20 @@ export default function Dashboard() {
                 placeholder="Loan ID"
                 value={loanId}
                 onChange={(e) => setLoanId(e.target.value)}
+                type="number"
               />
               <button
-                onClick={fetchHealth}
-                className="bg-gold text-brown font-semibold px-4 py-2 rounded-lg hover:bg-gold/80 transition"
+                onClick={() => fetchHealth()}
+                disabled={healthLoading || !loanId}
+                className="bg-gold text-brown font-semibold px-4 py-2 rounded-lg hover:bg-gold/80 transition disabled:opacity-50"
               >
-                Check
+                {healthLoading ? "..." : "Check"}
               </button>
             </div>
-            {healthFactor !== null && <HealthGauge value={healthFactor} />}
+            {healthError && (
+              <p className="text-sm text-red-600 mt-2">{healthError.message}</p>
+            )}
+            {healthFactor !== null && !healthError && <HealthGauge value={healthFactor} />}
           </div>
         </>
       )}
