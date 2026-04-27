@@ -1,15 +1,15 @@
 resource "aws_db_instance" "main" {
-  allocated_storage    = 20
-  storage_type         = "gp2"
-  engine               = "postgres"
-  engine_version       = "15.4"
-  instance_class       = "db.t3.micro"
-  identifier           = "stellarkraal-db-${var.environment}"
-  db_name              = "stellarkraal"
-  username             = "admin"
-  password             = "REPLACE_ME_WITH_SECRET" # Should use Secrets Manager in real scenario
-  parameter_group_name = "default.postgres15"
-  skip_final_snapshot  = true
+  allocated_storage      = 20
+  storage_type           = "gp2"
+  engine                 = "postgres"
+  engine_version         = "15.4"
+  instance_class         = "db.t3.micro"
+  identifier             = "stellarkraal-db-${var.environment}"
+  db_name                = "stellarkraal"
+  username               = "admin"
+  password               = "REPLACE_ME_WITH_SECRET" # Should use Secrets Manager in real scenario
+  parameter_group_name   = "default.postgres15"
+  skip_final_snapshot    = true
   vpc_security_group_ids = [aws_security_group.db.id]
   db_subnet_group_name   = aws_db_subnet_group.main.name
 
