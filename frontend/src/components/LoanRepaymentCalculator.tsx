@@ -120,7 +120,8 @@ export default function LoanRepaymentCalculator({ onProceed }: Props) {
             Loan ID
           </label>
           <input
-            className="w-full border border-brown/30 rounded-lg px-3 py-2 min-h-[44px]"
+            className="w-full rounded-lg px-3 py-2 min-h-[44px] bg-transparent"
+            style={{ border: "1px solid var(--color-border)", color: "var(--color-text)" }}
             placeholder="Enter loan ID"
             value={loanId}
             onChange={(e) => setLoanId(e.target.value)}
@@ -139,7 +140,8 @@ export default function LoanRepaymentCalculator({ onProceed }: Props) {
             Repayment Amount (stroops)
           </label>
           <input
-            className="w-full border border-brown/30 rounded-lg px-3 py-2 min-h-[44px]"
+            className="w-full rounded-lg px-3 py-2 min-h-[44px] bg-transparent"
+            style={{ border: "1px solid var(--color-border)", color: "var(--color-text)" }}
             placeholder="Enter repayment amount"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
@@ -152,32 +154,25 @@ export default function LoanRepaymentCalculator({ onProceed }: Props) {
       {error && <p className="text-sm text-red-600 mt-4">{error}</p>}
 
       {preview && (
-        <div className="mt-5 border border-brown/10 rounded-xl p-4 bg-cream/40">
+        <div className="mt-5 border rounded-xl p-4" style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-bg)" }}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-            <div className="bg-white rounded-lg p-3 border border-brown/10">
-              <p className="text-brown/60">Principal</p>
-              <p className="font-semibold text-brown">
-                {formatAmount(preview.breakdown.principal)}
-              </p>
-            </div>
-            <div className="bg-white rounded-lg p-3 border border-brown/10">
-              <p className="text-brown/60">Interest</p>
-              <p className="font-semibold text-brown">
-                {formatAmount(preview.breakdown.interest)}
-              </p>
-            </div>
-            <div className="bg-white rounded-lg p-3 border border-brown/10">
-              <p className="text-brown/60">Fees</p>
-              <p className="font-semibold text-brown">
-                {formatAmount(preview.breakdown.fees)}
-              </p>
-            </div>
-            <div className="bg-white rounded-lg p-3 border border-brown/10">
-              <p className="text-brown/60">Remaining Balance</p>
-              <p className="font-semibold text-brown">
-                {formatAmount(preview.breakdown.remaining_balance)}
-              </p>
-            </div>
+            {[
+              ["Principal", preview.breakdown.principal],
+              ["Interest", preview.breakdown.interest],
+              ["Fees", preview.breakdown.fees],
+              ["Remaining Balance", preview.breakdown.remaining_balance],
+            ].map(([label, val]) => (
+              <div
+                key={label as string}
+                className="rounded-lg p-3"
+                style={{ backgroundColor: "var(--color-surface)", border: "1px solid var(--color-border)" }}
+              >
+                <p style={{ color: "var(--color-text-muted)" }}>{label}</p>
+                <p className="font-semibold" style={{ color: "var(--color-text)" }}>
+                  {formatAmount(val as number)}
+                </p>
+              </div>
+            ))}
           </div>
 
           <div className="mt-4">
@@ -197,7 +192,7 @@ export default function LoanRepaymentCalculator({ onProceed }: Props) {
 
           <button
             type="button"
-            className="mt-4 w-full bg-brown text-cream min-h-[44px] rounded-xl font-semibold hover:bg-brown/80 transition"
+            className="mt-4 w-full bg-brown text-cream min-h-[44px] rounded-xl font-semibold hover:bg-brown/80 transition dark:bg-gold dark:text-brown"
             onClick={() =>
               onProceed(
                 String(preview.loan_id),

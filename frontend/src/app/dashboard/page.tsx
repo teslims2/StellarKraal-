@@ -7,7 +7,7 @@ import HealthGauge from "@/components/HealthGauge";
 import LoanRepaymentCalculator from "@/components/LoanRepaymentCalculator";
 
 export default function Dashboard() {
-  const [wallet, setWallet] = useState<string>("GTESTWALLET1234567890");
+  const [wallet, setWallet] = useState<string | null>(null);
   const [loanId, setLoanId] = useState("");
   const [healthFactor, setHealthFactor] = useState<number | null>(null);
   const [repayLoanId, setRepayLoanId] = useState("");

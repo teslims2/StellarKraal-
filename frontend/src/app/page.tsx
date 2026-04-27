@@ -9,10 +9,16 @@ export default function Home() {
         Register your cattle, goats, or sheep as on-chain collateral and access instant micro-loans — built for African emerging markets.
       </p>
       <div className="flex flex-col md:flex-row gap-4 items-center">
-        <Link href="/borrow" className="bg-brown text-cream px-6 py-3 rounded-xl font-semibold hover:bg-brown/80 transition min-h-[44px] flex items-center justify-center">
+        <Link
+          href="/borrow"
+          className="bg-brown text-cream px-6 py-3 rounded-xl font-semibold hover:bg-brown/80 transition min-h-[44px] flex items-center justify-center"
+        >
           Get a Loan
         </Link>
-        <Link href="/dashboard" className="border-2 border-brown text-brown px-6 py-3 rounded-xl font-semibold hover:bg-brown/10 transition min-h-[44px] flex items-center justify-center">
+        <Link
+          href="/dashboard"
+          className="border-2 border-brown text-brown px-6 py-3 rounded-xl font-semibold hover:bg-brown/10 transition min-h-[44px] flex items-center justify-center"
+        >
           Dashboard
         </Link>
       </div>
