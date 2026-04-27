@@ -2,14 +2,13 @@
 import { useEffect, useState } from "react";
 import { signTransaction } from "@stellar/freighter-api";
 import { submitSignedXdr } from "@/lib/stellarUtils";
+import { useRepayLoan } from "@/hooks/use-queries";
 
 interface Props {
   walletAddress: string;
   initialLoanId?: string;
   initialAmount?: string;
 }
-
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
 export default function RepayPanel({
   walletAddress,
@@ -19,7 +18,9 @@ export default function RepayPanel({
   const [loanId, setLoanId] = useState(initialLoanId);
   const [amount, setAmount] = useState(initialAmount);
   const [status, setStatus] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+
+  const repayMutation = useRepayLoan();
+  const loading = repayMutation.isPending;
 
   useEffect(() => {
     setLoanId(initialLoanId);
@@ -30,19 +31,13 @@ export default function RepayPanel({
   }, [initialAmount]);
 
   async function repay() {
-    setLoading(true);
     setStatus(null);
     try {
-      const res = await fetch(`${API}/api/loan/repay`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          borrower: walletAddress,
-          loan_id: parseInt(loanId),
-          amount: parseInt(amount),
-        }),
+      const { xdr } = await repayMutation.mutateAsync({
+        borrower: walletAddress,
+        loan_id: parseInt(loanId),
+        amount: parseInt(amount),
       });
-      const { xdr } = await res.json();
       const { signedTxXdr } = await signTransaction(xdr, {
         network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET",
       });
@@ -50,8 +45,6 @@ export default function RepayPanel({
       setStatus("✅ Repayment submitted!");
     } catch (e: any) {
       setStatus(`❌ ${e.message}`);
-    } finally {
-      setLoading(false);
     }
   }
 

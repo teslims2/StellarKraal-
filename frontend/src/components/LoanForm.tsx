@@ -2,13 +2,13 @@
 import { useState } from "react";
 import { signTransaction } from "@stellar/freighter-api";
 import { submitSignedXdr } from "@/lib/stellarUtils";
+import { useRegisterCollateral, useRequestLoan } from "@/hooks/use-queries";
 
 interface Props {
   walletAddress: string;
 }
 
 const ANIMAL_TYPES = ["cattle", "goat", "sheep"];
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
 export default function LoanForm({ walletAddress }: Props) {
   const [step, setStep] = useState<"collateral" | "loan">("collateral");
@@ -18,55 +18,43 @@ export default function LoanForm({ walletAddress }: Props) {
   const [collateralId, setCollateralId] = useState("");
   const [loanAmount, setLoanAmount] = useState("");
   const [status, setStatus] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+
+  const registerCollateralMutation = useRegisterCollateral();
+  const requestLoanMutation = useRequestLoan();
+
+  const loading = registerCollateralMutation.isPending || requestLoanMutation.isPending;
 
   async function registerCollateral() {
-    setLoading(true);
     setStatus(null);
     try {
-      const res = await fetch(`${API}/api/collateral/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          owner: walletAddress,
-          animal_type: animalType,
-          count: parseInt(count),
-          appraised_value: parseInt(appraisedValue),
-        }),
+      const { xdr } = await registerCollateralMutation.mutateAsync({
+        owner: walletAddress,
+        animal_type: animalType,
+        count: parseInt(count),
+        appraised_value: parseInt(appraisedValue),
       });
-      const { xdr } = await res.json();
       const { signedTxXdr } = await signTransaction(xdr, { network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET" });
       const result = await submitSignedXdr(signedTxXdr);
       setStatus(`✅ Collateral registered! ID: ${result}`);
       setStep("loan");
     } catch (e: any) {
       setStatus(`❌ ${e.message}`);
-    } finally {
-      setLoading(false);
     }
   }
 
   async function requestLoan() {
-    setLoading(true);
     setStatus(null);
     try {
-      const res = await fetch(`${API}/api/loan/request`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          borrower: walletAddress,
-          collateral_id: parseInt(collateralId),
-          amount: parseInt(loanAmount),
-        }),
+      const { xdr } = await requestLoanMutation.mutateAsync({
+        borrower: walletAddress,
+        collateral_id: parseInt(collateralId),
+        amount: parseInt(loanAmount),
       });
-      const { xdr } = await res.json();
       const { signedTxXdr } = await signTransaction(xdr, { network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET" });
       const result = await submitSignedXdr(signedTxXdr);
       setStatus(`✅ Loan disbursed! Loan ID: ${result}`);
     } catch (e: any) {
       setStatus(`❌ ${e.message}`);
-    } finally {
-      setLoading(false);
     }
   }
 
