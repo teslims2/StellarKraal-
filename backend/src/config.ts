@@ -22,6 +22,8 @@ const envSchema = z.object({
   APPRAISAL_CACHE_TTL_MS: z.string().default("300000"),
   // JWT secret (min 32 chars recommended)
   JWT_SECRET: z.string().min(16).optional(),
+  // Frontend origin for CORS (required in production)
+  FRONTEND_URL: z.string().url().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

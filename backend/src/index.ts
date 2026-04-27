@@ -16,7 +16,7 @@ import {
   restoreLoan,
   listDeletedLoans,
 } from "./db/store";
-import cors from "cors";
+import { corsMiddleware } from "./middleware/cors";
 import {
   Networks,
   TransactionBuilder,
@@ -71,29 +71,8 @@ function setIdempotencyEntry(key: string, status: number, body: unknown): void {
 
 const app = express();
 
-const isProduction = process.env.NODE_ENV === "production";
-const FRONTEND_URL = process.env.FRONTEND_URL;
-
-// Startup warning for CORS misconfiguration
-if (isProduction && !FRONTEND_URL) {
-  logger.warn(
-    "CORS misconfiguration: FRONTEND_URL is not set in production environment. Requests may be blocked.",
-  );
-}
-
 // Secure CORS configuration
-app.use((req: Request, res: Response, next: NextFunction) => {
-  // Allow credentials only for authenticated routes (e.g., API endpoints excluding health check)
-  const isAuthRoute = req.path.startsWith("/api") && req.path !== "/api/health";
-
-  const corsOptions: cors.CorsOptions = {
-    origin: isProduction ? FRONTEND_URL || false : isAuthRoute ? true : "*",
-    credentials: isAuthRoute,
-    maxAge: 86400, // Cache preflight requests for 24 hours
-  };
-
-  cors(corsOptions)(req, res, next);
-});
+app.use(corsMiddleware);
 app.use(express.json());
 app.use(globalLimiter);
 app.use(timeoutMiddleware(parseInt(config.TIMEOUT_GLOBAL_MS, 10)));
