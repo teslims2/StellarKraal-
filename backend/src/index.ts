@@ -15,6 +15,7 @@ import {
   softDeleteLoan,
   restoreLoan,
   listDeletedLoans,
+  updateLoanStatus,
 } from "./db/store";
 import cors from "cors";
 import {
@@ -358,12 +359,25 @@ app.post(
       }
     }
 
+    // Create loan record with pending status
+    const loanId = randomUUID();
+    insertLoan({
+      id: loanId,
+      borrower,
+      collateral_id: String(collateral_id),
+      amount,
+    });
+
     const xdrTx = await buildContractTx(borrower, "request_loan", [
       new Address(borrower).toScVal(),
       nativeToScVal(BigInt(collateral_id), { type: "u64" }),
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
-    res.json({ xdr: xdrTx, ...(cached?.stale ? { stale: true } : {}) });
+    res.json({ 
+      xdr: xdrTx, 
+      loan_id: loanId,
+      ...(cached?.stale ? { stale: true } : {}) 
+    });
   }),
 );
 
@@ -532,6 +546,21 @@ app.get(
   }),
 );
 
+// GET /api/loan/:id/status — get local loan record with status and history
+app.get("/api/loan/:id/status", (req: Request, res: Response) => {
+  const loan = getLoan(req.params.id);
+  if (!loan) return res.status(404).json({ error: "Loan not found" });
+  res.json({
+    id: loan.id,
+    borrower: loan.borrower,
+    collateral_id: loan.collateral_id,
+    amount: loan.amount,
+    status: loan.status,
+    transitionHistory: loan.transitionHistory,
+    createdAt: loan.createdAt,
+  });
+});
+
 // GET /api/loan/:id
 app.get(
   "/api/loan/:id",
@@ -668,6 +697,27 @@ app.delete("/api/loan/:id", (req: Request, res: Response) => {
   const ok = softDeleteLoan(req.params.id);
   if (!ok) return res.status(404).json({ error: "Record not found" });
   res.json({ deleted: true, id: req.params.id });
+});
+
+// POST /api/admin/loan/:id/activate — transition loan to active status
+app.post("/api/admin/loan/:id/activate", (req: Request, res: Response) => {
+  const loan = updateLoanStatus(req.params.id, "active");
+  if (!loan) return res.status(400).json({ error: "Invalid transition or loan not found" });
+  res.json({ success: true, loan: { id: loan.id, status: loan.status } });
+});
+
+// POST /api/admin/loan/:id/repay — transition loan to repaid status
+app.post("/api/admin/loan/:id/repay", (req: Request, res: Response) => {
+  const loan = updateLoanStatus(req.params.id, "repaid");
+  if (!loan) return res.status(400).json({ error: "Invalid transition or loan not found" });
+  res.json({ success: true, loan: { id: loan.id, status: loan.status } });
+});
+
+// POST /api/admin/loan/:id/liquidate — transition loan to liquidated status
+app.post("/api/admin/loan/:id/liquidate", (req: Request, res: Response) => {
+  const loan = updateLoanStatus(req.params.id, "liquidated");
+  if (!loan) return res.status(400).json({ error: "Invalid transition or loan not found" });
+  res.json({ success: true, loan: { id: loan.id, status: loan.status } });
 });
 
 // ── error handler ─────────────────────────────────────────────────────────────
