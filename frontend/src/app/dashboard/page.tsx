@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import WalletConnect from "@/components/WalletConnect";
 import CollateralCard from "@/components/CollateralCard";
 import RepayPanel from "@/components/RepayPanel";
@@ -9,12 +10,15 @@ import SkeletonHealthDashboard from "@/components/SkeletonHealthDashboard";
 import { useMinLoadingTime } from "@/hooks/useMinLoadingTime";
 
 export default function Dashboard() {
+  const router = useRouter();
   const [wallet, setWallet] = useState<string | null>(null);
   const [loanId, setLoanId] = useState("");
-  const [healthFactor, setHealthFactor] = useState<number | null>(null);
+  const [activeLoanId, setActiveLoanId] = useState("");
   const [repayLoanId, setRepayLoanId] = useState("");
   const [repayAmount, setRepayAmount] = useState("");
   const [isHealthLoading, withMinLoading] = useMinLoadingTime();
+
+  const { healthFactor, loading, lastUpdated, refresh } = useHealthFactor(activeLoanId);
 
   function handleProceedToRepay(nextLoanId: string, nextAmount: string) {
     setRepayLoanId(nextLoanId);
@@ -33,13 +37,19 @@ export default function Dashboard() {
   }
 
   return (
-    <main className="max-w-2xl mx-auto px-4 py-10">
+    <main className="max-w-6xl mx-auto px-4 py-10">
       <h1 className="text-3xl font-bold text-brown mb-6">Dashboard</h1>
       <WalletConnect onConnect={setWallet} />
       {wallet && (
         <>
-          <CollateralCard walletAddress={wallet} />
-          <LoanRepaymentCalculator onProceed={handleProceedToRepay} />
+          <CollateralCard
+            walletAddress={wallet}
+            onRegisterCollateral={() => router.push("/borrow")}
+          />
+          <LoanRepaymentCalculator
+            onProceed={handleProceedToRepay}
+            onApplyForLoan={() => router.push("/borrow")}
+          />
           <RepayPanel
             walletAddress={wallet}
             initialLoanId={repayLoanId}
