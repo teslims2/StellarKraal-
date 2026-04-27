@@ -25,14 +25,14 @@ export default function CollateralCard({ walletAddress }: Props) {
   return (
     <div className="bg-white rounded-2xl p-6 shadow mb-4">
       <h2 className="text-xl font-semibold text-brown mb-3">Loan Lookup</h2>
-      <div className="flex gap-2">
+      <div className="flex flex-col md:flex-row gap-2">
         <input
-          className="border border-brown/30 rounded-lg px-3 py-2 flex-1"
+          className="border border-brown/30 rounded-lg px-3 py-2 w-full min-h-[44px]"
           placeholder="Loan ID"
           value={collateralId}
           onChange={(e) => setCollateralId(e.target.value)}
         />
-        <button onClick={lookup} disabled={loading} className="bg-brown text-cream px-4 py-2 rounded-lg hover:bg-brown/80 transition disabled:opacity-50">
+        <button onClick={lookup} disabled={loading} className="bg-brown text-cream px-4 min-h-[44px] w-full md:w-auto rounded-lg hover:bg-brown/80 transition disabled:opacity-50">
           {loading ? "…" : "Fetch"}
         </button>
       </div>

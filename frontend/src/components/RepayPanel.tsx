@@ -43,7 +43,7 @@ export default function RepayPanel({
         }),
       });
       const { xdr } = await res.json();
-      const { signedTxXdr } = await signTransaction(xdr, {
+      const signedTxXdr = await signTransaction(xdr, {
         network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET",
       });
       await submitSignedXdr(signedTxXdr);
@@ -60,14 +60,14 @@ export default function RepayPanel({
       <h2 className="text-xl font-semibold text-brown mb-3">Repay Loan</h2>
       <div className="space-y-3">
         <input
-          className="w-full border border-brown/30 rounded-lg px-3 py-2"
+          className="w-full border border-brown/30 rounded-lg px-3 py-2 min-h-[44px]"
           placeholder="Loan ID"
           value={loanId}
           onChange={(e) => setLoanId(e.target.value)}
           type="number"
         />
         <input
-          className="w-full border border-brown/30 rounded-lg px-3 py-2"
+          className="w-full border border-brown/30 rounded-lg px-3 py-2 min-h-[44px]"
           placeholder="Amount (stroops)"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
@@ -76,7 +76,7 @@ export default function RepayPanel({
         <button
           onClick={repay}
           disabled={loading}
-          className="w-full bg-gold text-brown py-2.5 rounded-xl font-semibold hover:bg-gold/80 transition disabled:opacity-50"
+          className="w-full bg-gold text-brown min-h-[44px] rounded-xl font-semibold hover:bg-gold/80 transition disabled:opacity-50"
         >
           {loading ? "Processing…" : "Repay"}
         </button>

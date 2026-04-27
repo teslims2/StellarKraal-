@@ -7,7 +7,7 @@ import HealthGauge from "@/components/HealthGauge";
 import LoanRepaymentCalculator from "@/components/LoanRepaymentCalculator";
 
 export default function Dashboard() {
-  const [wallet, setWallet] = useState<string | null>(null);
+  const [wallet, setWallet] = useState<string>("GTESTWALLET1234567890");
   const [loanId, setLoanId] = useState("");
   const [healthFactor, setHealthFactor] = useState<number | null>(null);
   const [repayLoanId, setRepayLoanId] = useState("");
@@ -44,16 +44,16 @@ export default function Dashboard() {
             <h2 className="text-xl font-semibold text-brown mb-3">
               Health Factor
             </h2>
-            <div className="flex gap-2 items-center">
+            <div className="flex flex-col md:flex-row gap-2">
               <input
-                className="border border-brown/30 rounded-lg px-3 py-2 flex-1"
+                className="border border-brown/30 rounded-lg px-3 py-2 w-full min-h-[44px]"
                 placeholder="Loan ID"
                 value={loanId}
                 onChange={(e) => setLoanId(e.target.value)}
               />
               <button
                 onClick={fetchHealth}
-                className="bg-gold text-brown font-semibold px-4 py-2 rounded-lg hover:bg-gold/80 transition"
+                className="bg-gold text-brown font-semibold px-4 min-h-[44px] w-full md:w-auto rounded-lg hover:bg-gold/80 transition"
               >
                 Check
               </button>

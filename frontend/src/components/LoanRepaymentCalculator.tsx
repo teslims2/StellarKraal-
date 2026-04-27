@@ -120,7 +120,7 @@ export default function LoanRepaymentCalculator({ onProceed }: Props) {
             Loan ID
           </label>
           <input
-            className="w-full border border-brown/30 rounded-lg px-3 py-2"
+            className="w-full border border-brown/30 rounded-lg px-3 py-2 min-h-[44px]"
             placeholder="Enter loan ID"
             value={loanId}
             onChange={(e) => setLoanId(e.target.value)}
@@ -139,7 +139,7 @@ export default function LoanRepaymentCalculator({ onProceed }: Props) {
             Repayment Amount (stroops)
           </label>
           <input
-            className="w-full border border-brown/30 rounded-lg px-3 py-2"
+            className="w-full border border-brown/30 rounded-lg px-3 py-2 min-h-[44px]"
             placeholder="Enter repayment amount"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
@@ -153,7 +153,7 @@ export default function LoanRepaymentCalculator({ onProceed }: Props) {
 
       {preview && (
         <div className="mt-5 border border-brown/10 rounded-xl p-4 bg-cream/40">
-          <div className="grid grid-cols-2 gap-3 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
             <div className="bg-white rounded-lg p-3 border border-brown/10">
               <p className="text-brown/60">Principal</p>
               <p className="font-semibold text-brown">
@@ -197,7 +197,7 @@ export default function LoanRepaymentCalculator({ onProceed }: Props) {
 
           <button
             type="button"
-            className="mt-4 w-full bg-brown text-cream py-2.5 rounded-xl font-semibold hover:bg-brown/80 transition"
+            className="mt-4 w-full bg-brown text-cream min-h-[44px] rounded-xl font-semibold hover:bg-brown/80 transition"
             onClick={() =>
               onProceed(
                 String(preview.loan_id),

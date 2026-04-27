@@ -35,7 +35,7 @@ export default function LoanForm({ walletAddress }: Props) {
         }),
       });
       const { xdr } = await res.json();
-      const { signedTxXdr } = await signTransaction(xdr, { network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET" });
+      const signedTxXdr = await signTransaction(xdr, { network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET" });
       const result = await submitSignedXdr(signedTxXdr);
       setStatus(`✅ Collateral registered! ID: ${result}`);
       setStep("loan");
@@ -60,7 +60,7 @@ export default function LoanForm({ walletAddress }: Props) {
         }),
       });
       const { xdr } = await res.json();
-      const { signedTxXdr } = await signTransaction(xdr, { network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET" });
+      const signedTxXdr = await signTransaction(xdr, { network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET" });
       const result = await submitSignedXdr(signedTxXdr);
       setStatus(`✅ Loan disbursed! Loan ID: ${result}`);
     } catch (e: any) {
@@ -75,25 +75,72 @@ export default function LoanForm({ walletAddress }: Props) {
       {step === "collateral" ? (
         <>
           <h2 className="text-xl font-semibold text-brown">1. Register Collateral</h2>
-          <select
-            className="w-full border border-brown/30 rounded-lg px-3 py-2"
-            value={animalType}
-            onChange={(e) => setAnimalType(e.target.value)}
+          <div>
+            <label className="block text-sm font-medium text-brown mb-1">Animal Type</label>
+            <select
+              className="w-full border border-brown/30 rounded-lg px-3 py-2 min-h-[44px]"
+              value={animalType}
+              onChange={(e) => setAnimalType(e.target.value)}
+            >
+              {ANIMAL_TYPES.map((a) => <option key={a}>{a}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-brown mb-1">Count</label>
+            <input
+              className="w-full border border-brown/30 rounded-lg px-3 py-2 min-h-[44px]"
+              placeholder="Count"
+              value={count}
+              onChange={(e) => setCount(e.target.value)}
+              type="number"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-brown mb-1">Appraised Value (stroops)</label>
+            <input
+              className="w-full border border-brown/30 rounded-lg px-3 py-2 min-h-[44px]"
+              placeholder="Appraised value (stroops)"
+              value={appraisedValue}
+              onChange={(e) => setAppraisedValue(e.target.value)}
+              type="number"
+            />
+          </div>
+          <button
+            onClick={registerCollateral}
+            disabled={loading}
+            className="w-full bg-brown text-cream min-h-[44px] rounded-xl font-semibold hover:bg-brown/80 transition disabled:opacity-50"
           >
-            {ANIMAL_TYPES.map((a) => <option key={a}>{a}</option>)}
-          </select>
-          <input className="w-full border border-brown/30 rounded-lg px-3 py-2" placeholder="Count" value={count} onChange={(e) => setCount(e.target.value)} type="number" />
-          <input className="w-full border border-brown/30 rounded-lg px-3 py-2" placeholder="Appraised value (stroops)" value={appraisedValue} onChange={(e) => setAppraisedValue(e.target.value)} type="number" />
-          <button onClick={registerCollateral} disabled={loading} className="w-full bg-brown text-cream py-2.5 rounded-xl font-semibold hover:bg-brown/80 transition disabled:opacity-50">
             {loading ? "Processing…" : "Register & Continue"}
           </button>
         </>
       ) : (
         <>
           <h2 className="text-xl font-semibold text-brown">2. Request Loan</h2>
-          <input className="w-full border border-brown/30 rounded-lg px-3 py-2" placeholder="Collateral ID" value={collateralId} onChange={(e) => setCollateralId(e.target.value)} type="number" />
-          <input className="w-full border border-brown/30 rounded-lg px-3 py-2" placeholder="Loan amount (stroops)" value={loanAmount} onChange={(e) => setLoanAmount(e.target.value)} type="number" />
-          <button onClick={requestLoan} disabled={loading} className="w-full bg-gold text-brown py-2.5 rounded-xl font-semibold hover:bg-gold/80 transition disabled:opacity-50">
+          <div>
+            <label className="block text-sm font-medium text-brown mb-1">Collateral ID</label>
+            <input
+              className="w-full border border-brown/30 rounded-lg px-3 py-2 min-h-[44px]"
+              placeholder="Collateral ID"
+              value={collateralId}
+              onChange={(e) => setCollateralId(e.target.value)}
+              type="number"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-brown mb-1">Loan Amount (stroops)</label>
+            <input
+              className="w-full border border-brown/30 rounded-lg px-3 py-2 min-h-[44px]"
+              placeholder="Loan amount (stroops)"
+              value={loanAmount}
+              onChange={(e) => setLoanAmount(e.target.value)}
+              type="number"
+            />
+          </div>
+          <button
+            onClick={requestLoan}
+            disabled={loading}
+            className="w-full bg-gold text-brown min-h-[44px] rounded-xl font-semibold hover:bg-gold/80 transition disabled:opacity-50"
+          >
             {loading ? "Processing…" : "Request Loan"}
           </button>
         </>
