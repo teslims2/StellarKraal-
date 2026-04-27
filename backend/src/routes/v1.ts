@@ -47,7 +47,7 @@ const registerCollateralSchema = z.object({
 
 const loanRequestSchema = z.object({
   borrower: stellarPublicKeySchema,
-  collateral_id: z.number().int().nonnegative(),
+  collateral_ids: z.array(z.number().int().nonnegative()).min(1),
   amount: z.number().int().positive(),
 });
 
@@ -153,18 +153,14 @@ v1Router.post(
     if (!validation.success) {
       return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
     }
-    const { borrower, collateral_id, amount } = validation.data;
-    const cacheKey = String(collateral_id);
-    const cached = getAppraisal(cacheKey);
-    if (!cached && req.body.appraised_value !== undefined) {
-      setAppraisal(cacheKey, req.body.appraised_value);
-    }
+    const { borrower, collateral_ids, amount } = validation.data;
+    const idsScVal = xdr.ScVal.scvVec(collateral_ids.map(id => nativeToScVal(BigInt(id), { type: "u64" })));
     const xdrTx = await buildContractTx(borrower, "request_loan", [
       new Address(borrower).toScVal(),
-      nativeToScVal(BigInt(collateral_id), { type: "u64" }),
+      idsScVal,
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
-    res.json({ xdr: xdrTx, ...(cached?.stale ? { stale: true } : {}) });
+    res.json({ xdr: xdrTx });
   })
 );
 
