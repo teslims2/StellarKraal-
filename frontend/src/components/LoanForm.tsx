@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { signTransaction } from "@stellar/freighter-api";
 import { submitSignedXdr } from "@/lib/stellarUtils";
 import { useMinLoadingTime } from "@/hooks/useMinLoadingTime";
@@ -39,6 +39,7 @@ export default function LoanForm({ walletAddress }: Props) {
       const { signedTxXdr } = await signTransaction(xdr, { network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET" });
       const result = await submitSignedXdr(signedTxXdr);
       setStatus(`✅ Collateral registered! ID: ${result}`);
+      clearSavedData();
       setStep("loan");
     }).catch((e: any) => setStatus(`❌ ${e.message}`));
   }
@@ -51,7 +52,7 @@ export default function LoanForm({ walletAddress }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           borrower: walletAddress,
-          collateral_id: parseInt(collateralId),
+          collateral_ids: [parseInt(collateralId)],
           amount: parseInt(loanAmount),
         }),
       });
@@ -66,6 +67,27 @@ export default function LoanForm({ walletAddress }: Props) {
 
   return (
     <div className="bg-white rounded-2xl p-6 shadow mt-6 space-y-4">
+      {showRestorePrompt && (
+        <div className="bg-gold/20 border border-gold rounded-lg p-4 mb-4">
+          <p className="text-sm text-brown mb-2">
+            You have unsaved progress. Would you like to restore it?
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={handleRestore}
+              className="px-4 py-1.5 bg-gold text-brown rounded-lg text-sm font-medium hover:bg-gold/80"
+            >
+              Restore
+            </button>
+            <button
+              onClick={() => { clearSavedData(); setShowRestorePrompt(false); }}
+              className="px-4 py-1.5 bg-brown/10 text-brown rounded-lg text-sm hover:bg-brown/20"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
       {step === "collateral" ? (
         <>
           <h2 className="text-xl font-semibold text-brown">1. Register Collateral</h2>
@@ -91,6 +113,11 @@ export default function LoanForm({ walletAddress }: Props) {
             Request Loan
           </button>
         </>
+      )}
+      {lastSaved && !loading && (
+        <p className="text-xs text-brown/60 text-center">
+          Auto-saved at {lastSaved.toLocaleTimeString()}
+        </p>
       )}
       {status && <p className="text-sm mt-2">{status}</p>}
     </div>
