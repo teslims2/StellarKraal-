@@ -49,4 +49,13 @@ export const rules = {
     runbook: "5xx-spike.md",
     pagerduty: true, // escalate: >10/min threshold
   },
+
+  backupFailure: {
+    id: "backup-failure",
+    name: "Database Backup Failed",
+    severity: "critical",
+    cooldownMs: 60 * 60 * 1000, // 1 hour cooldown
+    runbook: "restore-procedure.md",
+    pagerduty: true,
+  },
 } satisfies Record<string, AlertRule>;
