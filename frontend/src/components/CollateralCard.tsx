@@ -1,22 +1,33 @@
 "use client";
 import { useState } from "react";
+import EmptyState from "./EmptyState";
+import { EmptyCollateralIllustration } from "./illustrations";
 
 interface Props {
   walletAddress: string;
+  onRegisterCollateral?: () => void;
 }
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
-export default function CollateralCard({ walletAddress }: Props) {
+export default function CollateralCard({ walletAddress, onRegisterCollateral }: Props) {
   const [collateralId, setCollateralId] = useState("");
   const [data, setData] = useState<any>(null);
+  const [notFound, setNotFound] = useState(false);
   const [loading, setLoading] = useState(false);
 
   async function lookup() {
     setLoading(true);
+    setNotFound(false);
+    setData(null);
     try {
       const res = await fetch(`${API}/api/loan/${collateralId}`);
-      setData(await res.json());
+      const json = await res.json();
+      if (!json || json.error || res.status === 404) {
+        setNotFound(true);
+      } else {
+        setData(json);
+      }
     } finally {
       setLoading(false);
     }
@@ -36,6 +47,14 @@ export default function CollateralCard({ walletAddress }: Props) {
           {loading ? "…" : "Fetch"}
         </button>
       </div>
+      {notFound && (
+        <EmptyState
+          illustration={<EmptyCollateralIllustration />}
+          message="No collateral registered"
+          ctaLabel="Register Collateral"
+          onCta={() => onRegisterCollateral?.()}
+        />
+      )}
       {data && (
         <pre className="mt-4 bg-cream rounded-lg p-3 text-xs overflow-auto">
           {JSON.stringify(data, null, 2)}

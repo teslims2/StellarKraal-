@@ -1,13 +1,15 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import WalletConnect from "@/components/WalletConnect";
 import CollateralCard from "@/components/CollateralCard";
 import RepayPanel from "@/components/RepayPanel";
 import HealthGauge from "@/components/HealthGauge";
 import LoanRepaymentCalculator from "@/components/LoanRepaymentCalculator";
-import { useHealthFactor } from "@/hooks/useHealthFactor";
+import TransactionHistory from "@/components/TransactionHistory";
 
 export default function Dashboard() {
+  const router = useRouter();
   const [wallet, setWallet] = useState<string | null>(null);
   const [loanId, setLoanId] = useState("");
   const [activeLoanId, setActiveLoanId] = useState("");
@@ -22,18 +24,25 @@ export default function Dashboard() {
   }
 
   return (
-    <main className="max-w-2xl mx-auto px-4 py-10">
+    <main className="max-w-6xl mx-auto px-4 py-10">
       <h1 className="text-3xl font-bold text-brown mb-6">Dashboard</h1>
       <WalletConnect onConnect={setWallet} />
       {wallet && (
         <>
-          <CollateralCard walletAddress={wallet} />
-          <LoanRepaymentCalculator onProceed={handleProceedToRepay} />
+          <CollateralCard
+            walletAddress={wallet}
+            onRegisterCollateral={() => router.push("/borrow")}
+          />
+          <LoanRepaymentCalculator
+            onProceed={handleProceedToRepay}
+            onApplyForLoan={() => router.push("/borrow")}
+          />
           <RepayPanel
             walletAddress={wallet}
             initialLoanId={repayLoanId}
             initialAmount={repayAmount}
           />
+          <TransactionHistory walletAddress={wallet} />
           <div className="mt-8 bg-white rounded-2xl p-6 shadow">
             <h2 className="text-xl font-semibold text-brown mb-3">
               Health Factor
@@ -60,6 +69,9 @@ export default function Dashboard() {
                 onRefresh={refresh}
               />
             )}
+          </div>
+          <div className="mt-8">
+            <TransactionHistory />
           </div>
         </>
       )}
