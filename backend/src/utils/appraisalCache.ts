@@ -1,6 +1,6 @@
 import logger from "./logger";
 
-interface CacheEntry {
+export interface CacheEntry {
   value: number;
   cachedAt: number;
   stale: boolean;
@@ -21,19 +21,22 @@ export function getAppraisal(collateralId: string): CacheEntry | null {
   }
   const age = Date.now() - entry.cachedAt;
   if (age > ttlMs) {
-    entry.stale = true;
+    // Return a copy with stale: true — do not mutate the stored entry
     logger.debug("appraisal_cache_stale", { collateralId, ageMs: age });
-  } else {
-    logger.debug("appraisal_cache_hit", { collateralId, ageMs: age });
+    return { ...entry, stale: true };
   }
-  return entry;
+  logger.debug("appraisal_cache_hit", { collateralId, ageMs: age });
+  return { ...entry, stale: false };
 }
 
 export function setAppraisal(collateralId: string, value: number): void {
   cache.set(collateralId, { value, cachedAt: Date.now(), stale: false });
 }
 
-/** Call when an oracle price update is detected to invalidate a specific entry. */
+/**
+ * Invalidate a single collateral's cached appraisal.
+ * Call when an oracle price update is detected for a specific asset.
+ */
 export function invalidateAppraisal(collateralId: string): void {
   const deleted = cache.delete(collateralId);
   if (deleted) {
@@ -41,7 +44,10 @@ export function invalidateAppraisal(collateralId: string): void {
   }
 }
 
-/** Invalidate all cached appraisals (e.g. on a global oracle update). */
+/**
+ * Invalidate all cached appraisals.
+ * Call on a global oracle price update event.
+ */
 export function invalidateAll(): void {
   const size = cache.size;
   cache.clear();
