@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { isConnected, getAddress, setAllowed } from "@stellar/freighter-api";
+import { useToast } from "@/components/toast";
 
 interface Props {
   onConnect: (address: string) => void;
@@ -8,7 +9,7 @@ interface Props {
 
 export default function WalletConnect({ onConnect }: Props) {
   const [address, setAddress] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
 
   async function connect() {
     try {
@@ -19,8 +20,9 @@ export default function WalletConnect({ onConnect }: Props) {
       const { address: addr } = await getAddress();
       setAddress(addr);
       onConnect(addr);
+      toast.success("Wallet connected successfully");
     } catch (e: any) {
-      setError(e.message);
+      toast.error(e.message);
     }
   }
 
@@ -40,7 +42,6 @@ export default function WalletConnect({ onConnect }: Props) {
       >
         Connect Freighter Wallet
       </button>
-      {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
     </div>
   );
 }
