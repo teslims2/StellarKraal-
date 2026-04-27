@@ -31,7 +31,7 @@ export default function Dashboard() {
   }
 
   return (
-    <main className="max-w-2xl mx-auto px-4 py-10">
+    <main className="max-w-6xl mx-auto px-4 py-10">
       <h1 className="text-3xl font-bold text-brown mb-6">Dashboard</h1>
       <WalletConnect onConnect={setWallet} />
       {wallet && (
@@ -69,6 +69,9 @@ export default function Dashboard() {
               </button>
             </div>
             {healthFactor !== null && <HealthGauge value={healthFactor} />}
+          </div>
+          <div className="mt-8">
+            <TransactionHistory />
           </div>
         </>
       )}
