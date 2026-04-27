@@ -2,9 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import HealthGauge from "@/components/HealthGauge";
+import EmptyState from "@/components/EmptyState";
+import { EmptyLoansIllustration } from "@/components/illustrations";
 
 interface Props {
   onProceed: (loanId: string, amount: string) => void;
+  onApplyForLoan?: () => void;
 }
 
 interface RepaymentPreview {
@@ -26,10 +29,11 @@ function formatAmount(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
-export default function LoanRepaymentCalculator({ onProceed }: Props) {
+export default function LoanRepaymentCalculator({ onProceed, onApplyForLoan }: Props) {
   const [loanId, setLoanId] = useState("");
   const [amount, setAmount] = useState("");
   const [loanOptions, setLoanOptions] = useState<number[]>([]);
+  const [loansLoaded, setLoansLoaded] = useState(false);
   const [preview, setPreview] = useState<RepaymentPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,9 +56,11 @@ export default function LoanRepaymentCalculator({ onProceed }: Props) {
           : [];
         if (mounted) {
           setLoanOptions(ids);
+          setLoansLoaded(true);
         }
       } catch {
         // Optional enhancement: loan options are non-blocking.
+        if (mounted) setLoansLoaded(true);
       }
     }
 
@@ -113,6 +119,15 @@ export default function LoanRepaymentCalculator({ onProceed }: Props) {
       <p className="text-sm text-brown/70 mb-4">
         Preview principal, interest, fees, and health impact before repaying.
       </p>
+
+      {loansLoaded && loanOptions.length === 0 && (
+        <EmptyState
+          illustration={<EmptyLoansIllustration />}
+          message="You have no active loans"
+          ctaLabel="Apply for a Loan"
+          onCta={() => onApplyForLoan?.()}
+        />
+      )}
 
       <div className="space-y-3">
         <div>
