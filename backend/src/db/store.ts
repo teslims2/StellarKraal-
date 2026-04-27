@@ -4,6 +4,8 @@
  * Migration: adds deletedAt timestamp to all records.
  */
 
+import { LoanStatus, TransitionRecord, transition } from "../loanStateMachine";
+
 export interface CollateralRecord {
   id: string;
   owner: string;
@@ -19,6 +21,8 @@ export interface LoanRecord {
   borrower: string;
   collateral_id: string;
   amount: number;
+  status: LoanStatus;
+  transitionHistory: TransitionRecord[];
   createdAt: string;
   deletedAt: string | null;
 }
@@ -64,8 +68,14 @@ export function listDeletedCollateral(): CollateralRecord[] {
 
 // ── Loans ─────────────────────────────────────────────────────────────────────
 
-export function insertLoan(data: Omit<LoanRecord, "createdAt" | "deletedAt">): LoanRecord {
-  const record: LoanRecord = { ...data, createdAt: new Date().toISOString(), deletedAt: null };
+export function insertLoan(data: Omit<LoanRecord, "status" | "transitionHistory" | "createdAt" | "deletedAt">): LoanRecord {
+  const record: LoanRecord = { 
+    ...data, 
+    status: "pending", 
+    transitionHistory: [],
+    createdAt: new Date().toISOString(), 
+    deletedAt: null 
+  };
   loanTable.set(record.id, record);
   return record;
 }
@@ -93,8 +103,17 @@ export function restoreLoan(id: string): boolean {
   return true;
 }
 
-export function listDeletedLoans(): LoanRecord[] {
-  return [...loanTable.values()].filter((r) => r.deletedAt !== null);
+export function updateLoanStatus(id: string, newStatus: LoanStatus): LoanRecord | null {
+  const record = loanTable.get(id);
+  if (!record || record.deletedAt !== null) return null;
+  
+  try {
+    record.status = transition(record.status, newStatus, record.transitionHistory);
+    return record;
+  } catch (error) {
+    // Invalid transition - return null to indicate failure
+    return null;
+  }
 }
 
 // ── Migration helper (documents schema intent) ────────────────────────────────
