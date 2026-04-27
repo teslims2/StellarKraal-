@@ -422,7 +422,7 @@ mod tests {
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
         let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
         client.pause(&admin);
-        client.liquidate(&liquidator, &loan_id);
+        client.liquidate(&liquidator, &loan_id, &300_000i128);
     }
 
     #[test]
@@ -673,7 +673,7 @@ mod tests {
             // Invariant 6: Liquidation only possible when hf < 10,000
             if hf >= 10_000 {
                 let res = env.as_contract(&cid, || {
-                   client.liquidate(&liquidator, &loan_id)
+                   client.liquidate(&liquidator, &loan_id, &1i128)
                 });
                 // In the real sdk this might panic or return Err, our setup() mocks all auths.
                 // If it doesn't panic, it should return Error::HealthFactorSafe.

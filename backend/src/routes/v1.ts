@@ -57,6 +57,12 @@ const loanRepaySchema = z.object({
   amount: z.number().int().positive(),
 });
 
+const loanLiquidateSchema = z.object({
+  liquidator: stellarPublicKeySchema,
+  loan_id: z.number().int().nonnegative(),
+  repay_amount: z.number().int().positive(),
+});
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 async function buildContractTx(
@@ -173,6 +179,26 @@ v1Router.post(
       new Address(borrower).toScVal(),
       nativeToScVal(BigInt(loan_id), { type: "u64" }),
       nativeToScVal(BigInt(amount), { type: "i128" }),
+    ]);
+    res.json({ xdr: xdrTx });
+  })
+);
+
+// POST /loan/liquidate
+v1Router.post(
+  "/loan/liquidate",
+  timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
+  writeLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    const validation = loanLiquidateSchema.safeParse(req.body);
+    if (!validation.success) {
+      return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
+    }
+    const { liquidator, loan_id, repay_amount } = validation.data;
+    const xdrTx = await buildContractTx(liquidator, "liquidate", [
+      new Address(liquidator).toScVal(),
+      nativeToScVal(BigInt(loan_id), { type: "u64" }),
+      nativeToScVal(BigInt(repay_amount), { type: "i128" }),
     ]);
     res.json({ xdr: xdrTx });
   })

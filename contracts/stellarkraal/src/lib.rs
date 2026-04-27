@@ -16,6 +16,7 @@ const LIQ_THR: Symbol = symbol_short!("LIQTHR"); // liquidation threshold bps e.
 const TREASURY: Symbol = symbol_short!("TREASURY");
 const ORIG_FEE: Symbol = symbol_short!("ORIGFEE"); // origination fee bps e.g. 50 = 0.5%
 const INT_FEE: Symbol = symbol_short!("INTFEE");   // interest fee bps e.g. 1000 = 10%
+const CLOSE_FACTOR: Symbol = symbol_short!("CLSFACT"); // close factor bps e.g. 5000 = 50%
 
 // ── Errors ───────────────────────────────────────────────────────────────────
 #[contracterror]
@@ -32,6 +33,8 @@ pub enum Error {
     InvalidAmount = 8,
     LoanAlreadyClosed = 9,
     InvalidFeeRate = 10,
+    ExceedsCloseFactor = 11,
+    InvalidCloseFactor = 12,
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -109,6 +112,7 @@ impl StellarKraal {
         env.storage().instance().set(&LIQ_THR, &liquidation_threshold_bps);
         env.storage().instance().set(&ORIG_FEE, &50u32); // 0.5%
         env.storage().instance().set(&INT_FEE, &1000u32); // 10%
+        env.storage().instance().set(&CLOSE_FACTOR, &5000u32); // 50%
         Ok(())
     }
 
@@ -287,9 +291,14 @@ impl StellarKraal {
     }
 
     // ── liquidate ─────────────────────────────────────────────────────────
-    pub fn liquidate(env: Env, liquidator: Address, loan_id: u64) -> Result<(), Error> {
+    /// `repay_amount`: how much debt the liquidator wants to repay.
+    /// Must be > 0 and ≤ outstanding * close_factor / 10_000.
+    pub fn liquidate(env: Env, liquidator: Address, loan_id: u64, repay_amount: i128) -> Result<(), Error> {
         Self::assert_initialized(&env)?;
         Self::assert_not_paused(&env)?;
+        if repay_amount <= 0 {
+            return Err(Error::InvalidAmount);
+        }
         liquidator.require_auth();
 
         let mut loan: LoanRecord = env
@@ -307,14 +316,45 @@ impl StellarKraal {
             return Err(Error::HealthFactorSafe);
         }
 
+        // Enforce close factor cap
+        let close_factor: u32 = env.storage().instance().get(&CLOSE_FACTOR).unwrap();
+        let max_repay = loan.outstanding
+            .checked_mul(close_factor as i128)
+            .ok_or(Error::InvalidAmount)?
+            / 10_000;
+        if repay_amount > max_repay {
+            return Err(Error::ExceedsCloseFactor);
+        }
+
         let token_addr: Address = env.storage().instance().get(&TOKEN).unwrap();
         let token_client = token::Client::new(&env, &token_addr);
-        token_client.transfer(&liquidator, &env.current_contract_address(), &loan.outstanding);
+        token_client.transfer(&liquidator, &env.current_contract_address(), &repay_amount);
 
-        loan.status = LoanStatus::Liquidated;
-        loan.outstanding = 0;
+        loan.outstanding = loan.outstanding.checked_sub(repay_amount).ok_or(Error::InvalidAmount)?;
+        if loan.outstanding == 0 {
+            loan.status = LoanStatus::Liquidated;
+        }
         env.storage().persistent().set(&DataKey::Loan(loan_id), &loan);
         Ok(())
+    }
+
+    // ── set_close_factor ──────────────────────────────────────────────────
+    pub fn set_close_factor(env: Env, admin: Address, close_factor_bps: u32) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+        // Must be between 1 bps and 100% (10_000 bps)
+        if close_factor_bps == 0 || close_factor_bps > 10_000 {
+            return Err(Error::InvalidCloseFactor);
+        }
+        env.storage().instance().set(&CLOSE_FACTOR, &close_factor_bps);
+        Ok(())
+    }
+
+    // ── get_close_factor ──────────────────────────────────────────────────
+    pub fn get_close_factor(env: Env) -> Result<u32, Error> {
+        Self::assert_initialized(&env)?;
+        Ok(env.storage().instance().get(&CLOSE_FACTOR).unwrap())
     }
 
     // ── health_factor ─────────────────────────────────────────────────────
