@@ -20,6 +20,8 @@ export default function RepayPanel({
   const [amount, setAmount] = useState(initialAmount);
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // Optimistic state: tracks the locally-predicted repayment status for this loan
+  const [optimisticRepaid, setOptimisticRepaid] = useState(false);
 
   useEffect(() => {
     setLoanId(initialLoanId);
@@ -32,6 +34,11 @@ export default function RepayPanel({
   async function repay() {
     setLoading(true);
     setStatus(null);
+
+    // onMutate: snapshot current state and apply optimistic update
+    const snapshot = optimisticRepaid;
+    setOptimisticRepaid(true);
+
     try {
       const res = await fetch(`${API}/api/loan/repay`, {
         method: "POST",
@@ -47,8 +54,11 @@ export default function RepayPanel({
         network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET",
       });
       await submitSignedXdr(signedTxXdr);
+      // onSettled: server confirmed — keep optimistic state as final
       setStatus("✅ Repayment submitted!");
     } catch (e: any) {
+      // onError: roll back optimistic update and show error toast
+      setOptimisticRepaid(snapshot);
       setStatus(`❌ ${e.message}`);
     } finally {
       setLoading(false);
@@ -58,6 +68,11 @@ export default function RepayPanel({
   return (
     <div className="bg-white rounded-2xl p-6 shadow mb-4">
       <h2 className="text-xl font-semibold text-brown mb-3">Repay Loan</h2>
+      {optimisticRepaid && !loading && (
+        <p className="text-sm text-green-700 bg-green-50 rounded-lg px-3 py-2 mb-3">
+          Repayment recorded — awaiting server confirmation…
+        </p>
+      )}
       <div className="space-y-3">
         <input
           className="w-full border border-brown/30 rounded-lg px-3 py-2"

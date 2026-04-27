@@ -19,9 +19,11 @@ import { pool } from "../utils/connectionPool";
 import { getAppraisal, setAppraisal, invalidateAll } from "../utils/appraisalCache";
 import { asyncHandler } from "../utils/asyncHandler";
 import { stellarPublicKeySchema } from "../validators/stellar";
-import { registerWebhook, getWebhooks, getDeliveryLogs } from "../webhooks";
+import { registerWebhook, getWebhooks, getDeliveryLogs, fireWebhooks } from "../webhooks";
 import { timeoutMiddleware } from "../middleware/timeout";
 import { writeLimiter } from "../middleware/rateLimit";
+import { fireAlert } from "../utils/alerting";
+import { rules } from "../utils/alertRules";
 
 const { Server } = SorobanRpc;
 
@@ -160,6 +162,7 @@ v1Router.post(
       idsScVal,
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
+    fireWebhooks("loan.approved", { borrower, collateral_ids, amount });
     res.json({ xdr: xdrTx });
   })
 );
@@ -180,6 +183,7 @@ v1Router.post(
       nativeToScVal(BigInt(loan_id), { type: "u64" }),
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
+    fireWebhooks("loan.repaid", { borrower, loan_id, amount });
     res.json({ xdr: xdrTx });
   })
 );
@@ -200,6 +204,7 @@ v1Router.post(
       nativeToScVal(BigInt(loan_id), { type: "u64" }),
       nativeToScVal(BigInt(repay_amount), { type: "i128" }),
     ]);
+    fireWebhooks("loan.liquidated", { liquidator, loan_id, repay_amount });
     res.json({ xdr: xdrTx });
   })
 );
@@ -267,7 +272,11 @@ v1Router.post(
     if (!url || typeof url !== "string") {
       return res.status(400).json({ error: "url is required" });
     }
-    res.status(201).json(registerWebhook(url));
+    try {
+      return res.status(201).json(registerWebhook(url));
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message });
+    }
   }
 );
 
@@ -279,6 +288,41 @@ v1Router.get("/admin/webhooks", (_req: Request, res: Response) => {
 // GET /admin/webhooks/logs
 v1Router.get("/admin/webhooks/logs", (_req: Request, res: Response) => {
   res.json(getDeliveryLogs());
+});
+
+/**
+ * POST /alerts/webhook
+ * Receiver for AWS SNS notifications (specifically for BACKUP_JOB_FAILED)
+ */
+v1Router.post("/alerts/webhook", async (req: Request, res: Response) => {
+  const body = req.body;
+
+  // Handle SNS subscription confirmation
+  if (req.header("x-amz-sns-message-type") === "SubscriptionConfirmation") {
+    const subscribeUrl = body.SubscribeURL;
+    if (subscribeUrl) {
+      await fetch(subscribeUrl);
+      return res.status(200).send("Subscribed");
+    }
+  }
+
+  // Handle actual notification
+  if (req.header("x-amz-sns-message-type") === "Notification") {
+    try {
+      const message = JSON.parse(body.Message);
+      // Check if it's a backup failure event
+      if (message["detail-type"] === "Backup Job State Change" && message.detail.state === "FAILED") {
+        await fireAlert(rules.backupFailure, "AWS Backup job failed", {
+          backupJobId: message.detail.backupJobId,
+          resourceArn: message.detail.resourceArn,
+        });
+      }
+    } catch (err) {
+      // Not a JSON message or different format
+    }
+  }
+
+  res.status(200).send("OK");
 });
 
 export { v1Router, startTime, APP_VERSION };

@@ -3,6 +3,7 @@ import { config } from "./config";
 import express, { Request, Response, NextFunction } from "express";
 import {
   runMigrations,
+  getMigrationStatus,
   insertCollateral,
   listCollateral,
   getCollateral,
@@ -15,8 +16,14 @@ import {
   softDeleteLoan,
   restoreLoan,
   listDeletedLoans,
+  insertTransaction,
+  listTransactions,
+  getTransaction,
+  updateTransaction,
+  type TransactionType,
+  type TransactionStatus,
 } from "./db/store";
-import cors from "cors";
+import { corsMiddleware } from "./middleware/cors";
 import {
   Networks,
   TransactionBuilder,
@@ -46,7 +53,29 @@ import { asyncHandler } from "./utils/asyncHandler";
 import { stellarPublicKeySchema } from "./validators/stellar";
 import rpcClient from "./utils/rpcClient";
 import { registerWebhook, getWebhooks, getDeliveryLogs } from "./webhooks";
+import { fireAlert } from "./utils/alerting";
+import { rules } from "./utils/alertRules";
 const { Server } = SorobanRpc;
+
+// ── 5xx spike tracking (rolling 60s window) ───────────────────────────────────
+const fivexxTimestamps: number[] = [];
+const FIVEXX_WINDOW_MS = 60_000;
+const FIVEXX_THRESHOLD = 10;
+
+function track5xx() {
+  const now = Date.now();
+  fivexxTimestamps.push(now);
+  // evict old entries
+  while (fivexxTimestamps.length && fivexxTimestamps[0] < now - FIVEXX_WINDOW_MS) {
+    fivexxTimestamps.shift();
+  }
+  if (fivexxTimestamps.length >= FIVEXX_THRESHOLD) {
+    fireAlert(rules.fivexxSpike, `${fivexxTimestamps.length} 5xx errors in the last 60s`, {
+      count: fivexxTimestamps.length,
+      window: "60s",
+    });
+  }
+}
 
 // ── Idempotency cache (in-memory, 24h TTL) ───────────────────────────────────
 interface IdempotencyEntry {
@@ -71,29 +100,8 @@ function setIdempotencyEntry(key: string, status: number, body: unknown): void {
 
 const app = express();
 
-const isProduction = process.env.NODE_ENV === "production";
-const FRONTEND_URL = process.env.FRONTEND_URL;
-
-// Startup warning for CORS misconfiguration
-if (isProduction && !FRONTEND_URL) {
-  logger.warn(
-    "CORS misconfiguration: FRONTEND_URL is not set in production environment. Requests may be blocked.",
-  );
-}
-
 // Secure CORS configuration
-app.use((req: Request, res: Response, next: NextFunction) => {
-  // Allow credentials only for authenticated routes (e.g., API endpoints excluding health check)
-  const isAuthRoute = req.path.startsWith("/api") && req.path !== "/api/health";
-
-  const corsOptions: cors.CorsOptions = {
-    origin: isProduction ? FRONTEND_URL || false : isAuthRoute ? true : "*",
-    credentials: isAuthRoute,
-    maxAge: 86400, // Cache preflight requests for 24 hours
-  };
-
-  cors(corsOptions)(req, res, next);
-});
+app.use(corsMiddleware);
 app.use(express.json());
 app.use(globalLimiter);
 app.use(timeoutMiddleware(parseInt(config.TIMEOUT_GLOBAL_MS, 10)));
@@ -104,6 +112,19 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   (req as any).requestId = requestId;
   (req as any).logger = createRequestLogger(requestId);
   res.setHeader("X-Request-ID", requestId);
+  next();
+});
+
+// Shutdown middleware - reject new requests during graceful shutdown
+let isShuttingDown = false;
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (isShuttingDown) {
+    res.setHeader("Connection", "close");
+    return res.status(503).json({
+      error: "Server is shutting down",
+      message: "Please retry your request",
+    });
+  }
   next();
 });
 
@@ -124,6 +145,25 @@ app.use(auditMiddleware);
 app.use("/api/auth", authRouter);
 app.use(jwtMiddleware);
 
+// ── API Versioning ────────────────────────────────────────────────────────────
+import { v1Router } from "./routes/v1";
+
+// Mount v1 routes
+app.use("/api/v1", v1Router);
+
+// Redirect unversioned routes to v1 with deprecation warning
+app.use("/api/:endpoint(*)", (req: Request, res: Response, next: NextFunction) => {
+  // Skip if already versioned or is auth/health
+  if (req.path.startsWith("/api/v1") || req.path === "/api/health" || req.path.startsWith("/api/auth")) {
+    return next();
+  }
+  
+  const newPath = req.path.replace(/^\/api/, "/api/v1");
+  res.setHeader("Deprecation", "true");
+  res.setHeader("Warning", '299 - "Unversioned API routes are deprecated. Use /api/v1/ prefix."');
+  res.redirect(301, newPath + (req.url.includes("?") ? req.url.substring(req.url.indexOf("?")) : ""));
+});
+
 const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
 const NETWORK_PASSPHRASE =
@@ -137,8 +177,21 @@ const server = new Server(RPC_URL);
 // Configure appraisal cache TTL from env
 configureCacheTTL(parseInt(config.APPRAISAL_CACHE_TTL_MS, 10));
 
-// Run DB migrations on startup
-runMigrations();
+// Run DB migrations on startup (automatic in development, manual in production)
+(async () => {
+  try {
+    await runMigrations();
+  } catch (error) {
+    logger.error("Failed to run migrations on startup", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    // In production, fail fast if migrations haven't been run
+    if (process.env.NODE_ENV === "production") {
+      logger.error("Production startup aborted due to migration failure");
+      process.exit(1);
+    }
+  }
+})();
 
 // ── Validation Schemas ────────────────────────────────────────────────────────
 
@@ -292,15 +345,22 @@ app.get(
         console.warn("RPC health check failed:", (error as Error).message);
       }
 
+      const circuitStates = rpcClient.getCircuitStates();
+      const circuitHealthy = rpcClient.isHealthy();
+
       const healthData = {
-        status: rpcReachable ? "healthy" : "degraded",
+        status: rpcReachable && circuitHealthy ? "healthy" : "degraded",
         version: APP_VERSION,
         uptime,
         rpcReachable,
+        circuitBreaker: {
+          healthy: circuitHealthy,
+          states: circuitStates,
+        },
         pool: pool.stats(),
       };
 
-      res.status(rpcReachable ? 200 : 503).json(healthData);
+      res.status(rpcReachable && circuitHealthy ? 200 : 503).json(healthData);
     } catch (error) {
       next(error);
     }
@@ -363,6 +423,7 @@ app.post(
       nativeToScVal(BigInt(collateral_id), { type: "u64" }),
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
+    fireWebhooks("loan.approved", { borrower, collateral_id, amount });
     res.json({ xdr: xdrTx, ...(cached?.stale ? { stale: true } : {}) });
   }),
 );
@@ -403,6 +464,7 @@ app.post(
     ]);
     const body = { xdr: xdrTx };
     setIdempotencyEntry(idempotencyKey, 200, body);
+    fireWebhooks("loan.repaid", { borrower, loan_id, amount });
     res.json(body);
   }),
 );
@@ -613,8 +675,11 @@ app.post(
     if (!url || typeof url !== "string") {
       return res.status(400).json({ error: "url is required" });
     }
-    const reg = registerWebhook(url);
-    res.status(201).json(reg);
+    try {
+      return res.status(201).json(registerWebhook(url));
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message });
+    }
   },
 );
 
@@ -627,6 +692,15 @@ app.get("/api/admin/webhooks", (req: Request, res: Response) => {
 app.get("/api/admin/webhooks/logs", (req: Request, res: Response) => {
   res.json(getDeliveryLogs());
 });
+
+// GET /api/admin/migrations/status — migration status
+app.get(
+  "/api/admin/migrations/status",
+  asyncHandler(async (req: Request, res: Response) => {
+    const status = await getMigrationStatus();
+    res.json({ status });
+  }),
+);
 
 // ── soft-delete admin routes ──────────────────────────────────────────────────
 
@@ -670,10 +744,65 @@ app.delete("/api/loan/:id", (req: Request, res: Response) => {
   res.json({ deleted: true, id: req.params.id });
 });
 
+// GET /api/transactions — transaction history with filtering, sorting, and pagination
+app.get(
+  "/api/transactions",
+  asyncHandler(async (req: Request, res: Response) => {
+    const borrower = req.query.borrower as string | undefined;
+    const type = req.query.type as TransactionType | undefined;
+    const status = req.query.status as TransactionStatus | undefined;
+    const startDate = req.query.startDate as string | undefined;
+    const endDate = req.query.endDate as string | undefined;
+    const pageRaw = req.query.page !== undefined ? Number(req.query.page) : 1;
+    const pageSizeRaw = req.query.pageSize !== undefined ? Number(req.query.pageSize) : 20;
+
+    if (!Number.isInteger(pageRaw) || pageRaw < 1) {
+      return res.status(400).json({ error: "page must be a positive integer" });
+    }
+    if (!Number.isInteger(pageSizeRaw) || pageSizeRaw < 1 || pageSizeRaw > 100) {
+      return res.status(400).json({ error: "pageSize must be between 1 and 100" });
+    }
+
+    // Validate date range if provided
+    if (startDate && isNaN(new Date(startDate).getTime())) {
+      return res.status(400).json({ error: "startDate must be a valid ISO date" });
+    }
+    if (endDate && isNaN(new Date(endDate).getTime())) {
+      return res.status(400).json({ error: "endDate must be a valid ISO date" });
+    }
+
+    const result = listTransactions({
+      borrower,
+      type,
+      status,
+      startDate,
+      endDate,
+      page: pageRaw,
+      pageSize: pageSizeRaw,
+    });
+
+    res.json(result);
+  }),
+);
+
+// GET /api/transactions/:id — get transaction details
+app.get(
+  "/api/transactions/:id",
+  asyncHandler(async (req: Request, res: Response) => {
+    const transaction = getTransaction(req.params.id);
+    if (!transaction) {
+      return res.status(404).json({ error: "Transaction not found" });
+    }
+    res.json(transaction);
+  }),
+);
+
 // ── error handler ─────────────────────────────────────────────────────────────
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
   const reqLogger = (req as any).logger || logger;
   if (err instanceof PoolExhaustedError) {
+    track5xx();
+    fireAlert(rules.dbError, "Connection pool exhausted", { path: req.path });
     return res
       .status(503)
       .json({ error: "Service unavailable: connection pool exhausted" });
@@ -682,16 +811,97 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
     error: err.message,
     stack: err.stack,
   });
+  track5xx();
   res.status(500).json({ error: err.message });
 });
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
-app.listen(PORT, () => {
+const httpServer = app.listen(PORT, () => {
   logger.info(`StellarKraal API running on port ${PORT}`, {
     port: PORT,
     environment: process.env.NODE_ENV || "development",
     logLevel: process.env.LOG_LEVEL || "info",
   });
+}
+
+// ── Graceful Shutdown ─────────────────────────────────────────────────────────
+
+const SHUTDOWN_TIMEOUT_MS = 30000; // 30 seconds
+
+async function gracefulShutdown(signal: string): Promise<void> {
+  if (isShuttingDown) {
+    logger.warn("Shutdown already in progress, ignoring signal", { signal });
+    return;
+  }
+
+  isShuttingDown = true;
+  logger.info(`Received ${signal}, starting graceful shutdown...`, { signal });
+
+  // Stop accepting new connections
+  httpServer.close(() => {
+    logger.info("HTTP server closed, no longer accepting connections");
+  });
+
+  // Set a timeout to force shutdown if graceful shutdown takes too long
+  const forceShutdownTimer = setTimeout(() => {
+    logger.error("Graceful shutdown timeout exceeded, forcing exit", {
+      timeoutMs: SHUTDOWN_TIMEOUT_MS,
+    });
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+
+  try {
+    // Wait for in-flight requests to complete
+    await new Promise<void>((resolve) => {
+      const checkInterval = setInterval(() => {
+        const stats = pool.stats();
+        if (stats.inUse === 0) {
+          clearInterval(checkInterval);
+          resolve();
+        } else {
+          logger.info("Waiting for in-flight requests to complete", {
+            inUse: stats.inUse,
+          });
+        }
+      }, 1000);
+    });
+
+    logger.info("All in-flight requests completed");
+
+    // Close database connections
+    pool.close();
+    logger.info("Database connection pool closed");
+
+    clearTimeout(forceShutdownTimer);
+    logger.info("Graceful shutdown complete");
+    process.exit(0);
+  } catch (error) {
+    logger.error("Error during graceful shutdown", {
+      error: (error as Error).message,
+    });
+    clearTimeout(forceShutdownTimer);
+    process.exit(1);
+  }
+}
+
+// Register signal handlers
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+// Handle uncaught errors
+process.on("uncaughtException", (error: Error) => {
+  logger.error("Uncaught exception", {
+    error: error.message,
+    stack: error.stack,
+  });
+  gracefulShutdown("uncaughtException");
+});
+
+process.on("unhandledRejection", (reason: unknown) => {
+  logger.error("Unhandled promise rejection", {
+    reason: reason instanceof Error ? reason.message : String(reason),
+  });
+  gracefulShutdown("unhandledRejection");
 });
 
 export default app;
