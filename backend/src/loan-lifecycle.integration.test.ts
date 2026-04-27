@@ -13,6 +13,22 @@ const INVALID_ADDRESS = "INVALID_KEY";
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
+jest.mock("./config", () => ({
+  config: {
+    PORT: "3001",
+    RPC_URL: "https://soroban-testnet.stellar.org",
+    CONTRACT_ID: "CTEST",
+    NEXT_PUBLIC_NETWORK: "testnet",
+    RATE_LIMIT_GLOBAL: "60",
+    RATE_LIMIT_WRITE: "10",
+    TIMEOUT_GLOBAL_MS: "30000",
+    TIMEOUT_WRITE_MS: "15000",
+    POOL_MIN: "2",
+    POOL_MAX: "10",
+    APPRAISAL_CACHE_TTL_MS: "300000",
+  },
+}));
+
 jest.mock("./utils/logger", () => ({
   __esModule: true,
   default: {

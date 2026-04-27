@@ -2,8 +2,24 @@ import { Keypair } from "@stellar/stellar-sdk";
 import request from "supertest";
 import app from "../index";
 
+jest.mock("../config", () => ({
+  config: {
+    PORT: "3001",
+    RPC_URL: "https://soroban-testnet.stellar.org",
+    CONTRACT_ID: "CTEST",
+    NEXT_PUBLIC_NETWORK: "testnet",
+    RATE_LIMIT_GLOBAL: "60",
+    RATE_LIMIT_WRITE: "10",
+    TIMEOUT_GLOBAL_MS: "30000",
+    TIMEOUT_WRITE_MS: "15000",
+    POOL_MIN: "2",
+    POOL_MAX: "10",
+    APPRAISAL_CACHE_TTL_MS: "300000",
+  },
+}));
+
 // Suppress logger noise
-jest.mock("./utils/logger", () => ({
+jest.mock("../utils/logger", () => ({
   __esModule: true,
   default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   createRequestLogger: jest.fn(() => ({

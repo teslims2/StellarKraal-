@@ -1,6 +1,23 @@
 import request from "supertest";
 import app from "./index";
 
+// Mock config to avoid env validation at import time
+jest.mock("./config", () => ({
+  config: {
+    PORT: "3001",
+    RPC_URL: "https://soroban-testnet.stellar.org",
+    CONTRACT_ID: "CTEST",
+    NEXT_PUBLIC_NETWORK: "testnet",
+    RATE_LIMIT_GLOBAL: "60",
+    RATE_LIMIT_WRITE: "10",
+    TIMEOUT_GLOBAL_MS: "30000",
+    TIMEOUT_WRITE_MS: "15000",
+    POOL_MIN: "2",
+    POOL_MAX: "10",
+    APPRAISAL_CACHE_TTL_MS: "300000",
+  },
+}));
+
 // Mock the logger
 jest.mock("./utils/logger", () => ({
   __esModule: true,
@@ -229,6 +246,104 @@ describe("StellarKraal API", () => {
       expect(res.headers["x-request-id"]).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
       );
+    });
+  });
+
+  describe("Soft delete — collateral", () => {
+    it("DELETE /api/collateral/:id returns 404 for unknown id", async () => {
+      const res = await request(app).delete("/api/collateral/nonexistent-id");
+      expect(res.status).toBe(404);
+      expect(res.body).toHaveProperty("error");
+    });
+
+    it("GET /api/admin/deleted/collateral returns empty array initially", async () => {
+      const res = await request(app).get("/api/admin/deleted/collateral");
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+    });
+
+    it("soft-deletes a collateral record and lists it under admin", async () => {
+      // Seed a record directly via the store
+      const { insertCollateral } = await import("./db/store");
+      const record = insertCollateral({ id: "col-test-1", owner: "GABC", animal_type: "cattle", count: 2, appraised_value: 5000 });
+
+      const del = await request(app).delete(`/api/collateral/${record.id}`);
+      expect(del.status).toBe(200);
+      expect(del.body).toEqual({ deleted: true, id: record.id });
+
+      const listed = await request(app).get("/api/admin/deleted/collateral");
+      expect(listed.body.some((r: any) => r.id === record.id)).toBe(true);
+      expect(listed.body.find((r: any) => r.id === record.id).deletedAt).not.toBeNull();
+    });
+
+    it("returns 404 on double soft-delete", async () => {
+      const { insertCollateral } = await import("./db/store");
+      const record = insertCollateral({ id: "col-test-2", owner: "GABC", animal_type: "goat", count: 1, appraised_value: 1000 });
+      await request(app).delete(`/api/collateral/${record.id}`);
+      const res = await request(app).delete(`/api/collateral/${record.id}`);
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("Soft delete — loans", () => {
+    it("DELETE /api/loan/:id returns 404 for unknown id", async () => {
+      const res = await request(app).delete("/api/loan/nonexistent-id");
+      expect(res.status).toBe(404);
+      expect(res.body).toHaveProperty("error");
+    });
+
+    it("GET /api/admin/deleted/loans returns empty array initially", async () => {
+      const res = await request(app).get("/api/admin/deleted/loans");
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+    });
+
+    it("soft-deletes a loan record and lists it under admin", async () => {
+      const { insertLoan } = await import("./db/store");
+      const record = insertLoan({ id: "loan-test-1", borrower: "GABC", collateral_id: "col-1", amount: 3000 });
+
+      const del = await request(app).delete(`/api/loan/${record.id}`);
+      expect(del.status).toBe(200);
+      expect(del.body).toEqual({ deleted: true, id: record.id });
+
+      const listed = await request(app).get("/api/admin/deleted/loans");
+      expect(listed.body.some((r: any) => r.id === record.id)).toBe(true);
+    });
+  });
+
+  describe("Admin restore", () => {
+    it("POST /api/admin/restore/collateral/:id restores a soft-deleted record", async () => {
+      const { insertCollateral } = await import("./db/store");
+      const record = insertCollateral({ id: "col-restore-1", owner: "GABC", animal_type: "sheep", count: 3, appraised_value: 2000 });
+      await request(app).delete(`/api/collateral/${record.id}`);
+
+      const res = await request(app).post(`/api/admin/restore/collateral/${record.id}`);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ restored: true, id: record.id });
+
+      // Should no longer appear in deleted list
+      const listed = await request(app).get("/api/admin/deleted/collateral");
+      expect(listed.body.some((r: any) => r.id === record.id)).toBe(false);
+    });
+
+    it("POST /api/admin/restore/collateral/:id returns 404 for non-deleted record", async () => {
+      const res = await request(app).post("/api/admin/restore/collateral/does-not-exist");
+      expect(res.status).toBe(404);
+    });
+
+    it("POST /api/admin/restore/loans/:id restores a soft-deleted loan", async () => {
+      const { insertLoan } = await import("./db/store");
+      const record = insertLoan({ id: "loan-restore-1", borrower: "GABC", collateral_id: "col-2", amount: 1500 });
+      await request(app).delete(`/api/loan/${record.id}`);
+
+      const res = await request(app).post(`/api/admin/restore/loans/${record.id}`);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ restored: true, id: record.id });
+    });
+
+    it("POST /api/admin/restore/loans/:id returns 404 for non-deleted loan", async () => {
+      const res = await request(app).post("/api/admin/restore/loans/does-not-exist");
+      expect(res.status).toBe(404);
     });
   });
 });
