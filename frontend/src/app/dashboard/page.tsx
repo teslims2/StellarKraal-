@@ -1,4 +1,3 @@
-"use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import WalletConnect from "@/components/WalletConnect";
@@ -7,7 +6,6 @@ import RepayPanel from "@/components/RepayPanel";
 import HealthGauge from "@/components/HealthGauge";
 import LoanRepaymentCalculator from "@/components/LoanRepaymentCalculator";
 import TransactionHistory from "@/components/TransactionHistory";
-
 export default function Dashboard() {
   const router = useRouter();
   const [wallet, setWallet] = useState<string | null>(null);
@@ -15,14 +13,11 @@ export default function Dashboard() {
   const [activeLoanId, setActiveLoanId] = useState("");
   const [repayLoanId, setRepayLoanId] = useState("");
   const [repayAmount, setRepayAmount] = useState("");
-
   const { healthFactor, loading, lastUpdated, refresh } = useHealthFactor(activeLoanId);
-
   function handleProceedToRepay(nextLoanId: string, nextAmount: string) {
     setRepayLoanId(nextLoanId);
     setRepayAmount(nextAmount);
   }
-
   return (
     <main className="max-w-6xl mx-auto px-4 py-10">
       <h1 className="text-3xl font-bold text-brown mb-6">Dashboard</h1>
@@ -47,16 +42,16 @@ export default function Dashboard() {
             <h2 className="text-xl font-semibold text-brown mb-3">
               Health Factor
             </h2>
-            <div className="flex gap-2 items-center">
+            <div className="flex flex-col md:flex-row gap-2 items-stretch md:items-center">
               <input
-                className="border border-brown/30 rounded-lg px-3 py-2 flex-1"
+                className="border border-brown/30 rounded-lg px-3 py-2 w-full md:flex-1 min-h-[44px]"
                 placeholder="Loan ID"
                 value={loanId}
                 onChange={(e) => setLoanId(e.target.value)}
               />
               <button
                 onClick={() => setActiveLoanId(loanId)}
-                className="bg-gold text-brown font-semibold px-4 py-2 rounded-lg hover:bg-gold/80 transition"
+                className="bg-gold text-brown font-semibold px-4 py-2 rounded-lg hover:bg-gold/80 transition w-full md:w-auto min-h-[44px]"
               >
                 Check
               </button>

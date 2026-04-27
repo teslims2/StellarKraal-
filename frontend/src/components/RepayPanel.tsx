@@ -75,14 +75,14 @@ export default function RepayPanel({
       )}
       <div className="space-y-3">
         <input
-          className="w-full border border-brown/30 rounded-lg px-3 py-2"
+          className="w-full border border-brown/30 rounded-lg px-3 py-2 min-h-[44px]"
           placeholder="Loan ID"
           value={loanId}
           onChange={(e) => setLoanId(e.target.value)}
           type="number"
         />
         <input
-          className="w-full border border-brown/30 rounded-lg px-3 py-2"
+          className="w-full border border-brown/30 rounded-lg px-3 py-2 min-h-[44px]"
           placeholder="Amount (stroops)"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
@@ -91,7 +91,7 @@ export default function RepayPanel({
         <button
           onClick={repay}
           disabled={loading}
-          className="w-full bg-gold text-brown py-2.5 rounded-xl font-semibold hover:bg-gold/80 transition disabled:opacity-50"
+          className="w-full bg-gold text-brown py-2.5 rounded-xl font-semibold hover:bg-gold/80 transition disabled:opacity-50 min-h-[44px]"
         >
           {loading ? "Processing…" : "Repay"}
         </button>

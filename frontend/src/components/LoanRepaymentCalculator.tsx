@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useMemo, useState } from "react";
 import HealthGauge from "@/components/HealthGauge";
 import EmptyState from "@/components/EmptyState";
@@ -43,7 +41,6 @@ export default function LoanRepaymentCalculator({ onProceed, onApplyForLoan }: P
 
   useEffect(() => {
     let mounted = true;
-
     async function loadLoans() {
       try {
         const res = await fetch(`${API}/api/loans?page=1&pageSize=50`);
@@ -54,60 +51,36 @@ export default function LoanRepaymentCalculator({ onProceed, onApplyForLoan }: P
               .map((item: { id?: number | string }) => Number(item?.id))
               .filter((id: number) => Number.isFinite(id))
           : [];
-        if (mounted) {
-          setLoanOptions(ids);
-          setLoansLoaded(true);
-        }
+        if (mounted) { setLoanOptions(ids); setLoansLoaded(true); }
       } catch {
-        // Optional enhancement: loan options are non-blocking.
         if (mounted) setLoansLoaded(true);
       }
     }
-
     void loadLoans();
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, []);
 
   useEffect(() => {
-    if (
-      !Number.isInteger(parsedLoanId) ||
-      parsedLoanId < 0 ||
-      !Number.isFinite(parsedAmount) ||
-      parsedAmount <= 0
-    ) {
-      setPreview(null);
-      setError(null);
-      return;
+    if (!Number.isInteger(parsedLoanId) || parsedLoanId < 0 || !Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      setPreview(null); setError(null); return;
     }
-
     const timeout = setTimeout(async () => {
       try {
-        setLoading(true);
-        setError(null);
+        setLoading(true); setError(null);
         const res = await fetch(`${API}/api/loan/repayment-preview`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ loan_id: parsedLoanId, amount: parsedAmount }),
         });
-
         const body = await res.json();
-        if (!res.ok) {
-          setPreview(null);
-          setError(body?.error || "Unable to calculate repayment preview");
-          return;
-        }
-
+        if (!res.ok) { setPreview(null); setError(body?.error || "Unable to calculate repayment preview"); return; }
         setPreview(body as RepaymentPreview);
       } catch (e: any) {
-        setPreview(null);
-        setError(e?.message || "Unable to calculate repayment preview");
+        setPreview(null); setError(e?.message || "Unable to calculate repayment preview");
       } finally {
         setLoading(false);
       }
     }, 300);
-
     return () => clearTimeout(timeout);
   }, [parsedAmount, parsedLoanId]);
 
@@ -135,7 +108,7 @@ export default function LoanRepaymentCalculator({ onProceed, onApplyForLoan }: P
             Loan ID
           </label>
           <input
-            className="w-full rounded-lg px-3 py-2 bg-transparent"
+            className="w-full rounded-lg px-3 py-2 min-h-[44px] bg-transparent"
             style={{ border: "1px solid var(--color-border)", color: "var(--color-text)" }}
             placeholder="Enter loan ID"
             value={loanId}
@@ -155,7 +128,7 @@ export default function LoanRepaymentCalculator({ onProceed, onApplyForLoan }: P
             Repayment Amount (stroops)
           </label>
           <input
-            className="w-full rounded-lg px-3 py-2 bg-transparent"
+            className="w-full rounded-lg px-3 py-2 min-h-[44px] bg-transparent"
             style={{ border: "1px solid var(--color-border)", color: "var(--color-text)" }}
             placeholder="Enter repayment amount"
             value={amount}
@@ -170,7 +143,7 @@ export default function LoanRepaymentCalculator({ onProceed, onApplyForLoan }: P
 
       {preview && (
         <div className="mt-5 border rounded-xl p-4" style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-bg)" }}>
-          <div className="grid grid-cols-2 gap-3 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
             {[
               ["Principal", preview.breakdown.principal],
               ["Interest", preview.breakdown.interest],
@@ -201,13 +174,8 @@ export default function LoanRepaymentCalculator({ onProceed, onApplyForLoan }: P
 
           <button
             type="button"
-            className="mt-4 w-full bg-brown text-cream py-2.5 rounded-xl font-semibold hover:bg-brown/80 transition dark:bg-gold dark:text-brown"
-            onClick={() =>
-              onProceed(
-                String(preview.loan_id),
-                String(preview.repayment_amount),
-              )
-            }
+            className="mt-4 w-full bg-brown text-cream py-2.5 rounded-xl font-semibold hover:bg-brown/80 transition min-h-[44px] dark:bg-gold dark:text-brown"
+            onClick={() => onProceed(String(preview.loan_id), String(preview.repayment_amount))}
           >
             Proceed to Repay
           </button>

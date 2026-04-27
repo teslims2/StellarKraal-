@@ -36,7 +36,7 @@ export default function WalletConnect({ onConnect }: Props) {
     <div className="mb-6">
       <button
         onClick={connect}
-        className="bg-brown text-cream px-5 py-2.5 rounded-xl font-semibold hover:bg-brown/80 transition"
+        className="bg-brown text-cream px-5 py-2.5 rounded-xl font-semibold hover:bg-brown/80 transition w-full md:w-auto min-h-[44px]"
       >
         Connect Freighter Wallet
       </button>
