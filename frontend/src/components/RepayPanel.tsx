@@ -36,16 +36,16 @@ export default function RepayPanel({ walletAddress }: Props) {
   }
 
   return (
-    <div className="bg-white rounded-2xl p-6 shadow mb-4">
-      <h2 className="text-xl font-semibold text-brown mb-3">Repay Loan</h2>
-      <div className="space-y-3">
-        <input className="w-full border border-brown/30 rounded-lg px-3 py-2" placeholder="Loan ID" value={loanId} onChange={(e) => setLoanId(e.target.value)} type="number" />
-        <input className="w-full border border-brown/30 rounded-lg px-3 py-2" placeholder="Amount (stroops)" value={amount} onChange={(e) => setAmount(e.target.value)} type="number" />
-        <button onClick={repay} disabled={loading} className="w-full bg-gold text-brown py-2.5 rounded-xl font-semibold hover:bg-gold/80 transition disabled:opacity-50">
+    <div className="bg-surface rounded-token-xl p-token-lg shadow-token mb-token-md">
+      <h2 className="text-token-xl font-semibold text-brand-brown mb-token-sm">Repay Loan</h2>
+      <div className="space-y-token-sm">
+        <input className="w-full border border-brand-brown/30 rounded-token px-token-sm py-2" placeholder="Loan ID" value={loanId} onChange={(e) => setLoanId(e.target.value)} type="number" />
+        <input className="w-full border border-brand-brown/30 rounded-token px-token-sm py-2" placeholder="Amount (stroops)" value={amount} onChange={(e) => setAmount(e.target.value)} type="number" />
+        <button onClick={repay} disabled={loading} className="w-full bg-brand-gold text-brand-brown py-2.5 rounded-token-xl font-semibold hover:bg-brand-gold/80 transition disabled:opacity-50">
           {loading ? "Processing…" : "Repay"}
         </button>
       </div>
-      {status && <p className="text-sm mt-2">{status}</p>}
+      {status && <p className="text-token-sm mt-2">{status}</p>}
     </div>
   );
 }

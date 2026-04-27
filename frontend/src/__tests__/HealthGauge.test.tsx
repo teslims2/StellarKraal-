@@ -4,7 +4,10 @@ import HealthGauge from "../components/HealthGauge";
 
 // healthColor is a pure util — mock the module so no stellar-sdk import needed
 jest.mock("../lib/stellarUtils", () => ({
-  healthColor: (bps: number) => (bps >= 10_000 ? "#16a34a" : "#dc2626"),
+  healthColor: (bps: number) =>
+    bps >= 10_000
+      ? { text: "text-status-healthy", bg: "bg-status-healthy" }
+      : { text: "text-status-danger", bg: "bg-status-danger" },
   formatStroops: (s: number) => `${s / 1e7} XLM`,
   submitSignedXdr: jest.fn(),
 }));

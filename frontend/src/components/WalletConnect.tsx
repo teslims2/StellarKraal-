@@ -26,21 +26,21 @@ export default function WalletConnect({ onConnect }: Props) {
 
   if (address) {
     return (
-      <div className="bg-brown/10 rounded-xl px-4 py-3 mb-6 text-sm font-mono text-brown">
+      <div className="bg-brand-brown/10 rounded-token-xl px-token-md py-token-sm mb-token-lg text-token-sm font-mono text-brand-brown">
         ✅ {address.slice(0, 8)}…{address.slice(-6)}
       </div>
     );
   }
 
   return (
-    <div className="mb-6">
+    <div className="mb-token-lg">
       <button
         onClick={connect}
-        className="bg-brown text-cream px-5 py-2.5 rounded-xl font-semibold hover:bg-brown/80 transition"
+        className="bg-brand-brown text-brand-cream px-5 py-2.5 rounded-token-xl font-semibold hover:bg-brand-brown/80 transition"
       >
         Connect Freighter Wallet
       </button>
-      {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
+      {error && <p className="text-status-danger text-token-sm mt-2">{error}</p>}
     </div>
   );
 }

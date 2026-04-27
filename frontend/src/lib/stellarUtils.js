@@ -10,11 +10,11 @@ export function formatStroops(stroops: number | bigint): string {
   return (Number(stroops) / 1e7).toFixed(7).replace(/\.?0+$/, "") + " XLM";
 }
 
-/** Returns a CSS color string based on health factor bps */
-export function healthColor(bps: number): string {
-  if (bps >= 15_000) return "#16a34a"; // green
-  if (bps >= 10_000) return "#ca8a04"; // yellow
-  return "#dc2626"; // red
+/** Returns Tailwind text + bg token class names based on health factor bps */
+export function healthColor(bps: number): { text: string; bg: string } {
+  if (bps >= 15_000) return { text: "text-status-healthy", bg: "bg-status-healthy" };
+  if (bps >= 10_000) return { text: "text-status-warning", bg: "bg-status-warning" };
+  return { text: "text-status-danger", bg: "bg-status-danger" };
 }
 
 /** Submit a signed XDR transaction and return the result value */
