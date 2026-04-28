@@ -326,3 +326,57 @@ v1Router.post("/alerts/webhook", async (req: Request, res: Response) => {
 });
 
 export { v1Router, startTime, APP_VERSION };
+
+// ── User Settings ─────────────────────────────────────────────────────────────
+
+const settingsSchema = z.object({
+  notifications: z.object({
+    loanApproved: z.boolean(),
+    loanRepaid: z.boolean(),
+    liquidationWarning: z.boolean(),
+  }).optional(),
+  language: z.string().min(2).max(10).optional(),
+  currency: z.string().min(3).max(6).optional(),
+});
+
+type UserSettings = z.infer<typeof settingsSchema> & {
+  walletAddress: string;
+  joinDate: string;
+};
+
+// In-memory store (replace with DB persistence in production)
+const settingsStore = new Map<string, UserSettings>();
+
+v1Router.get("/settings/:wallet", (req: Request, res: Response) => {
+  const wallet = req.params.wallet;
+  const existing = settingsStore.get(wallet);
+  if (!existing) {
+    // Return defaults for new users
+    return res.json({
+      walletAddress: wallet,
+      joinDate: new Date().toISOString(),
+      notifications: { loanApproved: true, loanRepaid: true, liquidationWarning: true },
+      language: "en",
+      currency: "USD",
+    });
+  }
+  res.json(existing);
+});
+
+v1Router.put("/settings/:wallet", (req: Request, res: Response) => {
+  const wallet = req.params.wallet;
+  const validation = settingsSchema.safeParse(req.body);
+  if (!validation.success) {
+    return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
+  }
+  const existing = settingsStore.get(wallet) ?? {
+    walletAddress: wallet,
+    joinDate: new Date().toISOString(),
+    notifications: { loanApproved: true, loanRepaid: true, liquidationWarning: true },
+    language: "en",
+    currency: "USD",
+  };
+  const updated: UserSettings = { ...existing, ...validation.data };
+  settingsStore.set(wallet, updated);
+  res.json(updated);
+});
