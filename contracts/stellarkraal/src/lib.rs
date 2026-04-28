@@ -17,6 +17,12 @@ const TREASURY: Symbol = symbol_short!("TREASURY");
 const ORIG_FEE: Symbol = symbol_short!("ORIGFEE"); // origination fee bps e.g. 50 = 0.5%
 const INT_FEE: Symbol = symbol_short!("INTFEE");   // interest fee bps e.g. 1000 = 10%
 const CLOSE_FACTOR: Symbol = symbol_short!("CLSFACT"); // close factor bps e.g. 5000 = 50%
+const TOTAL_BORROWED: Symbol = symbol_short!("TOTBOR"); // total borrowed amount
+const TOTAL_LIQUIDITY: Symbol = symbol_short!("TOTLIQ"); // total available liquidity
+const BASE_RATE: Symbol = symbol_short!("BASERT"); // base interest rate bps
+const SLOPE1: Symbol = symbol_short!("SLP1");    // slope below kink bps
+const SLOPE2: Symbol = symbol_short!("SLP2");    // slope above kink bps
+const KINK: Symbol = symbol_short!("KINK");      // utilization kink point bps
 
 // ── Errors ───────────────────────────────────────────────────────────────────
 #[contracterror]
@@ -75,6 +81,15 @@ pub struct FeeConfig {
     pub interest_fee_bps: u32,
 }
 
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct InterestRateModel {
+    pub base_rate_bps: u32,      // base interest rate in basis points
+    pub slope1_bps: u32,         // slope below kink in basis points
+    pub slope2_bps: u32,         // slope above kink in basis points
+    pub kink_bps: u32,           // utilization kink point in basis points
+}
+
 // ── Storage helpers ──────────────────────────────────────────────────────────
 #[contracttype]
 pub enum DataKey {
@@ -113,6 +128,17 @@ impl StellarKraal {
         env.storage().instance().set(&ORIG_FEE, &50u32); // 0.5%
         env.storage().instance().set(&INT_FEE, &1000u32); // 10%
         env.storage().instance().set(&CLOSE_FACTOR, &5000u32); // 50%
+        
+        // Initialize interest rate model (Compound-like jump rate model)
+        // base_rate: 2%, slope1: 5%, slope2: 45%, kink: 80%
+        env.storage().instance().set(&BASE_RATE, &200u32);
+        env.storage().instance().set(&SLOPE1, &500u32);
+        env.storage().instance().set(&SLOPE2, &4500u32);
+        env.storage().instance().set(&KINK, &8000u32);
+        
+        // Initialize liquidity tracking
+        env.storage().instance().set(&TOTAL_BORROWED, &0i128);
+        env.storage().instance().set(&TOTAL_LIQUIDITY, &0i128);
         Ok(())
     }
 
@@ -437,6 +463,54 @@ impl StellarKraal {
         })
     }
 
+    // ── set_interest_rate_model ───────────────────────────────────────────
+    pub fn set_interest_rate_model(
+        env: Env,
+        admin: Address,
+        base_rate_bps: u32,
+        slope1_bps: u32,
+        slope2_bps: u32,
+        kink_bps: u32,
+    ) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+        
+        // Validate parameters
+        if kink_bps == 0 || kink_bps > 10_000 {
+            return Err(Error::InvalidAmount);
+        }
+        
+        env.storage().instance().set(&BASE_RATE, &base_rate_bps);
+        env.storage().instance().set(&SLOPE1, &slope1_bps);
+        env.storage().instance().set(&SLOPE2, &slope2_bps);
+        env.storage().instance().set(&KINK, &kink_bps);
+        Ok(())
+    }
+
+    // ── get_interest_rate_model ───────────────────────────────────────────
+    pub fn get_interest_rate_model(env: Env) -> Result<InterestRateModel, Error> {
+        Self::assert_initialized(&env)?;
+        let base: u32 = env.storage().instance().get(&BASE_RATE).unwrap_or(200);
+        let slope1: u32 = env.storage().instance().get(&SLOPE1).unwrap_or(500);
+        let slope2: u32 = env.storage().instance().get(&SLOPE2).unwrap_or(4500);
+        let kink: u32 = env.storage().instance().get(&KINK).unwrap_or(8000);
+        Ok(InterestRateModel {
+            base_rate_bps: base,
+            slope1_bps: slope1,
+            slope2_bps: slope2,
+            kink_bps: kink,
+        })
+    }
+
+    // ── get_current_interest_rate ─────────────────────────────────────────
+    /// Returns the current interest rate in basis points based on utilization
+    pub fn get_current_interest_rate(env: Env) -> Result<u32, Error> {
+        Self::assert_initialized(&env)?;
+        let utilization = Self::calculate_utilization(&env)?;
+        Ok(Self::calculate_interest_rate(&env, utilization)?)
+    }
+
     // ── internal helpers ──────────────────────────────────────────────────
     fn assert_initialized(env: &Env) -> Result<(), Error> {
         if !env.storage().instance().has(&ADMIN) {
@@ -490,5 +564,55 @@ impl StellarKraal {
             .ok_or(Error::InvalidAmount)?;
         let denominator = loan.outstanding.checked_mul(10_000).ok_or(Error::InvalidAmount)?;
         Ok(numerator / denominator * 10_000)
+    }
+
+    fn calculate_utilization(env: &Env) -> Result<u32, Error> {
+        let total_borrowed: i128 = env.storage().instance().get(&TOTAL_BORROWED).unwrap_or(0);
+        let total_liquidity: i128 = env.storage().instance().get(&TOTAL_LIQUIDITY).unwrap_or(1);
+        
+        if total_liquidity <= 0 {
+            return Ok(0);
+        }
+        
+        // utilization = (total_borrowed / total_liquidity) * 10_000
+        let utilization = (total_borrowed * 10_000 / total_liquidity) as u32;
+        Ok(utilization.min(10_000))
+    }
+
+    fn calculate_interest_rate(env: &Env, utilization_bps: u32) -> Result<u32, Error> {
+        let base: u32 = env.storage().instance().get(&BASE_RATE).unwrap_or(200);
+        let slope1: u32 = env.storage().instance().get(&SLOPE1).unwrap_or(500);
+        let slope2: u32 = env.storage().instance().get(&SLOPE2).unwrap_or(4500);
+        let kink: u32 = env.storage().instance().get(&KINK).unwrap_or(8000);
+        
+        // Jump rate model:
+        // if utilization <= kink:
+        //   rate = base + (slope1 * utilization / 10_000)
+        // else:
+        //   rate = base + (slope1 * kink / 10_000) + (slope2 * (utilization - kink) / 10_000)
+        
+        let rate = if utilization_bps <= kink {
+            let slope1_component = (slope1 as u64)
+                .checked_mul(utilization_bps as u64)
+                .unwrap_or(u64::MAX)
+                / 10_000;
+            base.checked_add(slope1_component as u32).unwrap_or(u32::MAX)
+        } else {
+            let slope1_component = (slope1 as u64)
+                .checked_mul(kink as u64)
+                .unwrap_or(u64::MAX)
+                / 10_000;
+            let excess_util = utilization_bps.saturating_sub(kink);
+            let slope2_component = (slope2 as u64)
+                .checked_mul(excess_util as u64)
+                .unwrap_or(u64::MAX)
+                / 10_000;
+            base
+                .checked_add(slope1_component as u32)
+                .and_then(|r| r.checked_add(slope2_component as u32))
+                .unwrap_or(u32::MAX)
+        };
+        
+        Ok(rate)
     }
 }
