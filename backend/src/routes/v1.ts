@@ -12,7 +12,6 @@ import {
   xdr,
   Networks,
 } from "@stellar/stellar-sdk";
-import { SorobanRpc } from "@stellar/stellar-sdk";
 import { z } from "zod";
 import { config } from "../config";
 import { pool } from "../utils/connectionPool";
@@ -24,19 +23,13 @@ import { timeoutMiddleware } from "../middleware/timeout";
 import { writeLimiter } from "../middleware/rateLimit";
 import { fireAlert } from "../utils/alerting";
 import { rules } from "../utils/alertRules";
-
-const { Server } = SorobanRpc;
-
-const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
+import rpcClient from "../utils/rpcClient";
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
 const NETWORK_PASSPHRASE =
   config.NEXT_PUBLIC_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
 
 const APP_VERSION = process.env.npm_package_version || "1.0.0";
 const startTime = Date.now();
-
-const server = new Server(RPC_URL);
-const rpcClient = server;
 
 // ── Validation Schemas ────────────────────────────────────────────────────────
 

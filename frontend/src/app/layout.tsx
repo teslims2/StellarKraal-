@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import Link from "next/link";
+import OfflineBanner from "@/components/OfflineBanner";
 
 export const metadata: Metadata = {
   title: "StellarKraal — Livestock Micro-Lending",
@@ -9,7 +11,16 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="bg-cream-50 text-brown-700 min-h-screen">{children}</body>
+      <body className="bg-cream text-brown min-h-screen">
+        <OfflineBanner />
+        <nav className="flex gap-4 px-6 py-3 text-sm border-b border-brown/10">
+          <Link href="/" className="font-semibold text-brown hover:text-brown/70">StellarKraal</Link>
+          <span className="flex-1" />
+          <Link href="/help/faq" className="text-brown/70 hover:text-brown">FAQ</Link>
+          <Link href="/settings" className="text-brown/70 hover:text-brown">Settings</Link>
+        </nav>
+        {children}
+      </body>
     </html>
   );
 }
