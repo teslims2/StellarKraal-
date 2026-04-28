@@ -145,6 +145,11 @@ app.use(auditMiddleware);
 app.use("/api/auth", authRouter);
 app.use(jwtMiddleware);
 
+// ── API Docs (Swagger UI) ─────────────────────────────────────────────────────
+import swaggerUi from "swagger-ui-express";
+import openApiSpec from "../openapi.json";
+app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(openApiSpec));
+
 // ── API Versioning ────────────────────────────────────────────────────────────
 import { v1Router } from "./routes/v1";
 
