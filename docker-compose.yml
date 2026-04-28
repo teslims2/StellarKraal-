@@ -8,6 +8,15 @@ services:
     command: >
       sh -c "rustup target add wasm32-unknown-unknown &&
              cargo build --manifest-path contracts/stellarkraal/Cargo.toml --target wasm32-unknown-unknown --release"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
 
   backend:
     build:
@@ -19,6 +28,14 @@ services:
     environment:
       - PORT=3001
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
 
   frontend:
     build:
@@ -32,6 +49,14 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
 
 volumes:
   cargo-cache:
