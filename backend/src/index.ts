@@ -55,6 +55,12 @@ import rpcClient from "./utils/rpcClient";
 import { registerWebhook, getWebhooks, getDeliveryLogs } from "./webhooks";
 import { fireAlert } from "./utils/alerting";
 import { rules } from "./utils/alertRules";
+import {
+  registry,
+  httpRequestsTotal,
+  httpRequestDurationSeconds,
+  httpActiveConnections,
+} from "./metrics";
 const { Server } = SorobanRpc;
 
 // ── 5xx spike tracking (rolling 60s window) ───────────────────────────────────
@@ -140,6 +146,20 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 // Audit logging middleware — logs all requests with redacted body to audit log
 app.use(auditMiddleware);
+
+// ── Prometheus instrumentation middleware ─────────────────────────────────────
+app.use((req: Request, res: Response, next: NextFunction) => {
+  httpActiveConnections.inc();
+  const end = httpRequestDurationSeconds.startTimer();
+  res.on("finish", () => {
+    const route = (req.route?.path as string) ?? req.path;
+    const labels = { method: req.method, route, status_code: String(res.statusCode) };
+    httpRequestsTotal.inc(labels);
+    end(labels);
+    httpActiveConnections.dec();
+  });
+  next();
+});
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 app.use("/api/auth", authRouter);
@@ -329,6 +349,19 @@ async function buildContractTx(
 }
 
 // ── routes ────────────────────────────────────────────────────────────────────
+
+// GET /metrics - Prometheus metrics (token-protected)
+app.get("/metrics", async (req: Request, res: Response) => {
+  const token = process.env.METRICS_TOKEN;
+  if (token) {
+    const auth = req.headers.authorization;
+    if (auth !== `Bearer ${token}`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+  }
+  res.set("Content-Type", registry.contentType);
+  res.end(await registry.metrics());
+});
 
 // GET /api/health - Health check endpoint
 app.get(
@@ -822,7 +855,7 @@ const httpServer = app.listen(PORT, () => {
     environment: process.env.NODE_ENV || "development",
     logLevel: process.env.LOG_LEVEL || "info",
   });
-}
+});
 
 // ── Graceful Shutdown ─────────────────────────────────────────────────────────
 
