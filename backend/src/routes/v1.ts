@@ -19,9 +19,11 @@ import { pool } from "../utils/connectionPool";
 import { getAppraisal, setAppraisal, invalidateAll } from "../utils/appraisalCache";
 import { asyncHandler } from "../utils/asyncHandler";
 import { stellarPublicKeySchema } from "../validators/stellar";
-import { registerWebhook, getWebhooks, getDeliveryLogs } from "../webhooks";
+import { registerWebhook, getWebhooks, getDeliveryLogs, fireWebhooks } from "../webhooks";
 import { timeoutMiddleware } from "../middleware/timeout";
 import { writeLimiter } from "../middleware/rateLimit";
+import { fireAlert } from "../utils/alerting";
+import { rules } from "../utils/alertRules";
 
 const { Server } = SorobanRpc;
 
@@ -47,7 +49,7 @@ const registerCollateralSchema = z.object({
 
 const loanRequestSchema = z.object({
   borrower: stellarPublicKeySchema,
-  collateral_id: z.number().int().nonnegative(),
+  collateral_ids: z.array(z.number().int().nonnegative()).min(1),
   amount: z.number().int().positive(),
 });
 
@@ -55,6 +57,12 @@ const loanRepaySchema = z.object({
   borrower: stellarPublicKeySchema,
   loan_id: z.number().int().nonnegative(),
   amount: z.number().int().positive(),
+});
+
+const loanLiquidateSchema = z.object({
+  liquidator: stellarPublicKeySchema,
+  loan_id: z.number().int().nonnegative(),
+  repay_amount: z.number().int().positive(),
 });
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -147,18 +155,15 @@ v1Router.post(
     if (!validation.success) {
       return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
     }
-    const { borrower, collateral_id, amount } = validation.data;
-    const cacheKey = String(collateral_id);
-    const cached = getAppraisal(cacheKey);
-    if (!cached && req.body.appraised_value !== undefined) {
-      setAppraisal(cacheKey, req.body.appraised_value);
-    }
+    const { borrower, collateral_ids, amount } = validation.data;
+    const idsScVal = xdr.ScVal.scvVec(collateral_ids.map(id => nativeToScVal(BigInt(id), { type: "u64" })));
     const xdrTx = await buildContractTx(borrower, "request_loan", [
       new Address(borrower).toScVal(),
-      nativeToScVal(BigInt(collateral_id), { type: "u64" }),
+      idsScVal,
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
-    res.json({ xdr: xdrTx, ...(cached?.stale ? { stale: true } : {}) });
+    fireWebhooks("loan.approved", { borrower, collateral_ids, amount });
+    res.json({ xdr: xdrTx });
   })
 );
 
@@ -178,6 +183,28 @@ v1Router.post(
       nativeToScVal(BigInt(loan_id), { type: "u64" }),
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
+    fireWebhooks("loan.repaid", { borrower, loan_id, amount });
+    res.json({ xdr: xdrTx });
+  })
+);
+
+// POST /loan/liquidate
+v1Router.post(
+  "/loan/liquidate",
+  timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
+  writeLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    const validation = loanLiquidateSchema.safeParse(req.body);
+    if (!validation.success) {
+      return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
+    }
+    const { liquidator, loan_id, repay_amount } = validation.data;
+    const xdrTx = await buildContractTx(liquidator, "liquidate", [
+      new Address(liquidator).toScVal(),
+      nativeToScVal(BigInt(loan_id), { type: "u64" }),
+      nativeToScVal(BigInt(repay_amount), { type: "i128" }),
+    ]);
+    fireWebhooks("loan.liquidated", { liquidator, loan_id, repay_amount });
     res.json({ xdr: xdrTx });
   })
 );
@@ -245,7 +272,11 @@ v1Router.post(
     if (!url || typeof url !== "string") {
       return res.status(400).json({ error: "url is required" });
     }
-    res.status(201).json(registerWebhook(url));
+    try {
+      return res.status(201).json(registerWebhook(url));
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message });
+    }
   }
 );
 
@@ -257,6 +288,41 @@ v1Router.get("/admin/webhooks", (_req: Request, res: Response) => {
 // GET /admin/webhooks/logs
 v1Router.get("/admin/webhooks/logs", (_req: Request, res: Response) => {
   res.json(getDeliveryLogs());
+});
+
+/**
+ * POST /alerts/webhook
+ * Receiver for AWS SNS notifications (specifically for BACKUP_JOB_FAILED)
+ */
+v1Router.post("/alerts/webhook", async (req: Request, res: Response) => {
+  const body = req.body;
+
+  // Handle SNS subscription confirmation
+  if (req.header("x-amz-sns-message-type") === "SubscriptionConfirmation") {
+    const subscribeUrl = body.SubscribeURL;
+    if (subscribeUrl) {
+      await fetch(subscribeUrl);
+      return res.status(200).send("Subscribed");
+    }
+  }
+
+  // Handle actual notification
+  if (req.header("x-amz-sns-message-type") === "Notification") {
+    try {
+      const message = JSON.parse(body.Message);
+      // Check if it's a backup failure event
+      if (message["detail-type"] === "Backup Job State Change" && message.detail.state === "FAILED") {
+        await fireAlert(rules.backupFailure, "AWS Backup job failed", {
+          backupJobId: message.detail.backupJobId,
+          resourceArn: message.detail.resourceArn,
+        });
+      }
+    } catch (err) {
+      // Not a JSON message or different format
+    }
+  }
+
+  res.status(200).send("OK");
 });
 
 export { v1Router, startTime, APP_VERSION };

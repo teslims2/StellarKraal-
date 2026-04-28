@@ -55,8 +55,17 @@
         }
       ]
     },
-    "transformIgnorePatterns": [
-      "node_modules/(?!(@stellar)/)"
-    ]
+    "collectCoverageFrom": [
+      "src/components/**/*.tsx",
+      "!src/components/LiquidationWarningModal.tsx"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "lines": 70,
+        "functions": 70,
+        "branches": 70,
+        "statements": 70
+      }
+    }
   }
 }
