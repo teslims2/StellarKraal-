@@ -110,6 +110,14 @@ npm run test:frontend
 
 ---
 
+## Documentation
+
+| Document | Description |
+|---|---|
+| [Liquidation Mechanism](docs/protocol/liquidation.md) | Health factor formula, liquidation threshold, partial liquidation examples |
+
+---
+
 ## License
 
 MIT © StellarKraal
