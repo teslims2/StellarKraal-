@@ -9,10 +9,21 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 let ttlMs = 5 * 60 * 1000; // default 5 minutes
 
+/**
+ * Override the default cache TTL (5 minutes).
+ * @param ms - New TTL in milliseconds.
+ * @example configureCacheTTL(60_000); // 1 minute
+ */
 export function configureCacheTTL(ms: number): void {
   ttlMs = ms;
 }
 
+/**
+ * Retrieve a cached appraisal value for a collateral ID.
+ * Marks the entry as stale if it has exceeded the TTL but does not evict it.
+ * @param collateralId - The collateral record ID.
+ * @returns The {@link CacheEntry} (possibly stale), or `null` on cache miss.
+ */
 export function getAppraisal(collateralId: string): CacheEntry | null {
   const entry = cache.get(collateralId);
   if (!entry) {
@@ -29,6 +40,11 @@ export function getAppraisal(collateralId: string): CacheEntry | null {
   return entry;
 }
 
+/**
+ * Store or update an appraisal value in the cache.
+ * @param collateralId - The collateral record ID.
+ * @param value - Oracle-appraised value to cache.
+ */
 export function setAppraisal(collateralId: string, value: number): void {
   cache.set(collateralId, { value, cachedAt: Date.now(), stale: false });
 }
