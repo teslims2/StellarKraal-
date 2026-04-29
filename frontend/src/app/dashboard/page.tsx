@@ -7,9 +7,6 @@ import RepayPanel from "@/components/RepayPanel";
 import HealthGauge from "@/components/HealthGauge";
 import LoanRepaymentCalculator from "@/components/LoanRepaymentCalculator";
 import TransactionHistory from "@/components/TransactionHistory";
-import OnboardingModal from "@/components/OnboardingModal";
-import HelpMenu from "@/components/HelpMenu";
-import { useOnboarding } from "@/hooks/useOnboarding";
 import { useHealthFactor } from "@/hooks/useHealthFactor";
 
 export default function Dashboard() {
@@ -72,9 +69,6 @@ export default function Dashboard() {
                 value={healthFactor}
               />
             )}
-          </div>
-          <div className="mt-8">
-            <TransactionHistory walletAddress={wallet} />
           </div>
         </>
       )}

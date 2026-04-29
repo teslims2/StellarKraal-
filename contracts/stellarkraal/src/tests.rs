@@ -499,6 +499,53 @@ mod tests {
     ...
     */
 
+    // ── events ────────────────────────────────────────────────────────────
+    #[test]
+    fn test_register_livestock_emits_event() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let owner = Address::generate(&env);
+        let id = client.register_livestock(&owner, &symbol_short!("cattle"), &5u32, &1_000_000i128);
+        
+        let events = env.events().all();
+        let last_event = events.last().unwrap();
+        assert_eq!(last_event.0, (symbol_short!("livestock"), symbol_short!("registered")));
+    }
+
+    #[test]
+    fn test_request_loan_emits_event() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        
+        let events = env.events().all();
+        let loan_event = events.iter().find(|e| {
+            e.0 == (symbol_short!("loan"), symbol_short!("requested"))
+        });
+        assert!(loan_event.is_some());
+    }
+
+    #[test]
+    fn test_repay_loan_emits_event() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        client.repay_loan(&borrower, &loan_id, &200_000i128);
+        
+        let events = env.events().all();
+        let repay_event = events.iter().find(|e| {
+            e.0 == (symbol_short!("loan"), symbol_short!("repaid"))
+        });
+        assert!(repay_event.is_some());
+    }
+
     // ── proptests ─────────────────────────────────────────────────────────
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(10000))]
