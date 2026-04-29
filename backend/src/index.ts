@@ -34,7 +34,6 @@ import {
   Address,
   xdr,
 } from "@stellar/stellar-sdk";
-import { SorobanRpc } from "@stellar/stellar-sdk";
 import logger, { createRequestLogger } from "./utils/logger";
 import { pool, PoolExhaustedError } from "./utils/connectionPool";
 import { auditMiddleware } from "./middleware/audit";
@@ -55,7 +54,12 @@ import rpcClient from "./utils/rpcClient";
 import { registerWebhook, getWebhooks, getDeliveryLogs } from "./webhooks";
 import { fireAlert } from "./utils/alerting";
 import { rules } from "./utils/alertRules";
-const { Server } = SorobanRpc;
+import {
+  registry,
+  httpRequestsTotal,
+  httpRequestDurationSeconds,
+  httpActiveConnections,
+} from "./metrics";
 
 // ── 5xx spike tracking (rolling 60s window) ───────────────────────────────────
 const fivexxTimestamps: number[] = [];
@@ -141,6 +145,20 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // Audit logging middleware — logs all requests with redacted body to audit log
 app.use(auditMiddleware);
 
+// ── Prometheus instrumentation middleware ─────────────────────────────────────
+app.use((req: Request, res: Response, next: NextFunction) => {
+  httpActiveConnections.inc();
+  const end = httpRequestDurationSeconds.startTimer();
+  res.on("finish", () => {
+    const route = (req.route?.path as string) ?? req.path;
+    const labels = { method: req.method, route, status_code: String(res.statusCode) };
+    httpRequestsTotal.inc(labels);
+    end(labels);
+    httpActiveConnections.dec();
+  });
+  next();
+});
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 app.use("/api/auth", authRouter);
 app.use(jwtMiddleware);
@@ -164,15 +182,12 @@ app.use("/api/:endpoint(*)", (req: Request, res: Response, next: NextFunction) =
   res.redirect(301, newPath + (req.url.includes("?") ? req.url.substring(req.url.indexOf("?")) : ""));
 });
 
-const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
 const NETWORK_PASSPHRASE =
   config.NEXT_PUBLIC_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
 
 const APP_VERSION = process.env.npm_package_version || "1.0.0";
 const startTime = Date.now();
-
-const server = new Server(RPC_URL);
 
 // Configure appraisal cache TTL from env
 configureCacheTTL(parseInt(config.APPRAISAL_CACHE_TTL_MS, 10));
@@ -329,6 +344,19 @@ async function buildContractTx(
 }
 
 // ── routes ────────────────────────────────────────────────────────────────────
+
+// GET /metrics - Prometheus metrics (token-protected)
+app.get("/metrics", async (req: Request, res: Response) => {
+  const token = process.env.METRICS_TOKEN;
+  if (token) {
+    const auth = req.headers.authorization;
+    if (auth !== `Bearer ${token}`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+  }
+  res.set("Content-Type", registry.contentType);
+  res.end(await registry.metrics());
+});
 
 // GET /api/health - Health check endpoint
 app.get(
@@ -822,7 +850,7 @@ const httpServer = app.listen(PORT, () => {
     environment: process.env.NODE_ENV || "development",
     logLevel: process.env.LOG_LEVEL || "info",
   });
-}
+});
 
 // ── Graceful Shutdown ─────────────────────────────────────────────────────────
 
