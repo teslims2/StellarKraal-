@@ -319,7 +319,7 @@ impl StellarKraal {
         }
 
         let duration: u64 = env.storage().instance().get(&PAUSE_DUR).unwrap_or(24 * 3600); // Default 1 day
-        let expires_at = env.ledger().timestamp() + duration;
+        let expires_at = env.ledger().timestamp().checked_add(duration).ok_or(Error::ArithmeticOverflow)?;
 
         env.storage().instance().set(&PAUSED, &true);
         env.storage().instance().set(&PAUSE_EXP, &expires_at);
@@ -357,6 +357,70 @@ impl StellarKraal {
         Self::assert_admin(&env, &admin)?;
         admin.require_auth();
         env.storage().instance().set(&PAUSE_DUR, &duration);
+        Ok(())
+    }
+
+    // ── update_oracle ─────────────────────────────────────────────────────
+    /// Update the oracle address.
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn update_oracle(env: Env, admin: Address, new_oracle: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+        env.storage().instance().set(&ORACLE, &new_oracle);
+        env.events().publish((symbol_short!("Admin"), symbol_short!("OracleUpd")), new_oracle);
+        Ok(())
+    }
+
+    // ── set_liquidation_threshold ─────────────────────────────────────────
+    /// Update the liquidation threshold in basis points.
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn set_liquidation_threshold(env: Env, admin: Address, threshold_bps: u32) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+        if threshold_bps == 0 || threshold_bps > 10_000 {
+            return Err(Error::InvalidAmount);
+        }
+        env.storage().instance().set(&LIQ_THR, &threshold_bps);
+        env.events().publish((symbol_short!("Admin"), symbol_short!("LiqThrUpd")), threshold_bps);
+        Ok(())
+    }
+
+    // ── propose_new_admin ─────────────────────────────────────────────────
+    /// Propose a new admin address (Step 1 of transfer).
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn propose_new_admin(env: Env, admin: Address, new_admin: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+        env.storage().instance().set(&PENDING_ADMIN, &new_admin);
+        env.events().publish((symbol_short!("Admin"), symbol_short!("PropNewAd")), new_admin);
+        Ok(())
+    }
+
+    // ── accept_admin_role ─────────────────────────────────────────────────
+    /// Accept the admin role (Step 2 of transfer).
+    ///
+    /// # Security
+    /// Only the pending admin can call this.
+    pub fn accept_admin_role(env: Env, new_admin: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        let pending: Address = env.storage().instance().get(&PENDING_ADMIN).ok_or(Error::Unauthorized)?;
+        if new_admin != pending {
+            return Err(Error::Unauthorized);
+        }
+        new_admin.require_auth();
+        
+        env.storage().instance().set(&ADMIN, &new_admin);
+        env.storage().instance().remove(&PENDING_ADMIN);
+        env.events().publish((symbol_short!("Admin"), symbol_short!("AdminUpd")), new_admin);
         Ok(())
     }
 
@@ -1111,11 +1175,11 @@ impl StellarKraal {
         Ok(())
     }
 
-    fn next_id(env: &Env, key: DataKey) -> u64 {
+    fn next_id(env: &Env, key: DataKey) -> Result<u64, Error> {
         let id: u64 = env.storage().instance().get(&key).unwrap_or(0u64);
-        let next = id + 1;
+        let next = id.checked_add(1).ok_or(Error::ArithmeticOverflow)?;
         env.storage().instance().set(&key, &next);
-        next
+        Ok(next)
     }
 
     /// Pure arithmetic health-factor computation.
