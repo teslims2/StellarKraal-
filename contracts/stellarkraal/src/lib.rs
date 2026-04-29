@@ -32,6 +32,11 @@ const CLOSE_FACTOR: Symbol = symbol_short!("CLSFACT"); // close factor bps e.g. 
 const PAUSED: Symbol = symbol_short!("PAUSED");
 const PAUSE_EXP: Symbol = symbol_short!("PAUSEEXP");
 const PAUSE_DUR: Symbol = symbol_short!("PAUSEDUR");
+// Oracle validation config
+const PRICE_MIN: Symbol = symbol_short!("PRICEMIN");  // minimum valid price
+const PRICE_MAX: Symbol = symbol_short!("PRICEMAX");  // maximum valid price
+const STALE_THR: Symbol = symbol_short!("STALETHR");  // staleness threshold in seconds (default 3600)
+const DEV_BPS: Symbol = symbol_short!("DEVBPS");      // max deviation in bps (default 2000 = 20%)
 
 
 // ── Errors ───────────────────────────────────────────────────────────────────
@@ -73,6 +78,14 @@ pub enum Error {
     NotPaused = 15,
     /// Contract is already paused.
     AlreadyPaused = 16,
+    /// Oracle price is below the configured minimum bound.
+    PriceBelowMin = 17,
+    /// Oracle price is above the configured maximum bound.
+    PriceAboveMax = 18,
+    /// Oracle price update is older than the staleness threshold.
+    PriceStale = 19,
+    /// Oracle price deviates more than the allowed percentage from the last price.
+    PriceDeviationExceeded = 20,
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -150,6 +163,20 @@ pub struct TWAPData {
     pub current_price: i128,     // current spot price
     pub twap_price: i128,        // time-weighted average price
     pub last_update: u64,        // timestamp of last price update
+}
+
+/// Oracle validation configuration.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct OracleConfig {
+    /// Minimum acceptable price (inclusive). 0 means no lower bound.
+    pub price_min: i128,
+    /// Maximum acceptable price (inclusive). 0 means no upper bound.
+    pub price_max: i128,
+    /// Maximum age of a price update in seconds before it is considered stale.
+    pub staleness_threshold: u64,
+    /// Maximum allowed deviation from the previous price in basis points (e.g. 2000 = 20%).
+    pub max_deviation_bps: u32,
 }
 
 // ── Storage helpers ──────────────────────────────────────────────────────────
@@ -260,6 +287,11 @@ impl StellarKraal {
         env.storage().instance().set(&TWAP_PRICE, &0i128);
         env.storage().instance().set(&TWAP_SUM, &0i128);
         env.storage().instance().set(&TWAP_COUNT, &0u32);
+        // Initialize oracle validation config (defaults: no bounds, 1h staleness, 20% deviation)
+        env.storage().instance().set(&PRICE_MIN, &0i128);
+        env.storage().instance().set(&PRICE_MAX, &0i128);
+        env.storage().instance().set(&STALE_THR, &3600u64);
+        env.storage().instance().set(&DEV_BPS, &2000u32);
         Ok(())
     }
 
@@ -621,13 +653,17 @@ impl StellarKraal {
             return Err(Error::LoanAlreadyClosed);
         }
 
-        let hf = Self::compute_health_factor(&env, &loan)?;
+        // Batch both instance reads before the health-factor check to avoid
+        // a second round-trip into instance storage inside the helper.
+        let liq_thr: u32 = env.storage().instance().get(&LIQ_THR).unwrap();
+        let close_factor: u32 = env.storage().instance().get(&CLOSE_FACTOR).unwrap();
+
+        let hf = Self::compute_health_factor_with_thr(&loan, liq_thr)?;
         if hf >= 10_000 {
             return Err(Error::HealthFactorSafe);
         }
 
         // Enforce close factor cap
-        let close_factor: u32 = env.storage().instance().get(&CLOSE_FACTOR).unwrap();
         let max_repay = loan.outstanding
             .checked_mul(close_factor as i128)
             .ok_or(Error::InvalidAmount)?
@@ -693,24 +729,30 @@ impl StellarKraal {
     // ── health_factor ─────────────────────────────────────────────────────
     /// Compute the health factor for a loan (scaled by 10 000).
     ///
-    /// `health = (collateral_value * liquidation_threshold_bps) / (outstanding * 10_000)`
+    /// `health = (collateral_value * liquidation_threshold_bps) / (outstanding * 10_000) * 10_000`
     ///
     /// A value ≥ 10 000 means the position is healthy; < 10 000 means it is
     /// eligible for liquidation.  Returns `i128::MAX` when outstanding is 0.
     ///
-    /// # Parameters
-    /// - `loan_id`: ID of the loan to evaluate.
+    /// # Optimization notes
+    /// - `assert_initialized` is omitted: a loan record in persistent storage can only
+    ///   exist if `initialize` was called, so the loan fetch already implies initialization.
+    ///   This removes one instance-storage `has()` call from the hot path.
+    /// - `LIQ_THR` is read once here and forwarded to `compute_health_factor` as a plain
+    ///   `u32`, avoiding a second instance-storage read inside the helper.
     ///
     /// # Errors
-    /// - [`Error::NotInitialized`] / [`Error::LoanNotFound`]
+    /// - [`Error::LoanNotFound`] if `loan_id` does not exist (also covers uninitialized state).
     pub fn health_factor(env: Env, loan_id: u64) -> Result<i128, Error> {
-        Self::assert_initialized(&env)?;
+        // Single persistent read for the loan record.
         let loan: LoanRecord = env
             .storage()
             .persistent()
             .get(&DataKey::Loan(loan_id))
             .ok_or(Error::LoanNotFound)?;
-        Self::compute_health_factor(&env, &loan)
+        // Single instance read for the threshold, passed directly to avoid re-reading inside helper.
+        let liq_thr: u32 = env.storage().instance().get(&LIQ_THR).unwrap();
+        Self::compute_health_factor_with_thr(&loan, liq_thr)
     }
 
     // ── get_loan ──────────────────────────────────────────────────────────
@@ -862,51 +904,149 @@ impl StellarKraal {
         Ok(Self::calculate_interest_rate(&env, utilization)?)
     }
 
+    // ── set_oracle_config ─────────────────────────────────────────────────
+    /// Update oracle price validation parameters.
+    ///
+    /// # Parameters
+    /// - `price_min`: Minimum valid price (0 = no lower bound).
+    /// - `price_max`: Maximum valid price (0 = no upper bound).
+    /// - `staleness_threshold`: Max age of a price update in seconds.
+    /// - `max_deviation_bps`: Max allowed deviation from last price in bps (e.g. 2000 = 20%).
+    ///
+    /// # Errors
+    /// - [`Error::NotInitialized`] / [`Error::Unauthorized`]
+    /// - [`Error::InvalidAmount`] if `price_min` > `price_max` (when both non-zero),
+    ///   `staleness_threshold` is 0, or `max_deviation_bps` > 10_000.
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn set_oracle_config(
+        env: Env,
+        admin: Address,
+        price_min: i128,
+        price_max: i128,
+        staleness_threshold: u64,
+        max_deviation_bps: u32,
+    ) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+        if staleness_threshold == 0 || max_deviation_bps > 10_000 {
+            return Err(Error::InvalidAmount);
+        }
+        if price_min > 0 && price_max > 0 && price_min > price_max {
+            return Err(Error::InvalidAmount);
+        }
+        env.storage().instance().set(&PRICE_MIN, &price_min);
+        env.storage().instance().set(&PRICE_MAX, &price_max);
+        env.storage().instance().set(&STALE_THR, &staleness_threshold);
+        env.storage().instance().set(&DEV_BPS, &max_deviation_bps);
+        Ok(())
+    }
+
+    // ── get_oracle_config ─────────────────────────────────────────────────
+    /// Return the current oracle validation configuration.
+    pub fn get_oracle_config(env: Env) -> Result<OracleConfig, Error> {
+        Self::assert_initialized(&env)?;
+        Ok(OracleConfig {
+            price_min: env.storage().instance().get(&PRICE_MIN).unwrap_or(0),
+            price_max: env.storage().instance().get(&PRICE_MAX).unwrap_or(0),
+            staleness_threshold: env.storage().instance().get(&STALE_THR).unwrap_or(3600),
+            max_deviation_bps: env.storage().instance().get(&DEV_BPS).unwrap_or(2000),
+        })
+    }
+
     // ── submit_price ──────────────────────────────────────────────────────
-    /// Oracle submits a new price for collateral valuation
-    /// Updates TWAP based on the new price
-    pub fn submit_price(env: Env, oracle: Address, price: i128) -> Result<(), Error> {
+    /// Oracle submits a new price for collateral valuation.
+    ///
+    /// Validates:
+    /// 1. Price is positive.
+    /// 2. Price is within configured min/max bounds (if set).
+    /// 3. The update timestamp is not older than the staleness threshold.
+    /// 4. Price does not deviate more than `max_deviation_bps` from the last accepted price.
+    ///
+    /// Updates TWAP after all checks pass.
+    ///
+    /// # Parameters
+    /// - `oracle`: Must match the stored oracle address.
+    /// - `price`: New price value (must be > 0).
+    /// - `price_timestamp`: The timestamp at which the oracle observed this price.
+    ///
+    /// # Errors
+    /// - [`Error::Unauthorized`] if caller is not the stored oracle.
+    /// - [`Error::InvalidAmount`] if `price` ≤ 0.
+    /// - [`Error::PriceBelowMin`] if `price` < configured minimum.
+    /// - [`Error::PriceAboveMax`] if `price` > configured maximum.
+    /// - [`Error::PriceStale`] if `price_timestamp` is older than `staleness_threshold` seconds ago.
+    /// - [`Error::PriceDeviationExceeded`] if price deviates > `max_deviation_bps` from last price.
+    pub fn submit_price(env: Env, oracle: Address, price: i128, price_timestamp: u64) -> Result<(), Error> {
         Self::assert_initialized(&env)?;
         if price <= 0 {
             return Err(Error::InvalidAmount);
         }
         oracle.require_auth();
-        
+
         let stored_oracle: Address = env.storage().instance().get(&ORACLE).unwrap();
         if oracle != stored_oracle {
             return Err(Error::Unauthorized);
         }
-        
+
         let now = env.ledger().timestamp();
+
+        // ── 1. Staleness check ────────────────────────────────────────────
+        let stale_thr: u64 = env.storage().instance().get(&STALE_THR).unwrap_or(3600);
+        if price_timestamp < now.saturating_sub(stale_thr) {
+            return Err(Error::PriceStale);
+        }
+
+        // ── 2. Bounds check ───────────────────────────────────────────────
+        let price_min: i128 = env.storage().instance().get(&PRICE_MIN).unwrap_or(0);
+        let price_max: i128 = env.storage().instance().get(&PRICE_MAX).unwrap_or(0);
+        if price_min > 0 && price < price_min {
+            return Err(Error::PriceBelowMin);
+        }
+        if price_max > 0 && price > price_max {
+            return Err(Error::PriceAboveMax);
+        }
+
+        // ── 3. Deviation check ────────────────────────────────────────────
+        let last_price: i128 = env.storage().instance().get(&LAST_PRICE).unwrap_or(0);
+        if last_price > 0 {
+            let dev_bps: u32 = env.storage().instance().get(&DEV_BPS).unwrap_or(2000);
+            // deviation = |price - last_price| * 10_000 / last_price
+            let diff = if price > last_price { price - last_price } else { last_price - price };
+            let deviation_bps = diff
+                .checked_mul(10_000)
+                .unwrap_or(i128::MAX)
+                / last_price;
+            if deviation_bps > dev_bps as i128 {
+                return Err(Error::PriceDeviationExceeded);
+            }
+        }
+
+        // ── Update TWAP ───────────────────────────────────────────────────
         let window: u64 = env.storage().instance().get(&TWAP_WINDOW).unwrap_or(3600);
         let last_time: u64 = env.storage().instance().get(&LAST_PRICE_TIME).unwrap_or(0);
-        
-        // Update TWAP with new price
+
         let mut twap_sum: i128 = env.storage().instance().get(&TWAP_SUM).unwrap_or(0);
         let mut twap_count: u32 = env.storage().instance().get(&TWAP_COUNT).unwrap_or(0);
-        
-        // Add new price to TWAP
-        twap_sum = twap_sum.checked_add(price).unwrap_or(i128::MAX);
-        twap_count = twap_count.saturating_add(1);
-        
-        // If window has passed, reset TWAP
+
         if now.saturating_sub(last_time) >= window {
             twap_sum = price;
             twap_count = 1;
-        }
-        
-        let new_twap = if twap_count > 0 {
-            twap_sum / (twap_count as i128)
         } else {
-            price
-        };
-        
+            twap_sum = twap_sum.checked_add(price).unwrap_or(i128::MAX);
+            twap_count = twap_count.saturating_add(1);
+        }
+
+        let new_twap = twap_sum / (twap_count as i128);
+
         env.storage().instance().set(&LAST_PRICE, &price);
         env.storage().instance().set(&LAST_PRICE_TIME, &now);
         env.storage().instance().set(&TWAP_PRICE, &new_twap);
         env.storage().instance().set(&TWAP_SUM, &twap_sum);
         env.storage().instance().set(&TWAP_COUNT, &twap_count);
-        
+
         Ok(())
     }
 
@@ -978,12 +1118,17 @@ impl StellarKraal {
         next
     }
 
-    fn compute_health_factor(env: &Env, loan: &LoanRecord) -> Result<i128, Error> {
+    /// Pure arithmetic health-factor computation.
+    ///
+    /// Accepts `liq_thr` as a parameter so callers can read `LIQ_THR` from storage
+    /// once and reuse it, rather than paying for an instance-storage read on every
+    /// invocation.  No storage access occurs inside this function.
+    ///
+    /// Formula (unchanged): `(collateral * liq_thr) / (outstanding * 10_000) * 10_000`
+    fn compute_health_factor_with_thr(loan: &LoanRecord, liq_thr: u32) -> Result<i128, Error> {
         if loan.outstanding == 0 {
             return Ok(i128::MAX);
         }
-        let liq_thr: u32 = env.storage().instance().get(&LIQ_THR).unwrap();
-        // health = (total_collateral_value * liq_threshold) / (outstanding * 10_000)
         let numerator = loan
             .total_collateral_value
             .checked_mul(liq_thr as i128)
