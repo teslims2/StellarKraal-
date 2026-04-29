@@ -9,14 +9,14 @@
 //! - Admin-only functions verify the caller against the stored admin address.
 //! - The contract can be paused (with optional auto-expiry) to halt new operations
 //!   while still allowing repayments.
-#![deny(missing_docs)]
+#![warn(missing_docs)]
 #![no_std]
 #[cfg(test)]
 mod tests;
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env, Symbol,
-    Vec, events,
+    Vec,
 };
 
 // ── Storage keys ────────────────────────────────────────────────────────────
@@ -29,6 +29,10 @@ const TREASURY: Symbol = symbol_short!("TREASURY");
 const ORIG_FEE: Symbol = symbol_short!("ORIGFEE"); // origination fee bps e.g. 50 = 0.5%
 const INT_FEE: Symbol = symbol_short!("INTFEE");   // interest fee bps e.g. 1000 = 10%
 const CLOSE_FACTOR: Symbol = symbol_short!("CLSFACT"); // close factor bps e.g. 5000 = 50%
+const PAUSED: Symbol = symbol_short!("PAUSED");
+const PAUSE_EXP: Symbol = symbol_short!("PAUSEEXP");
+const PAUSE_DUR: Symbol = symbol_short!("PAUSEDUR");
+
 
 // ── Errors ───────────────────────────────────────────────────────────────────
 
@@ -63,6 +67,12 @@ pub enum Error {
     InvalidCloseFactor = 12,
     /// Contract is currently paused; write operations are blocked.
     ContractPaused = 13,
+    /// Operation is already in progress (reentrancy detected).
+    AlreadyInProgress = 14,
+    /// Contract is not paused.
+    NotPaused = 15,
+    /// Contract is already paused.
+    AlreadyPaused = 16,
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -138,6 +148,8 @@ pub enum DataKey {
     LoanCounter,
     /// Monotonically increasing counter for collateral IDs.
     CollateralCounter,
+    /// Reentrancy guard lock.
+    Guard,
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -145,6 +157,31 @@ pub enum DataKey {
 /// StellarKraal lending contract.
 #[contract]
 pub struct StellarKraal;
+
+
+/// RAII guard to prevent reentrancy.
+///
+/// Sets a temporary storage flag on creation and removes it on drop.
+pub struct ReentrancyGuard {
+    env: Env,
+}
+
+impl ReentrancyGuard {
+    /// Create a new guard, returning [`Error::AlreadyInProgress`] if already set.
+    pub fn new(env: &Env) -> Result<Self, Error> {
+        if env.storage().temporary().has(&DataKey::Guard) {
+            return Err(Error::AlreadyInProgress);
+        }
+        env.storage().temporary().set(&DataKey::Guard, &());
+        Ok(Self { env: env.clone() })
+    }
+}
+
+impl Drop for ReentrancyGuard {
+    fn drop(&mut self) {
+        self.env.storage().temporary().remove(&DataKey::Guard);
+    }
+}
 
 #[contractimpl]
 impl StellarKraal {
@@ -197,6 +234,62 @@ impl StellarKraal {
     /// reached, so this may return `false` even if `pause` was called earlier.
     pub fn is_paused(env: Env) -> bool {
         Self::is_paused_raw(&env)
+    }
+
+    // ── pause ─────────────────────────────────────────────────────────────
+    /// Pause the contract, blocking new loans and liquidations.
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn pause(env: Env, admin: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+
+        if Self::is_paused_raw(&env) {
+            return Err(Error::AlreadyPaused);
+        }
+
+        let duration: u64 = env.storage().instance().get(&PAUSE_DUR).unwrap_or(24 * 3600); // Default 1 day
+        let expires_at = env.ledger().timestamp() + duration;
+
+        env.storage().instance().set(&PAUSED, &true);
+        env.storage().instance().set(&PAUSE_EXP, &expires_at);
+        env.events().publish((symbol_short!("Pause"),), expires_at);
+        Ok(())
+    }
+
+    // ── unpause ───────────────────────────────────────────────────────────
+    /// Unpause the contract.
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn unpause(env: Env, admin: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+
+        if !Self::is_paused_raw(&env) {
+            return Err(Error::NotPaused);
+        }
+
+        env.storage().instance().set(&PAUSED, &false);
+        env.storage().instance().set(&PAUSE_EXP, &0u64);
+        env.events().publish((symbol_short!("Unpause"),), env.ledger().timestamp());
+        Ok(())
+    }
+
+    // ── set_pause_duration ────────────────────────────────────────────────
+    /// Set the default duration for a pause.
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn set_pause_duration(env: Env, admin: Address, duration: u64) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+        env.storage().instance().set(&PAUSE_DUR, &duration);
+        Ok(())
     }
 
     // ── register_livestock ────────────────────────────────────────────────
@@ -274,6 +367,7 @@ impl StellarKraal {
         collateral_ids: Vec<u64>,
         amount: i128,
     ) -> Result<u64, Error> {
+        let _guard = ReentrancyGuard::new(&env)?;
         Self::assert_initialized(&env)?;
         Self::assert_not_paused(&env)?;
         if amount <= 0 {
@@ -345,7 +439,7 @@ impl StellarKraal {
         if fee > 0 {
             let treasury: Address = env.storage().instance().get(&TREASURY).unwrap();
             token_client.transfer(&env.current_contract_address(), &treasury, &fee);
-            env.events().publish((symbol_short!("FeeCollect"), loan_id), (symbol_short!("originate"), fee));
+            env.events().publish((symbol_short!("FeeCol"), loan_id), (symbol_short!("originate"), fee));
         }
 
         // Disburse net amount to borrower
@@ -377,6 +471,7 @@ impl StellarKraal {
     /// # Security
     /// Requires auth from `borrower`. Token transfer is initiated from `borrower`.
     pub fn repay_loan(env: Env, borrower: Address, loan_id: u64, amount: i128) -> Result<(), Error> {
+        let _guard = ReentrancyGuard::new(&env)?;
         Self::assert_initialized(&env)?;
         // NOTE: repayment intentionally NOT blocked by pause
         if amount <= 0 {
@@ -418,7 +513,7 @@ impl StellarKraal {
         if interest_fee > 0 {
             let treasury: Address = env.storage().instance().get(&TREASURY).unwrap();
             token_client.transfer(&env.current_contract_address(), &treasury, &interest_fee);
-            env.events().publish((symbol_short!("FeeCollect"), loan_id), (symbol_short!("interest"), interest_fee));
+            env.events().publish((symbol_short!("FeeCol"), loan_id), (symbol_short!("interest"), interest_fee));
         }
 
         loan.outstanding = loan.outstanding.checked_sub(repay_amount).ok_or(Error::InvalidAmount)?;
@@ -452,6 +547,7 @@ impl StellarKraal {
     /// # Security
     /// Requires auth from `liquidator`. Only callable when health factor < 1.
     pub fn liquidate(env: Env, liquidator: Address, loan_id: u64, repay_amount: i128) -> Result<(), Error> {
+        let _guard = ReentrancyGuard::new(&env)?;
         Self::assert_initialized(&env)?;
         Self::assert_not_paused(&env)?;
         if repay_amount <= 0 {
