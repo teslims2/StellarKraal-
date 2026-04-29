@@ -1,37 +1,29 @@
 "use client";
 import { useState } from "react";
-import EmptyState from "./EmptyState";
-import { EmptyCollateralIllustration } from "./illustrations";
+import { colors } from "@/lib/design-tokens";
 
 interface Props {
   walletAddress: string;
-  onRegisterCollateral?: () => void;
 }
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
-export default function CollateralCard({ walletAddress, onRegisterCollateral }: Props) {
+export default function CollateralCard({ walletAddress }: Props) {
   const [collateralId, setCollateralId] = useState("");
   const [data, setData] = useState<any>(null);
-  const [notFound, setNotFound] = useState(false);
   const [loading, setLoading] = useState(false);
 
   async function lookup() {
     setLoading(true);
-    setNotFound(false);
-    setData(null);
     try {
       const res = await fetch(`${API}/api/loan/${collateralId}`);
-      const json = await res.json();
-      if (!json || json.error || res.status === 404) {
-        setNotFound(true);
-      } else {
-        setData(json);
-      }
+      setData(await res.json());
     } finally {
       setLoading(false);
     }
   }
+
+  if (isLoading) return <SkeletonCollateralCard />;
 
   return (
     <div className={`${colors.background.card} rounded-2xl p-6 shadow mb-4`}>
@@ -51,14 +43,6 @@ export default function CollateralCard({ walletAddress, onRegisterCollateral }: 
           {loading ? "…" : "Fetch"}
         </button>
       </div>
-      {notFound && (
-        <EmptyState
-          illustration={<EmptyCollateralIllustration />}
-          message="No collateral registered"
-          ctaLabel="Register Collateral"
-          onCta={() => onRegisterCollateral?.()}
-        />
-      )}
       {data && (
         <pre className={`mt-4 ${colors.background.secondary} rounded-lg p-3 text-xs overflow-auto ${colors.text.primary}`}>
           {JSON.stringify(data, null, 2)}

@@ -12,6 +12,10 @@ provider "aws" {
   region = var.aws_region
 }
 
+locals {
+  env = terraform.workspace == "default" ? var.environment : terraform.workspace
+}
+
 resource "aws_kms_key" "backup_key" {
   description             = "KMS key for database backup encryption"
   deletion_window_in_days = 30
@@ -19,7 +23,7 @@ resource "aws_kms_key" "backup_key" {
 
   tags = {
     Name        = "db-backup-kms-key"
-    Environment = var.environment
+    Environment = local.env
   }
 }
 

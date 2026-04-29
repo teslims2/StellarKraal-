@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { signTransaction } from "@stellar/freighter-api";
 import { submitSignedXdr } from "@/lib/stellarUtils";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 interface Props {
   walletAddress: string;
@@ -46,6 +47,7 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
   const [loading, setLoading] = useState(false);
   const [showRestorePrompt, setShowRestorePrompt] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   // Load saved data on mount
   useEffect(() => {
@@ -151,7 +153,7 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!validateForm()) {
@@ -159,6 +161,10 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
       return;
     }
 
+    setShowConfirm(true);
+  };
+
+  const registerCollateral = async () => {
     setLoading(true);
     setStatus(null);
 
@@ -353,7 +359,8 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
         </div>
 
         <button
-          type="submit"
+          type="button"
+          onClick={handleSubmit}
           disabled={loading || Object.keys(errors).some((key) => errors[key as keyof FormErrors])}
           className="w-full bg-brown text-cream py-2.5 rounded-xl font-semibold hover:bg-brown/80 transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
@@ -378,6 +385,15 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
           {status}
         </div>
       )}
+
+      <ConfirmDialog
+        open={showConfirm}
+        title="Register Collateral"
+        message={`Register ${formData.quantity} ${formData.animalType}(s) with appraised value of ${formData.appraisedValue} stroops as on-chain collateral? This action cannot be undone.`}
+        confirmLabel="Register"
+        onConfirm={() => { setShowConfirm(false); registerCollateral(); }}
+        onCancel={() => setShowConfirm(false)}
+      />
     </div>
   );
 }

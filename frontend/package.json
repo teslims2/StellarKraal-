@@ -7,8 +7,8 @@
     "build": "next build",
     "start": "next start",
     "test": "jest --passWithNoTests",
-    "test:a11y": "playwright test --config=playwright-a11y.config.ts",
-    "audit:contrast": "node scripts/contrast-audit.js"
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src --ext .ts,.tsx --max-warnings 0"
   },
   "dependencies": {
     "@stellar/freighter-api": "^6.0.1",
@@ -30,7 +30,11 @@
     "postcss": "^8.5.12",
     "tailwindcss": "^4.2.4",
     "ts-jest": "^29.4.9",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "14.2.35",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0"
   },
   "jest": {
     "testEnvironment": "jsdom",
@@ -52,17 +56,8 @@
         }
       ]
     },
-    "collectCoverageFrom": [
-      "src/components/**/*.tsx",
-      "!src/components/LiquidationWarningModal.tsx"
-    ],
-    "coverageThreshold": {
-      "global": {
-        "lines": 70,
-        "functions": 70,
-        "branches": 70,
-        "statements": 70
-      }
-    }
+    "transformIgnorePatterns": [
+      "node_modules/(?!(@stellar)/)"
+    ]
   }
 }

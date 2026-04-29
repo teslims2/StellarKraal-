@@ -1,8 +1,8 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { signTransaction } from "@stellar/freighter-api";
 import { submitSignedXdr } from "@/lib/stellarUtils";
-import { useFormAutoSave } from "@/hooks/useFormAutoSave";
+import { colors } from "@/lib/design-tokens";
 
 interface Props {
   walletAddress: string;
@@ -20,44 +20,11 @@ export default function LoanForm({ walletAddress }: Props) {
   const [loanAmount, setLoanAmount] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [showRestorePrompt, setShowRestorePrompt] = useState(false);
-
-  const formData = step === "collateral" 
-    ? { animalType, count, appraisedValue }
-    : { collateralId, loanAmount };
-
-  const { lastSaved, hasSavedData, restoreSavedData, clearSavedData } = useFormAutoSave({
-    storageKey: `stellarkraal_loan_form_${step}`,
-    data: formData,
-    walletAddress,
-  });
-
-  useEffect(() => {
-    if (hasSavedData) {
-      setShowRestorePrompt(true);
-    }
-  }, [hasSavedData]);
-
-  const handleRestore = () => {
-    const saved = restoreSavedData();
-    if (saved) {
-      if (step === "collateral") {
-        setAnimalType(saved.animalType || "cattle");
-        setCount(saved.count || "");
-        setAppraisedValue(saved.appraisedValue || "");
-      } else {
-        setCollateralId(saved.collateralId || "");
-        setLoanAmount(saved.loanAmount || "");
-      }
-    }
-    setShowRestorePrompt(false);
-  };
 
   async function registerCollateral() {
-    setLoading(true);
     setStatus(null);
     try {
-      const res = await fetch(`${API}/api/v1/collateral/register`, {
+      const res = await fetch(`${API}/api/collateral/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -71,25 +38,19 @@ export default function LoanForm({ walletAddress }: Props) {
       const { signedTxXdr } = await signTransaction(xdr, { network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET" });
       const result = await submitSignedXdr(signedTxXdr);
       setStatus(`✅ Collateral registered! ID: ${result}`);
-      clearSavedData();
       setStep("loan");
-    } catch (e: any) {
-      setStatus(`❌ ${e.message}`);
-    } finally {
-      setLoading(false);
-    }
+    }).catch((e: any) => setStatus(`❌ ${e.message}`));
   }
 
   async function requestLoan() {
-    setLoading(true);
     setStatus(null);
     try {
-      const res = await fetch(`${API}/api/v1/loan/request`, {
+      const res = await fetch(`${API}/api/loan/request`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           borrower: walletAddress,
-          collateral_ids: [parseInt(collateralId)],
+          collateral_id: parseInt(collateralId),
           amount: parseInt(loanAmount),
         }),
       });
@@ -97,7 +58,6 @@ export default function LoanForm({ walletAddress }: Props) {
       const { signedTxXdr } = await signTransaction(xdr, { network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET" });
       const result = await submitSignedXdr(signedTxXdr);
       setStatus(`✅ Loan disbursed! Loan ID: ${result}`);
-      clearSavedData();
     } catch (e: any) {
       setStatus(`❌ ${e.message}`);
     } finally {
@@ -105,29 +65,10 @@ export default function LoanForm({ walletAddress }: Props) {
     }
   }
 
+  if (isLoading) return <SkeletonLoanCard />;
+
   return (
-    <div className="bg-white rounded-2xl p-6 shadow mt-6 space-y-4">
-      {showRestorePrompt && (
-        <div className="bg-gold/20 border border-gold rounded-lg p-4 mb-4">
-          <p className="text-sm text-brown mb-2">
-            You have unsaved progress. Would you like to restore it?
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={handleRestore}
-              className="px-4 py-1.5 bg-gold text-brown rounded-lg text-sm font-medium hover:bg-gold/80"
-            >
-              Restore
-            </button>
-            <button
-              onClick={() => { clearSavedData(); setShowRestorePrompt(false); }}
-              className="px-4 py-1.5 bg-brown/10 text-brown rounded-lg text-sm hover:bg-brown/20"
-            >
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
+    <div className={`${colors.background.card} rounded-2xl p-6 shadow mt-6 space-y-4`}>
       {step === "collateral" ? (
         <>
           <h2 className={`text-xl font-semibold ${colors.text.primary}`}>1. Register Collateral</h2>
@@ -186,12 +127,11 @@ export default function LoanForm({ walletAddress }: Props) {
           </button>
         </>
       )}
-      {lastSaved && !loading && (
-        <p className="text-xs text-brown/60 text-center">
-          Auto-saved at {lastSaved.toLocaleTimeString()}
+      {status && (
+        <p className={`text-sm mt-2 ${status.includes('❌') ? colors.status.error.text : colors.status.success.text}`}>
+          {status}
         </p>
       )}
-      {status && <p className="text-sm mt-2">{status}</p>}
     </div>
   );
 }
