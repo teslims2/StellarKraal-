@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { GlossaryTerm } from "@/components/GlossaryTerm";
 import WalletConnect from "@/components/WalletConnect";
 import CollateralCard from "@/components/CollateralCard";
 import RepayPanel from "@/components/RepayPanel";
@@ -81,7 +82,7 @@ export default function Dashboard() {
           ) : (
             <div className="mt-8 bg-white rounded-2xl p-6 shadow">
               <h2 className="text-xl font-semibold text-brown mb-3">
-                Health Factor
+                <GlossaryTerm termKey="healthFactor" />
               </h2>
               <div className="flex gap-2 items-center">
                 <input

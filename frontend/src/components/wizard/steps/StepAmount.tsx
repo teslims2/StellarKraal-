@@ -1,5 +1,6 @@
 "use client";
 import { useWizard } from "@/context/LoanWizardContext";
+import { GlossaryTerm } from "@/components/GlossaryTerm";
 
 const TERM_OPTIONS = [
   { days: "7", label: "7 days", rate: "2%" },
@@ -76,7 +77,7 @@ export default function StepAmount() {
         {loanAmount && maxLoan > 0 && (
           <div className="mt-2">
             <div className="flex justify-between text-xs text-brown/50 mb-1">
-              <span>LTV: {ltv}%</span>
+              <span><GlossaryTerm termKey="ltv">LTV</GlossaryTerm>: {ltv}%</span>
               <span>Max: 70%</span>
             </div>
             <div className="h-2 bg-brown/10 rounded-full overflow-hidden">
@@ -115,7 +116,7 @@ export default function StepAmount() {
       {/* Health factor preview */}
       {healthFactor && (
         <div className="bg-white border border-brown/20 rounded-xl px-4 py-3 flex justify-between items-center">
-          <span className="text-sm text-brown/70">Est. Health Factor</span>
+          <span className="text-sm text-brown/70"><GlossaryTerm termKey="healthFactor">Est. Health Factor</GlossaryTerm></span>
           <span className={`font-bold text-lg ${healthColor}`}>{healthFactor}</span>
         </div>
       )}
