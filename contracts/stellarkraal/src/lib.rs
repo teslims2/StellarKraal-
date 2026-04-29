@@ -370,6 +370,13 @@ impl StellarKraal {
             loan_id: 0,
         };
         env.storage().persistent().set(&DataKey::Collateral(id), &record);
+
+        // Emit livestock_registered event
+        env.events().publish(
+            (symbol_short!("livestock"), symbol_short!("registered")),
+            (id, record.owner.clone(), record.animal_type.clone(), record.count, record.appraised_value),
+        );
+
         Ok(id)
     }
 
@@ -481,6 +488,12 @@ impl StellarKraal {
         // Disburse net amount to borrower
         token_client.transfer(&env.current_contract_address(), &borrower, &disbursement);
 
+        // Emit loan_requested event
+        env.events().publish(
+            (symbol_short!("loan"), symbol_short!("requested")),
+            (loan_id, borrower.clone(), amount, disbursement, total_collateral_value),
+        );
+
         Ok(loan_id)
     }
 
@@ -557,6 +570,13 @@ impl StellarKraal {
             loan.status = LoanStatus::Repaid;
         }
         env.storage().persistent().set(&DataKey::Loan(loan_id), &loan);
+
+        // Emit loan_repaid event
+        env.events().publish(
+            (symbol_short!("loan"), symbol_short!("repaid")),
+            (loan_id, borrower.clone(), repay_amount, loan.outstanding, loan.status.clone()),
+        );
+
         Ok(())
     }
 
@@ -625,6 +645,13 @@ impl StellarKraal {
             loan.status = LoanStatus::Liquidated;
         }
         env.storage().persistent().set(&DataKey::Loan(loan_id), &loan);
+
+        // Emit loan_liquidated event
+        env.events().publish(
+            (symbol_short!("loan"), symbol_short!("liquidated")),
+            (loan_id, liquidator.clone(), repay_amount, loan.outstanding, loan.status.clone()),
+        );
+
         Ok(())
     }
 
