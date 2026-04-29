@@ -34,6 +34,17 @@ export default function Dashboard() {
     });
   }
 
+  async function fetchHealth() {
+    if (!loanId) return;
+    await withMinLoading(async () => {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/health/${loanId}`,
+      );
+      const data = await res.json();
+      setHealthFactor(Number(data.health_factor ?? 0));
+    });
+  }
+
   return (
     <main className="max-w-6xl mx-auto px-4 py-10">
       <div className="flex justify-between items-center mb-6">
