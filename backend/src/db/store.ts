@@ -89,8 +89,24 @@ export function insertLoan(data: Omit<LoanRecord, "createdAt" | "deletedAt">): L
   return record;
 }
 
-export function listLoans(): LoanRecord[] {
-  return [...loanTable.values()].filter((r) => r.deletedAt === null);
+export function listLoans(filters?: {
+  page?: number;
+  pageSize?: number;
+}): { data: LoanRecord[]; total: number; page: number; pageSize: number } {
+  const pageSize = Math.min(filters?.pageSize || 20, 100);
+  const page = Math.max(filters?.page || 1, 1);
+
+  let results = [...loanTable.values()].filter((r) => r.deletedAt === null);
+
+  // Sort by date descending (newest first)
+  results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  const total = results.length;
+  const start = (page - 1) * pageSize;
+  const end = start + pageSize;
+  const data = results.slice(start, end);
+
+  return { data, total, page, pageSize };
 }
 
 export function getLoan(id: string): LoanRecord | undefined {
@@ -153,7 +169,7 @@ export function listTransactions(filters?: {
 }): { data: TransactionRecord[]; total: number; page: number; pageSize: number } {
   const pageSize = filters?.pageSize || 20;
   const page = filters?.page || 1;
-  
+
   let results = [...transactionTable.values()];
 
   if (filters?.borrower) {

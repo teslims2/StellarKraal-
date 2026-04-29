@@ -24,6 +24,7 @@ import { writeLimiter } from "../middleware/rateLimit";
 import { fireAlert } from "../utils/alerting";
 import { rules } from "../utils/alertRules";
 import rpcClient from "../utils/rpcClient";
+import { listLoans } from "../db/store";
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
 const NETWORK_PASSPHRASE =
   config.NEXT_PUBLIC_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
@@ -56,6 +57,11 @@ const loanLiquidateSchema = z.object({
   liquidator: stellarPublicKeySchema,
   loan_id: z.number().int().nonnegative(),
   repay_amount: z.number().int().positive(),
+});
+
+const paginationSchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).optional().default(20),
 });
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -245,6 +251,31 @@ v1Router.get("/health/:loanId", async (req: Request, res: Response, next: NextFu
     next(err);
   }
 });
+
+// GET /loans - List loans with pagination
+v1Router.get("/loans", asyncHandler(async (req: Request, res: Response) => {
+  const validation = paginationSchema.safeParse(req.query);
+  if (!validation.success) {
+    return res.status(400).json({ error: "Invalid pagination parameters", details: validation.error.errors });
+  }
+
+  const { page, pageSize } = validation.data;
+
+  // Add deprecation warning header for unpaginated usage
+  if (!req.query.page && !req.query.pageSize) {
+    res.set("Deprecation", "true");
+    res.set("Sunset", new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toUTCString());
+    res.set("Warning", '299 - "Unpaginated loan listing is deprecated. Use ?page=1&pageSize=20 parameters."');
+  }
+
+  const result = listLoans({ page, pageSize });
+  res.json({
+    data: result.data,
+    total: result.total,
+    page: result.page,
+    pageSize: result.pageSize,
+  });
+}));
 
 // POST /oracle/price-update
 v1Router.post(
