@@ -431,6 +431,105 @@ describe("API v1 Integration Tests", () => {
     });
   });
 
+  // ── 7. List Loans with Pagination ─────────────────────────────────────────
+
+  describe("GET /api/v1/loans", () => {
+    it("happy path: returns paginated loans with default page size", async () => {
+      const res = await request(app).get("/api/v1/loans");
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("data");
+      expect(res.body).toHaveProperty("total");
+      expect(res.body).toHaveProperty("page", 1);
+      expect(res.body).toHaveProperty("pageSize", 20);
+      expect(res.body).toHaveProperty("api_version", "v1");
+      expect(Array.isArray(res.body.data)).toBe(true);
+    });
+
+    it("happy path: accepts custom page parameter", async () => {
+      const res = await request(app).get("/api/v1/loans?page=2");
+      expect(res.status).toBe(200);
+      expect(res.body.page).toBe(2);
+      expect(res.body.pageSize).toBe(20);
+    });
+
+    it("happy path: accepts custom pageSize parameter", async () => {
+      const res = await request(app).get("/api/v1/loans?pageSize=50");
+      expect(res.status).toBe(200);
+      expect(res.body.pageSize).toBe(50);
+      expect(res.body.page).toBe(1);
+    });
+
+    it("happy path: accepts both page and pageSize parameters", async () => {
+      const res = await request(app).get("/api/v1/loans?page=3&pageSize=25");
+      expect(res.status).toBe(200);
+      expect(res.body.page).toBe(3);
+      expect(res.body.pageSize).toBe(25);
+    });
+
+    it("happy path: enforces maximum pageSize of 100", async () => {
+      const res = await request(app).get("/api/v1/loans?pageSize=200");
+      expect(res.status).toBe(200);
+      expect(res.body.pageSize).toBe(100);
+    });
+
+    it("happy path: returns deprecation headers when no pagination params provided", async () => {
+      const res = await request(app).get("/api/v1/loans");
+      expect(res.status).toBe(200);
+      expect(res.headers).toHaveProperty("deprecation", "true");
+      expect(res.headers).toHaveProperty("warning");
+      expect(res.headers.warning).toContain("Unpaginated loan listing is deprecated");
+    });
+
+    it("happy path: does not return deprecation headers when pagination params provided", async () => {
+      const res = await request(app).get("/api/v1/loans?page=1&pageSize=20");
+      expect(res.status).toBe(200);
+      expect(res.headers).not.toHaveProperty("deprecation");
+    });
+
+    it("error: invalid page parameter returns 400", async () => {
+      const res = await request(app).get("/api/v1/loans?page=0");
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid pagination parameters");
+    });
+
+    it("error: negative page parameter returns 400", async () => {
+      const res = await request(app).get("/api/v1/loans?page=-1");
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid pagination parameters");
+    });
+
+    it("error: invalid pageSize parameter returns 400", async () => {
+      const res = await request(app).get("/api/v1/loans?pageSize=0");
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid pagination parameters");
+    });
+
+    it("error: negative pageSize parameter returns 400", async () => {
+      const res = await request(app).get("/api/v1/loans?pageSize=-10");
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid pagination parameters");
+    });
+
+    it("error: non-numeric page parameter returns 400", async () => {
+      const res = await request(app).get("/api/v1/loans?page=abc");
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid pagination parameters");
+    });
+
+    it("error: non-numeric pageSize parameter returns 400", async () => {
+      const res = await request(app).get("/api/v1/loans?pageSize=xyz");
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Invalid pagination parameters");
+    });
+
+    it("happy path: returns empty data array when page exceeds total", async () => {
+      const res = await request(app).get("/api/v1/loans?page=999");
+      expect(res.status).toBe(200);
+      expect(res.body.data).toEqual([]);
+      expect(res.body.page).toBe(999);
+    });
+  });
+
   // ── Full Lifecycle ────────────────────────────────────────────────────────
 
   describe("Full loan lifecycle: register → request → repay → liquidate → health", () => {
