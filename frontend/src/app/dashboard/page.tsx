@@ -1,4 +1,3 @@
-"use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import WalletConnect from "@/components/WalletConnect";
@@ -55,7 +54,6 @@ export default function Dashboard() {
       setHealthFactor(Number(data.health_factor ?? 0));
     });
   }
-
   return (
     <main className="max-w-6xl mx-auto px-4 py-10">
       <div className="flex justify-between items-center mb-6">
