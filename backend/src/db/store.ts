@@ -127,11 +127,30 @@ export function insertLoan(data: Omit<LoanRecord, "createdAt" | "deletedAt">): L
 }
 
 /**
- * Return all non-deleted loan records.
- * @returns Array of active {@link LoanRecord} objects.
+ * Return all non-deleted loan records with optional pagination.
+ * @param filters - Optional pagination parameters.
+ * @param filters.page - Page number (1-indexed, default 1).
+ * @param filters.pageSize - Records per page (default 20, max 100).
+ * @returns Paginated result with `data`, `total`, `page`, and `pageSize`.
  */
-export function listLoans(): LoanRecord[] {
-  return [...loanTable.values()].filter((r) => r.deletedAt === null);
+export function listLoans(filters?: {
+  page?: number;
+  pageSize?: number;
+}): { data: LoanRecord[]; total: number; page: number; pageSize: number } {
+  const pageSize = Math.min(filters?.pageSize || 20, 100);
+  const page = Math.max(filters?.page || 1, 1);
+
+  let results = [...loanTable.values()].filter((r) => r.deletedAt === null);
+
+  // Sort by date descending (newest first)
+  results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  const total = results.length;
+  const start = (page - 1) * pageSize;
+  const end = start + pageSize;
+  const data = results.slice(start, end);
+
+  return { data, total, page, pageSize };
 }
 
 /**
@@ -232,7 +251,7 @@ export function listTransactions(filters?: {
 }): { data: TransactionRecord[]; total: number; page: number; pageSize: number } {
   const pageSize = filters?.pageSize || 20;
   const page = filters?.page || 1;
-  
+
   let results = [...transactionTable.values()];
 
   if (filters?.borrower) {
