@@ -23,6 +23,8 @@ export default function CollateralCard({ walletAddress }: Props) {
     }
   }
 
+  if (isLoading) return <SkeletonCollateralCard />;
+
   return (
     <div className={`${colors.background.card} rounded-2xl p-6 shadow mb-4`}>
       <h2 className={`text-xl font-semibold ${colors.text.primary} mb-3`}>Loan Lookup</h2>

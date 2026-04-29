@@ -23,6 +23,17 @@ export default function Dashboard() {
     setActiveLoanId(nextLoanId);
   }
 
+  async function fetchHealth() {
+    if (!loanId) return;
+    await withMinLoading(async () => {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/health/${loanId}`,
+      );
+      const data = await res.json();
+      setHealthFactor(Number(data.health_factor ?? 0));
+    });
+  }
+
   return (
     <main className="max-w-6xl mx-auto px-4 py-10">
       <div className="flex justify-between items-center mb-6">
@@ -45,24 +56,28 @@ export default function Dashboard() {
           <RepayPanel
             walletAddress={wallet}
           />
-          <TransactionHistory walletAddress={wallet} />
-          <div className="mt-8 bg-white rounded-2xl p-6 shadow">
-            <h2 className="text-xl font-semibold text-brown mb-3">
-              Health Factor
-            </h2>
-            <div className="flex gap-2 items-center">
-              <input
-                className="border border-brown/30 rounded-lg px-3 py-2 flex-1"
-                placeholder="Loan ID"
-                value={loanId}
-                onChange={(e) => setLoanId(e.target.value)}
-              />
-              <button
-                onClick={() => setActiveLoanId(loanId)}
-                className="bg-gold text-brown font-semibold px-4 py-2 rounded-lg hover:bg-gold/80 transition"
-              >
-                Check
-              </button>
+          {isHealthLoading ? (
+            <SkeletonHealthDashboard />
+          ) : (
+            <div className="mt-8 bg-white rounded-2xl p-6 shadow">
+              <h2 className="text-xl font-semibold text-brown mb-3">
+                Health Factor
+              </h2>
+              <div className="flex gap-2 items-center">
+                <input
+                  className="border border-brown/30 rounded-lg px-3 py-2 flex-1"
+                  placeholder="Loan ID"
+                  value={loanId}
+                  onChange={(e) => setLoanId(e.target.value)}
+                />
+                <button
+                  onClick={fetchHealth}
+                  className="bg-gold text-brown font-semibold px-4 py-2 rounded-lg hover:bg-gold/80 transition"
+                >
+                  Check
+                </button>
+              </div>
+              {healthFactor !== null && <HealthGauge value={healthFactor} />}
             </div>
             {healthFactor !== null && (
               <HealthGauge
