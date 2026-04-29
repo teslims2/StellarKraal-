@@ -1,77 +1,54 @@
 "use client";
-import { useEffect, useRef } from "react";
 
 interface Props {
-  loanId: number;
-  healthFactor: number;
-  onClose: () => void;
-  onLiquidate: () => void;
+  healthFactor: number; // bps, e.g. 10_000 = 1.0x
+  onRepay: () => void;
+  onDismiss: () => void;
 }
 
-const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
-
-export default function LiquidationWarningModal({ loanId, healthFactor, onClose, onLiquidate }: Props) {
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const previousFocus = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    previousFocus.current = document.activeElement as HTMLElement;
-    // Focus first focusable element in dialog
-    const first = dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE)[0];
-    first?.focus();
-
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") { onClose(); return; }
-      if (e.key !== "Tab") return;
-
-      const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []);
-      if (focusable.length === 0) return;
-
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-
-      if (e.shiftKey) {
-        if (document.activeElement === first) { e.preventDefault(); last.focus(); }
-      } else {
-        if (document.activeElement === last) { e.preventDefault(); first.focus(); }
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      previousFocus.current?.focus();
-    };
-  }, [onClose]);
+export default function LiquidationWarningModal({ healthFactor, onRepay, onDismiss }: Props) {
+  const ratio = (healthFactor / 10_000).toFixed(2);
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="liquidation-title"
-      aria-describedby="liquidation-desc"
+      aria-labelledby="liq-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
     >
-      <div ref={dialogRef} className="bg-white rounded-2xl p-6 shadow-xl max-w-sm w-full mx-4">
-        <h2 id="liquidation-title" className="text-xl font-bold text-brown mb-2">
-          ⚠️ Liquidation Warning
-        </h2>
-        <p id="liquidation-desc" className="text-sm text-brown/70 mb-4">
-          Loan #{loanId} has a health factor of {(healthFactor / 10_000).toFixed(2)}x and is at risk of
-          liquidation. Do you want to proceed?
-        </p>
-        <div className="flex gap-3 justify-end">
+      <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+        <div className="flex items-start gap-3 mb-4">
+          <span className="text-3xl" aria-hidden="true">⚠️</span>
+          <div>
+            <h2 id="liq-modal-title" className="text-xl font-bold text-red-700">
+              Liquidation Warning
+            </h2>
+            <p className="text-sm text-brown/70 mt-1">
+              Your health factor is <strong className="text-red-600">{ratio}x</strong>, which is
+              critically low. If it falls below <strong>1.0x</strong>, your collateral may be
+              liquidated.
+            </p>
+          </div>
+        </div>
+
+        <ul className="text-sm text-brown/80 space-y-1 mb-6 list-disc list-inside">
+          <li>Repay part of your loan to restore your health factor.</li>
+          <li>Add more collateral to increase your buffer.</li>
+          <li>Act quickly — liquidation can happen at any time.</li>
+        </ul>
+
+        <div className="flex gap-3">
           <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-brown/30 text-brown font-semibold hover:bg-brown/10 transition"
+            onClick={onRepay}
+            className="flex-1 bg-gold text-brown font-semibold py-2 rounded-lg hover:bg-gold/80 transition focus:outline-none focus:ring-2 focus:ring-gold"
           >
-            Cancel
+            Repay Now
           </button>
           <button
-            onClick={onLiquidate}
-            className="px-4 py-2 rounded-lg bg-brown text-cream font-semibold hover:bg-brown/80 transition"
+            onClick={onDismiss}
+            className="flex-1 border border-brown/30 text-brown/70 py-2 rounded-lg hover:bg-brown/5 transition focus:outline-none focus:ring-2 focus:ring-brown/30"
           >
-            Liquidate
+            Dismiss
           </button>
         </div>
       </div>

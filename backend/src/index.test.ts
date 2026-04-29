@@ -285,4 +285,59 @@ describe("StellarKraal API", () => {
       );
     });
   });
+
+  describe("CORS middleware", () => {
+    const FRONTEND = "http://localhost:3000";
+
+    beforeEach(() => {
+      delete process.env.FRONTEND_URL;
+      process.env.NODE_ENV = "test";
+    });
+
+    afterEach(() => {
+      delete process.env.FRONTEND_URL;
+    });
+
+    it("reflects allowed origin when FRONTEND_URL matches", async () => {
+      process.env.FRONTEND_URL = FRONTEND;
+      const res = await request(app)
+        .get("/api/health")
+        .set("Origin", FRONTEND);
+      expect(res.headers["access-control-allow-origin"]).toBe(FRONTEND);
+    });
+
+    it("sets Access-Control-Max-Age: 86400 on preflight", async () => {
+      process.env.FRONTEND_URL = FRONTEND;
+      const res = await request(app)
+        .options("/api/loan/request")
+        .set("Origin", FRONTEND)
+        .set("Access-Control-Request-Method", "POST");
+      expect(res.headers["access-control-max-age"]).toBe("86400");
+    });
+
+    it("allows credentials on authenticated routes", async () => {
+      process.env.FRONTEND_URL = FRONTEND;
+      const res = await request(app)
+        .options("/api/loan/request")
+        .set("Origin", FRONTEND)
+        .set("Access-Control-Request-Method", "POST");
+      expect(res.headers["access-control-allow-credentials"]).toBe("true");
+    });
+
+    it("does not allow credentials on /api/health", async () => {
+      process.env.FRONTEND_URL = FRONTEND;
+      const res = await request(app)
+        .get("/api/health")
+        .set("Origin", FRONTEND);
+      expect(res.headers["access-control-allow-credentials"]).toBeUndefined();
+    });
+
+    it("uses wildcard origin in development when FRONTEND_URL is unset", async () => {
+      process.env.NODE_ENV = "development";
+      const res = await request(app)
+        .get("/api/health")
+        .set("Origin", "http://any-origin.example");
+      expect(res.headers["access-control-allow-origin"]).toBe("*");
+    });
+  });
 });

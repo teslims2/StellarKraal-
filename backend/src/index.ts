@@ -3,6 +3,7 @@ import { config } from "./config";
 import express, { Request, Response, NextFunction } from "express";
 import {
   runMigrations,
+  getMigrationStatus,
   insertCollateral,
   listCollateral,
   getCollateral,
@@ -15,8 +16,14 @@ import {
   softDeleteLoan,
   restoreLoan,
   listDeletedLoans,
+  insertTransaction,
+  listTransactions,
+  getTransaction,
+  updateTransaction,
+  type TransactionType,
+  type TransactionStatus,
 } from "./db/store";
-import cors from "cors";
+import { corsMiddleware } from "./middleware/cors";
 import {
   Networks,
   TransactionBuilder,
@@ -27,7 +34,6 @@ import {
   Address,
   xdr,
 } from "@stellar/stellar-sdk";
-import { SorobanRpc } from "@stellar/stellar-sdk";
 import logger, { createRequestLogger } from "./utils/logger";
 import { pool, PoolExhaustedError } from "./utils/connectionPool";
 import { auditMiddleware } from "./middleware/audit";
@@ -48,7 +54,12 @@ import rpcClient from "./utils/rpcClient";
 import { registerWebhook, getWebhooks, getDeliveryLogs } from "./webhooks";
 import { fireAlert } from "./utils/alerting";
 import { rules } from "./utils/alertRules";
-const { Server } = SorobanRpc;
+import {
+  registry,
+  httpRequestsTotal,
+  httpRequestDurationSeconds,
+  httpActiveConnections,
+} from "./metrics";
 
 // ── 5xx spike tracking (rolling 60s window) ───────────────────────────────────
 const fivexxTimestamps: number[] = [];
@@ -93,29 +104,8 @@ function setIdempotencyEntry(key: string, status: number, body: unknown): void {
 
 const app = express();
 
-const isProduction = process.env.NODE_ENV === "production";
-const FRONTEND_URL = process.env.FRONTEND_URL;
-
-// Startup warning for CORS misconfiguration
-if (isProduction && !FRONTEND_URL) {
-  logger.warn(
-    "CORS misconfiguration: FRONTEND_URL is not set in production environment. Requests may be blocked.",
-  );
-}
-
 // Secure CORS configuration
-app.use((req: Request, res: Response, next: NextFunction) => {
-  // Allow credentials only for authenticated routes (e.g., API endpoints excluding health check)
-  const isAuthRoute = req.path.startsWith("/api") && req.path !== "/api/health";
-
-  const corsOptions: cors.CorsOptions = {
-    origin: isProduction ? FRONTEND_URL || false : isAuthRoute ? true : "*",
-    credentials: isAuthRoute,
-    maxAge: 86400, // Cache preflight requests for 24 hours
-  };
-
-  cors(corsOptions)(req, res, next);
-});
+app.use(corsMiddleware);
 app.use(express.json());
 app.use(globalLimiter);
 app.use(timeoutMiddleware(parseInt(config.TIMEOUT_GLOBAL_MS, 10)));
@@ -155,9 +145,28 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // Audit logging middleware — logs all requests with redacted body to audit log
 app.use(auditMiddleware);
 
+// ── Prometheus instrumentation middleware ─────────────────────────────────────
+app.use((req: Request, res: Response, next: NextFunction) => {
+  httpActiveConnections.inc();
+  const end = httpRequestDurationSeconds.startTimer();
+  res.on("finish", () => {
+    const route = (req.route?.path as string) ?? req.path;
+    const labels = { method: req.method, route, status_code: String(res.statusCode) };
+    httpRequestsTotal.inc(labels);
+    end(labels);
+    httpActiveConnections.dec();
+  });
+  next();
+});
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 app.use("/api/auth", authRouter);
 app.use(jwtMiddleware);
+
+// ── API Docs (Swagger UI) ─────────────────────────────────────────────────────
+import swaggerUi from "swagger-ui-express";
+import openApiSpec from "../openapi.json";
+app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(openApiSpec));
 
 // ── API Versioning ────────────────────────────────────────────────────────────
 import { v1Router } from "./routes/v1";
@@ -178,7 +187,6 @@ app.use("/api/:endpoint(*)", (req: Request, res: Response, next: NextFunction) =
   res.redirect(301, newPath + (req.url.includes("?") ? req.url.substring(req.url.indexOf("?")) : ""));
 });
 
-const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
 const NETWORK_PASSPHRASE =
   config.NEXT_PUBLIC_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
@@ -186,13 +194,24 @@ const NETWORK_PASSPHRASE =
 const APP_VERSION = process.env.npm_package_version || "1.0.0";
 const startTime = Date.now();
 
-const server = new Server(RPC_URL);
-
 // Configure appraisal cache TTL from env
 configureCacheTTL(parseInt(config.APPRAISAL_CACHE_TTL_MS, 10));
 
-// Run DB migrations on startup
-runMigrations();
+// Run DB migrations on startup (automatic in development, manual in production)
+(async () => {
+  try {
+    await runMigrations();
+  } catch (error) {
+    logger.error("Failed to run migrations on startup", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    // In production, fail fast if migrations haven't been run
+    if (process.env.NODE_ENV === "production") {
+      logger.error("Production startup aborted due to migration failure");
+      process.exit(1);
+    }
+  }
+})();
 
 // ── Validation Schemas ────────────────────────────────────────────────────────
 
@@ -331,6 +350,19 @@ async function buildContractTx(
 
 // ── routes ────────────────────────────────────────────────────────────────────
 
+// GET /metrics - Prometheus metrics (token-protected)
+app.get("/metrics", async (req: Request, res: Response) => {
+  const token = process.env.METRICS_TOKEN;
+  if (token) {
+    const auth = req.headers.authorization;
+    if (auth !== `Bearer ${token}`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+  }
+  res.set("Content-Type", registry.contentType);
+  res.end(await registry.metrics());
+});
+
 // GET /api/health - Health check endpoint
 app.get(
   "/api/health",
@@ -424,6 +456,7 @@ app.post(
       nativeToScVal(BigInt(collateral_id), { type: "u64" }),
       nativeToScVal(BigInt(amount), { type: "i128" }),
     ]);
+    fireWebhooks("loan.approved", { borrower, collateral_id, amount });
     res.json({ xdr: xdrTx, ...(cached?.stale ? { stale: true } : {}) });
   }),
 );
@@ -464,6 +497,7 @@ app.post(
     ]);
     const body = { xdr: xdrTx };
     setIdempotencyEntry(idempotencyKey, 200, body);
+    fireWebhooks("loan.repaid", { borrower, loan_id, amount });
     res.json(body);
   }),
 );
@@ -674,8 +708,11 @@ app.post(
     if (!url || typeof url !== "string") {
       return res.status(400).json({ error: "url is required" });
     }
-    const reg = registerWebhook(url);
-    res.status(201).json(reg);
+    try {
+      return res.status(201).json(registerWebhook(url));
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message });
+    }
   },
 );
 
@@ -688,6 +725,15 @@ app.get("/api/admin/webhooks", (req: Request, res: Response) => {
 app.get("/api/admin/webhooks/logs", (req: Request, res: Response) => {
   res.json(getDeliveryLogs());
 });
+
+// GET /api/admin/migrations/status — migration status
+app.get(
+  "/api/admin/migrations/status",
+  asyncHandler(async (req: Request, res: Response) => {
+    const status = await getMigrationStatus();
+    res.json({ status });
+  }),
+);
 
 // ── soft-delete admin routes ──────────────────────────────────────────────────
 
@@ -730,6 +776,59 @@ app.delete("/api/loan/:id", (req: Request, res: Response) => {
   if (!ok) return res.status(404).json({ error: "Record not found" });
   res.json({ deleted: true, id: req.params.id });
 });
+
+// GET /api/transactions — transaction history with filtering, sorting, and pagination
+app.get(
+  "/api/transactions",
+  asyncHandler(async (req: Request, res: Response) => {
+    const borrower = req.query.borrower as string | undefined;
+    const type = req.query.type as TransactionType | undefined;
+    const status = req.query.status as TransactionStatus | undefined;
+    const startDate = req.query.startDate as string | undefined;
+    const endDate = req.query.endDate as string | undefined;
+    const pageRaw = req.query.page !== undefined ? Number(req.query.page) : 1;
+    const pageSizeRaw = req.query.pageSize !== undefined ? Number(req.query.pageSize) : 20;
+
+    if (!Number.isInteger(pageRaw) || pageRaw < 1) {
+      return res.status(400).json({ error: "page must be a positive integer" });
+    }
+    if (!Number.isInteger(pageSizeRaw) || pageSizeRaw < 1 || pageSizeRaw > 100) {
+      return res.status(400).json({ error: "pageSize must be between 1 and 100" });
+    }
+
+    // Validate date range if provided
+    if (startDate && isNaN(new Date(startDate).getTime())) {
+      return res.status(400).json({ error: "startDate must be a valid ISO date" });
+    }
+    if (endDate && isNaN(new Date(endDate).getTime())) {
+      return res.status(400).json({ error: "endDate must be a valid ISO date" });
+    }
+
+    const result = listTransactions({
+      borrower,
+      type,
+      status,
+      startDate,
+      endDate,
+      page: pageRaw,
+      pageSize: pageSizeRaw,
+    });
+
+    res.json(result);
+  }),
+);
+
+// GET /api/transactions/:id — get transaction details
+app.get(
+  "/api/transactions/:id",
+  asyncHandler(async (req: Request, res: Response) => {
+    const transaction = getTransaction(req.params.id);
+    if (!transaction) {
+      return res.status(404).json({ error: "Transaction not found" });
+    }
+    res.json(transaction);
+  }),
+);
 
 // ── error handler ─────────────────────────────────────────────────────────────
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
