@@ -15,6 +15,9 @@ export default function Home() {
         <Link href="/dashboard" className="px-6 py-3 rounded-xl font-semibold transition" style={{ border: "2px solid var(--color-text)", color: "var(--color-text)" }}>
           Dashboard
         </Link>
+        <Link href="/settings" className="px-6 py-3 rounded-xl font-semibold transition" style={{ border: "2px solid var(--color-text)", color: "var(--color-text)" }}>
+          Settings
+        </Link>
       </div>
     </main>
   );
