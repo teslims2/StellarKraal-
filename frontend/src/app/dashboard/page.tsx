@@ -6,6 +6,8 @@ import RepayPanel from "@/components/RepayPanel";
 import HealthGauge from "@/components/HealthGauge";
 import LoanRepaymentCalculator from "@/components/LoanRepaymentCalculator";
 import TransactionHistory from "@/components/TransactionHistory";
+import { useHealthFactor } from "@/hooks/useHealthFactor";
+
 export default function Dashboard() {
   const router = useRouter();
   const [wallet, setWallet] = useState<string | null>(null);
@@ -64,9 +66,6 @@ export default function Dashboard() {
                 onRefresh={refresh}
               />
             )}
-          </div>
-          <div className="mt-8">
-            <TransactionHistory />
           </div>
         </>
       )}
