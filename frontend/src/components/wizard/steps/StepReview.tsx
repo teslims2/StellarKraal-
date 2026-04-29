@@ -1,5 +1,6 @@
 "use client";
 import { useWizard } from "@/context/LoanWizardContext";
+import { GlossaryTerm } from "@/components/GlossaryTerm";
 
 const TERM_RATES: Record<string, string> = {
   "7": "2%",
@@ -34,7 +35,7 @@ export default function StepReview() {
     { label: "Fee Rate", value: rate },
     { label: "Fee Amount", value: `${fee.toLocaleString()} stroops` },
     { label: "Total to Repay", value: `${totalRepay.toLocaleString()} stroops`, bold: true },
-    { label: "Health Factor", value: healthFactor, bold: true },
+    { label: <GlossaryTerm termKey="healthFactor">Health Factor</GlossaryTerm>, value: healthFactor, bold: true },
   ];
 
   return (
@@ -49,7 +50,7 @@ export default function StepReview() {
       <div className="bg-white border border-brown/20 rounded-2xl overflow-hidden">
         {rows.map(({ label, value, bold }, i) => (
           <div
-            key={label}
+            key={typeof label === "string" ? label : i}
             className={`flex justify-between items-center px-5 py-3.5 ${
               i !== rows.length - 1 ? "border-b border-brown/10" : ""
             } ${bold ? "bg-gold/5" : ""}`}
