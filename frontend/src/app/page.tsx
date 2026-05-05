@@ -1,6 +1,8 @@
 import Link from "next/link";
+import PageTransition from "@/components/PageTransition";
 export default function Home() {
   return (
+    <PageTransition>
     <main className="flex flex-col items-center justify-center min-h-screen px-6 text-center">
       <h1 className="text-4xl md:text-5xl font-bold mb-4" style={{ color: "var(--color-text)" }}>🐄 StellarKraal</h1>
       <p className="text-xl mb-2 font-semibold text-gold">Livestock-Backed Micro-Lending on Stellar</p>
@@ -26,5 +28,6 @@ export default function Home() {
         </Link>
       </div>
     </main>
+    </PageTransition>
   );
 }

@@ -13,6 +13,7 @@
   "dependencies": {
     "@stellar/freighter-api": "^6.0.1",
     "@stellar/stellar-sdk": "^15.0.1",
+    "framer-motion": "^11.18.2",
     "next": "14.2.35",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
@@ -24,17 +25,17 @@
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
     "autoprefixer": "^10.5.0",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "14.2.35",
     "jest": "^30.3.0",
     "jest-environment-jsdom": "^30.3.0",
     "postcss": "^8.5.12",
     "tailwindcss": "^4.2.4",
     "ts-jest": "^29.4.9",
-    "typescript": "^6.0.3",
-    "eslint": "^8.57.0",
-    "eslint-config-next": "14.2.35",
-    "@typescript-eslint/eslint-plugin": "^7.18.0",
-    "@typescript-eslint/parser": "^7.18.0"
+    "typescript": "^6.0.3"
   },
   "jest": {
     "testEnvironment": "jsdom",
@@ -42,7 +43,11 @@
       "@testing-library/jest-dom",
       "<rootDir>/src/__tests__/setup.ts"
     ],
-    "testMatch": ["**/__tests__/**/*.tsx", "**/*.test.tsx", "**/*.test.ts"],
+    "testMatch": [
+      "**/__tests__/**/*.tsx",
+      "**/*.test.tsx",
+      "**/*.test.ts"
+    ],
     "moduleNameMapper": {
       "^@/(.*)$": "<rootDir>/src/$1"
     },
