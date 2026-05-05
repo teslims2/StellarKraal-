@@ -2,6 +2,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import SearchFilterBar from "@/components/SearchFilterBar";
+import PageTransition from "@/components/PageTransition";
 
 interface Collateral {
   id: string;
@@ -84,11 +85,13 @@ function CollateralListContent() {
 
 export default function CollateralPage() {
   return (
+    <PageTransition>
     <main className="max-w-3xl mx-auto px-4 py-10">
       <h1 className="text-3xl font-bold text-brown mb-6">Collateral</h1>
       <Suspense fallback={<p className="text-brown/60 text-sm">Loading…</p>}>
         <CollateralListContent />
       </Suspense>
     </main>
+    </PageTransition>
   );
 }

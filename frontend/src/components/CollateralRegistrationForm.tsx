@@ -3,6 +3,8 @@ import { useState, useEffect, useCallback } from "react";
 import { signTransaction } from "@stellar/freighter-api";
 import { submitSignedXdr } from "@/lib/stellarUtils";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import { motion, useReducedMotion } from "framer-motion";
+import { submitVariants } from "@/lib/animations";
 
 interface Props {
   walletAddress: string;
@@ -34,6 +36,7 @@ const AUTO_SAVE_INTERVAL = 5000; // 5 seconds
 const STORAGE_KEY = "stellarkraal_collateral_form";
 
 export default function CollateralRegistrationForm({ walletAddress, onSuccess }: Props) {
+  const reduced = useReducedMotion();
   const [formData, setFormData] = useState<FormData>({
     animalType: "cattle",
     quantity: "",
@@ -358,14 +361,16 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
           )}
         </div>
 
-        <button
+        <motion.button
           type="button"
           onClick={handleSubmit}
           disabled={loading || Object.keys(errors).some((key) => errors[key as keyof FormErrors])}
+          variants={reduced ? undefined : submitVariants}
+          animate={loading ? "loading" : "idle"}
           className="w-full bg-brown text-cream py-2.5 rounded-xl font-semibold hover:bg-brown/80 transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {loading ? "Processing…" : "Register Collateral"}
-        </button>
+        </motion.button>
       </form>
 
       {lastSaved && !loading && (
