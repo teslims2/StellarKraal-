@@ -1,5 +1,32 @@
 import request from "supertest";
 import app from "./index";
+import {
+  insertCollateral,
+  insertLoan,
+} from "./db/store";
+
+// Valid 56-char Stellar public key for use in tests
+const TEST_PUBLIC_KEY = "GDVXGGW5LDCKNPGP2QNOUTNAITBJOUEKSXDTYMTEJE2SHYDIBLTXZ3GO";
+
+// Mock auth middleware to bypass JWT in tests
+jest.mock("./middleware/auth", () => ({
+  authRouter: (() => {
+    const { Router } = require("express");
+    return Router();
+  })(),
+  jwtMiddleware: (_req: any, _res: any, next: any) => next(),
+}));
+
+// Mock rpcClient to avoid real network calls
+jest.mock("./utils/rpcClient", () => ({
+  __esModule: true,
+  default: {
+    getAccount: jest.fn().mockResolvedValue({ id: "GABC", sequence: "1" }),
+    prepareTransaction: jest.fn().mockResolvedValue({ toXDR: () => "prepared_xdr" }),
+    simulateTransaction: jest.fn().mockResolvedValue({ result: { retval: { value: 42 } } }),
+    getHealth: jest.fn().mockResolvedValue({ status: "healthy" }),
+  },
+}));
 
 const VALID_ADDRESS =
   "GB4QO2DT7ASHWBIQS4DQ6O7M3UKNT2SWL7TBLZSC4S5FWBSL6VZ6TMEN";
