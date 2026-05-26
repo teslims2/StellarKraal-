@@ -47,7 +47,7 @@ import {
 } from "./utils/appraisalCache";
 import { randomUUID } from "crypto";
 import { z } from "zod";
-import { globalLimiter } from "./middleware/rateLimit";
+import { globalLimiter, authLimiter } from "./middleware/rateLimit";
 import { asyncHandler } from "./utils/asyncHandler";
 import { stellarPublicKeySchema } from "./validators/stellar";
 import rpcClient from "./utils/rpcClient";
@@ -160,7 +160,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-app.use("/api/auth", authRouter);
+app.use("/api/auth", authLimiter, authRouter);
 app.use(jwtMiddleware);
 
 // ── API Docs (Swagger UI) ─────────────────────────────────────────────────────
