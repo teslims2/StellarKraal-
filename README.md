@@ -101,6 +101,32 @@ cd contracts/stellarkraal
 cargo test
 ```
 
+## Staging Environment
+
+The staging environment mirrors production and is deployed automatically on every merge to `main`.
+
+| Resource | URL |
+|---|---|
+| Frontend | `https://staging.stellarkraal.example.com` |
+| Backend API | `https://api-staging.stellarkraal.example.com` |
+
+Staging uses Stellar **testnet** RPC and a separate contract deployment. The following GitHub Actions secrets must be set under the `staging` environment (Settings → Environments → staging):
+
+| Secret | Description |
+|---|---|
+| `STAGING_RPC_URL` | Soroban testnet RPC endpoint |
+| `STAGING_CONTRACT_ID` | Staging contract deployment ID |
+| `STAGING_API_URL` | Staging backend API base URL |
+| `STAGING_FRONTEND_URL` | Staging frontend URL (for CORS) |
+| `JWT_SECRET` | JWT signing key for staging |
+| `SLACK_WEBHOOK_URL` | Slack webhook for deployment notifications |
+
+To run the staging stack locally:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
+```
+
 ## Troubleshooting
 
 - `PORT already in use`: stop the process using the port or change `PORT` in `.env`.

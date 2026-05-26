@@ -3,7 +3,7 @@ name: Deploy to Staging
 on:
   push:
     branches:
-      - develop
+      - main
 
 jobs:
   test:
@@ -42,41 +42,30 @@ jobs:
         working-directory: ./backend
         run: npm test -- --watchAll=false
 
-  deploy-infrastructure:
-    name: Provision Staging Infrastructure
+  deploy-staging:
+    name: Deploy to Staging
     needs: test
     runs-on: ubuntu-latest
     environment: staging
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Terraform Init
-        working-directory: ./terraform
-        run: terraform init
+      - name: Deploy with Docker Compose (staging)
+        run: |
+          docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.staging.yml \
+            up -d --build
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
-      - name: Terraform Select Workspace
-        working-directory: ./terraform
-        run: terraform workspace select staging || terraform workspace new staging
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-
-      - name: Terraform Apply
-        working-directory: ./terraform
-        run: terraform apply -auto-approve -var="environment=staging" -var="allowed_ips=${{ vars.ALLOWED_IPS }}"
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          STAGING_RPC_URL: ${{ secrets.STAGING_RPC_URL }}
+          STAGING_CONTRACT_ID: ${{ secrets.STAGING_CONTRACT_ID }}
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
+          STAGING_FRONTEND_URL: ${{ secrets.STAGING_FRONTEND_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
 
   notify:
     name: Slack Notification
-    needs: deploy-infrastructure
+    needs: deploy-staging
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -85,16 +74,16 @@ jobs:
         with:
           payload: |
             {
-              "text": "Staging Deployment Status: ${{ needs.deploy-infrastructure.result }}",
+              "text": "Staging Deployment Status: ${{ needs.deploy-staging.result }}",
               "attachments": [
                 {
-                  "color": "${{ needs.deploy-infrastructure.result == 'success' && '#36a64f' || '#ff0000' }}",
+                  "color": "${{ needs.deploy-staging.result == 'success' && '#36a64f' || '#ff0000' }}",
                   "blocks": [
                     {
                       "type": "section",
                       "text": {
                         "type": "mrkdwn",
-                        "text": "*Project:* StellarKraal\n*Environment:* Staging\n*Status:* ${{ needs.deploy-infrastructure.result }}\n*Workflow:* <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Run>"
+                        "text": "*Project:* StellarKraal\n*Environment:* Staging\n*Status:* ${{ needs.deploy-staging.result }}\n*Workflow:* <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Run>"
                       }
                     }
                   ]
