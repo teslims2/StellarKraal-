@@ -33,21 +33,19 @@ const parsed = envSchema.safeParse(process.env);
 if (!parsed.success) {
   const missing = parsed.error.issues.filter((i) => i.code === "invalid_type" && (i as any).received === "undefined");
   const invalid = parsed.error.issues.filter((i) => !(i.code === "invalid_type" && (i as any).received === "undefined"));
-  
-  process.stderr.write("\n❌ Environment validation failed\n");
-  
+
+  const lines: string[] = ["\n❌ Environment validation failed\n"];
   if (missing.length > 0) {
-    process.stderr.write("Missing required variables:");
-    missing.forEach((i) => process.stderr.write(`  - ${i.path.join(".")}: ${i.message}`));
+    lines.push("Missing required variables:");
+    missing.forEach((i) => lines.push(`  - ${i.path.join(".")}: ${i.message}`));
   }
-  
   if (invalid.length > 0) {
-    process.stderr.write("\nInvalid variable values:");
-    invalid.forEach((i) => process.stderr.write(`  - ${i.path.join(".")}: ${i.message}`));
+    lines.push("\nInvalid variable values:");
+    invalid.forEach((i) => lines.push(`  - ${i.path.join(".")}: ${i.message}`));
   }
-  
-  process.stderr.write("\nPlease check your .env file or environment configuration.");
-  process.stderr.write("See env.example for reference.\n");
+  lines.push("\nPlease check your .env file or environment configuration.");
+  lines.push("See env.example for reference.\n");
+  process.stderr.write(lines.join("\n") + "\n");
   process.exit(1);
 }
 

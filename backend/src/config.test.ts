@@ -1,13 +1,11 @@
-import { z } from "zod";
-
 describe("Environment Validation", () => {
   let originalEnv: NodeJS.ProcessEnv;
-  let consoleErrorSpy: jest.SpyInstance;
+  let stderrSpy: jest.SpyInstance;
   let processExitSpy: jest.SpyInstance;
 
   beforeEach(() => {
     originalEnv = { ...process.env };
-    consoleErrorSpy = jest.spyOn(console, "error").mockImplementation();
+    stderrSpy = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
     processExitSpy = jest.spyOn(process, "exit").mockImplementation(() => {
       throw new Error("process.exit called");
     });
@@ -15,13 +13,12 @@ describe("Environment Validation", () => {
 
   afterEach(() => {
     process.env = originalEnv;
-    consoleErrorSpy.mockRestore();
+    stderrSpy.mockRestore();
     processExitSpy.mockRestore();
     jest.resetModules();
   });
 
   it("should validate required environment variables", () => {
-    // Clear required env vars
     delete process.env.RPC_URL;
     delete process.env.CONTRACT_ID;
 
@@ -31,9 +28,8 @@ describe("Environment Validation", () => {
       });
     }).toThrow("process.exit called");
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Environment validation failed")
-    );
+    const written = stderrSpy.mock.calls.map((c) => c[0]).join("");
+    expect(written).toContain("Environment validation failed");
     expect(processExitSpy).toHaveBeenCalledWith(1);
   });
 
@@ -74,9 +70,8 @@ describe("Environment Validation", () => {
       });
     }).toThrow("process.exit called");
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("RPC_URL must be a valid URL")
-    );
+    const written = stderrSpy.mock.calls.map((c) => c[0]).join("");
+    expect(written).toContain("RPC_URL must be a valid URL");
   });
 
   it("should validate numeric string format", () => {
@@ -90,15 +85,14 @@ describe("Environment Validation", () => {
       });
     }).toThrow("process.exit called");
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("PORT must be a valid number")
-    );
+    const written = stderrSpy.mock.calls.map((c) => c[0]).join("");
+    expect(written).toContain("PORT must be a valid number");
   });
 
   it("should validate minimum length for secrets", () => {
     process.env.RPC_URL = "https://soroban-testnet.stellar.org";
     process.env.CONTRACT_ID = "test-contract-id";
-    process.env.WEBHOOK_SECRET = "short"; // Less than 16 chars
+    process.env.WEBHOOK_SECRET = "short";
 
     expect(() => {
       jest.isolateModules(() => {
@@ -106,8 +100,7 @@ describe("Environment Validation", () => {
       });
     }).toThrow("process.exit called");
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("WEBHOOK_SECRET must be at least 16 characters")
-    );
+    const written = stderrSpy.mock.calls.map((c) => c[0]).join("");
+    expect(written).toContain("WEBHOOK_SECRET must be at least 16 characters");
   });
 });
