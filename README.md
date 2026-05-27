@@ -145,6 +145,20 @@ This repository uses a documented contribution workflow. See [CONTRIBUTING.md](C
 - [ ] Tests run successfully locally
 - [ ] Documentation updated when necessary
 
+## Security & Vulnerability Management
+
+Dependencies are scanned automatically:
+
+- **Dependabot** monitors `backend/` and `frontend/` npm packages weekly. PRs are labelled `dependencies` and `security`.
+- **npm audit** runs every Monday via the [`npm-audit`](.github/workflows/npm-audit.yml) workflow. The workflow fails if any `high` or `critical` severity vulnerability is found.
+
+To run an audit locally:
+
+```bash
+cd backend && npm audit --audit-level=high
+cd frontend && npm audit --audit-level=high
+```
+
 ## Development Scripts
 
 Run the following from the repository root:
