@@ -1,8 +1,12 @@
 import type { Metadata } from "next";
 import "./globals.css";
+<<<<<<< HEAD
 import Link from "next/link";
 import OfflineBanner from "@/components/OfflineBanner";
 import Navbar from "@/components/Navbar";
+=======
+import { ToastProvider, ToastContainer } from "@/components/toast";
+>>>>>>> adc36bf16cea1946dea369bf560370224ff8a132
 
 import { ToastProvider } from "@/context/ToastContext";
 export const metadata: Metadata = {
@@ -12,6 +16,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
+<<<<<<< HEAD
       <body className="bg-cream text-brown min-h-screen overflow-x-hidden px-4">
         <ToastProvider>
           <OfflineBanner />
@@ -24,6 +29,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Link href="/settings" className="text-brown/70 hover:text-brown">Settings</Link>
         </nav>
         {children}
+=======
+      <body className="bg-cream text-brown min-h-screen">
+        <ToastProvider>
+          {children}
+          <ToastContainer />
+>>>>>>> adc36bf16cea1946dea369bf560370224ff8a132
         </ToastProvider>
       </body>
     </html>

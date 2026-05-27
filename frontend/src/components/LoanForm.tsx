@@ -2,7 +2,11 @@
 import { useState } from "react";
 import { signTransaction } from "@/lib/freighterClient";
 import { submitSignedXdr } from "@/lib/stellarUtils";
+<<<<<<< HEAD
 import { colors } from "@/lib/design-tokens";
+=======
+import { useToast } from "@/components/toast";
+>>>>>>> adc36bf16cea1946dea369bf560370224ff8a132
 
 interface Props {
   walletAddress: string;
@@ -19,12 +23,11 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
   const [appraisedValue, setAppraisedValue] = useState("");
   const [collateralId, setCollateralId] = useState(initialCollateralId || "");
   const [loanAmount, setLoanAmount] = useState("");
-  const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const toast = useToast();
 
   async function registerCollateral() {
     setLoading(true);
-    setStatus(null);
     try {
       const res = await fetch(`${API}/api/collateral/register`, {
         method: "POST",
@@ -39,10 +42,10 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
       const { xdr } = await res.json();
       const { signedTxXdr } = await signTransaction(xdr, { network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET" });
       const result = await submitSignedXdr(signedTxXdr);
-      setStatus(`✅ Collateral registered! ID: ${result}`);
+      toast.success(`Collateral registered! ID: ${result}`);
       setStep("loan");
     } catch (e: any) {
-      setStatus(`❌ ${e.message}`);
+      toast.error(e.message);
     } finally {
       setLoading(false);
     }
@@ -50,8 +53,11 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
 
   async function requestLoan() {
     setLoading(true);
+<<<<<<< HEAD
     setStatus(null);
     setLoading(true);
+=======
+>>>>>>> adc36bf16cea1946dea369bf560370224ff8a132
     try {
       const res = await fetch(`${API}/api/loan/request`, {
         method: "POST",
@@ -65,9 +71,9 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
       const { xdr } = await res.json();
       const { signedTxXdr } = await signTransaction(xdr, { network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET" });
       const result = await submitSignedXdr(signedTxXdr);
-      setStatus(`✅ Loan disbursed! Loan ID: ${result}`);
+      toast.success(`Loan disbursed! Loan ID: ${result}`);
     } catch (e: any) {
-      setStatus(`❌ ${e.message}`);
+      toast.error(e.message);
     } finally {
       setLoading(false);
     }
@@ -135,11 +141,14 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
           </button>
         </>
       )}
+<<<<<<< HEAD
       {status && (
         <p className={`text-sm mt-2 ${status.includes('❌') ? colors.status.error.text : colors.status.success.text}`}>
           {status}
         </p>
       )}
+=======
+>>>>>>> adc36bf16cea1946dea369bf560370224ff8a132
     </div>
   );
 }
