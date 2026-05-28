@@ -1,20 +1,14 @@
 "use client";
-<<<<<<< HEAD
 import { useEffect } from "react";
 import { colors } from "@/lib/design-tokens";
 import { useWallet } from "@/hooks/useWallet";
-=======
-import { useState } from "react";
-import { isConnected, getAddress, setAllowed } from "@stellar/freighter-api";
-import { useToast } from "@/components/toast";
->>>>>>> adc36bf16cea1946dea369bf560370224ff8a132
+import Spinner from "@/components/Spinner";
 
 interface Props {
   onConnect: (address: string) => void;
 }
 
 export default function WalletConnect({ onConnect }: Props) {
-<<<<<<< HEAD
   const { address, freighterInstalled, connecting, error, connect } = useWallet();
 
   // Notify parent whenever address changes
@@ -40,24 +34,6 @@ export default function WalletConnect({ onConnect }: Props) {
         </a>
       </div>
     );
-=======
-  const [address, setAddress] = useState<string | null>(null);
-  const toast = useToast();
-
-  async function connect() {
-    try {
-      const connected = await isConnected();
-      if (!connected) {
-        await setAllowed();
-      }
-      const { address: addr } = await getAddress();
-      setAddress(addr);
-      onConnect(addr);
-      toast.success("Wallet connected successfully");
-    } catch (e: any) {
-      toast.error(e.message);
-    }
->>>>>>> adc36bf16cea1946dea369bf560370224ff8a132
   }
 
   // Connected
@@ -74,14 +50,19 @@ export default function WalletConnect({ onConnect }: Props) {
     <div className="mb-6">
       <button
         onClick={connect}
-        className={`${colors.primary.bg} ${colors.primary.text} px-5 py-2.5 rounded-xl font-semibold ${colors.primary.hover} transition ${colors.interactive.focus}`}
+        disabled={connecting}
+        className={`${colors.primary.bg} ${colors.primary.text} px-5 py-2.5 rounded-xl font-semibold ${colors.primary.hover} transition ${colors.interactive.disabled} ${colors.interactive.focus} flex items-center gap-2`}
       >
-        {connecting ? "Connecting…" : "Connect Freighter Wallet"}
+        {connecting ? (
+          <>
+            <Spinner />
+            Connecting…
+          </>
+        ) : (
+          "Connect Freighter Wallet"
+        )}
       </button>
-<<<<<<< HEAD
       {error && <p className={`${colors.status.error.text} text-sm mt-2`}>{error}</p>}
-=======
->>>>>>> adc36bf16cea1946dea369bf560370224ff8a132
     </div>
   );
 }

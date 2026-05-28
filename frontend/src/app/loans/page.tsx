@@ -4,6 +4,8 @@ import { useSearchParams } from "next/navigation";
 import { motion, useReducedMotion } from "framer-motion";
 import SearchFilterBar from "@/components/SearchFilterBar";
 import PageTransition from "@/components/PageTransition";
+import Card from "@/components/Card";
+import SkeletonLoanCard from "@/components/SkeletonLoanCard";
 import { badgeVariants } from "@/lib/animations";
 
 interface Loan {
@@ -56,40 +58,47 @@ function LoanListContent() {
       />
 
       {loading ? (
-        <p className="text-brown/60 text-sm">Loading…</p>
+        <ul className="space-y-2">
+          {[...Array(3)].map((_, i) => (
+            <li key={i}>
+              <SkeletonLoanCard />
+            </li>
+          ))}
+        </ul>
       ) : filtered.length === 0 ? (
-        <p className="text-brown/60 text-sm">No loans match your filters.</p>
+        <p className="text-brown-500 text-sm">No loans match your filters.</p>
       ) : (
         <ul className="space-y-2">
           {filtered.map((loan) => (
-            <li
-              key={loan.id}
-              className="bg-white rounded-xl p-4 shadow-sm border border-brown/10 flex justify-between items-center"
-            >
-              <div>
-                <p className="font-semibold text-brown text-sm">Loan #{loan.id}</p>
-                <p className="text-xs text-brown/60 truncate max-w-xs">{loan.borrower}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-sm font-medium text-brown">{loan.amount.toLocaleString()}</p>
-                <motion.span
-                  key={loan.status}
-                  variants={reduced ? undefined : badgeVariants}
-                  initial="initial"
-                  animate="animate"
-                  className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                    loan.status === "active"
-                      ? "bg-green-100 text-green-800"
-                      : loan.status === "repaid"
-                      ? "bg-blue-100 text-blue-800"
-                      : loan.status === "liquidated"
-                      ? "bg-red-100 text-red-800"
-                      : "bg-gray-100 text-gray-700"
-                  }`}
-                >
-                  {loan.status}
-                </motion.span>
-              </div>
+            <li key={loan.id}>
+              <Card>
+                <div className="flex justify-between items-center">
+                  <div>
+                    <p className="font-semibold text-brown-700 text-sm">Loan #{loan.id}</p>
+                    <p className="text-xs text-brown-500 truncate max-w-xs">{loan.borrower}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-brown-700">{loan.amount.toLocaleString()}</p>
+                    <motion.span
+                      key={loan.status}
+                      variants={reduced ? undefined : badgeVariants}
+                      initial="initial"
+                      animate="animate"
+                      className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        loan.status === "active"
+                          ? "bg-success-light text-success-dark"
+                          : loan.status === "repaid"
+                          ? "bg-blue-100 text-blue-800"
+                          : loan.status === "liquidated"
+                          ? "bg-error-light text-error-dark"
+                          : "bg-brown-100 text-brown-700"
+                      }`}
+                    >
+                      {loan.status}
+                    </motion.span>
+                  </div>
+                </div>
+              </Card>
             </li>
           ))}
         </ul>
@@ -101,12 +110,22 @@ function LoanListContent() {
 export default function LoansPage() {
   return (
     <PageTransition>
-    <main className="max-w-3xl mx-auto px-4 py-10">
-      <h1 className="text-3xl font-bold text-brown mb-6">Loans</h1>
-      <Suspense fallback={<p className="text-brown/60 text-sm">Loading…</p>}>
-        <LoanListContent />
-      </Suspense>
-    </main>
+      <main className="max-w-3xl mx-auto px-4 py-10">
+        <h1 className="text-3xl font-bold text-brown-700 mb-6">Loans</h1>
+        <Suspense
+          fallback={
+            <ul className="space-y-2">
+              {[...Array(3)].map((_, i) => (
+                <li key={i}>
+                  <SkeletonLoanCard />
+                </li>
+              ))}
+            </ul>
+          }
+        >
+          <LoanListContent />
+        </Suspense>
+      </main>
     </PageTransition>
   );
 }

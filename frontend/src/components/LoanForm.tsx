@@ -2,11 +2,8 @@
 import { useState } from "react";
 import { signTransaction } from "@/lib/freighterClient";
 import { submitSignedXdr } from "@/lib/stellarUtils";
-<<<<<<< HEAD
 import { colors } from "@/lib/design-tokens";
-=======
-import { useToast } from "@/components/toast";
->>>>>>> adc36bf16cea1946dea369bf560370224ff8a132
+import Spinner from "@/components/Spinner";
 
 interface Props {
   walletAddress: string;
@@ -24,10 +21,11 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
   const [collateralId, setCollateralId] = useState(initialCollateralId || "");
   const [loanAmount, setLoanAmount] = useState("");
   const [loading, setLoading] = useState(false);
-  const toast = useToast();
+  const [status, setStatus] = useState<string | null>(null);
 
   async function registerCollateral() {
     setLoading(true);
+    setStatus(null);
     try {
       const res = await fetch(`${API}/api/collateral/register`, {
         method: "POST",
@@ -42,10 +40,10 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
       const { xdr } = await res.json();
       const { signedTxXdr } = await signTransaction(xdr, { network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET" });
       const result = await submitSignedXdr(signedTxXdr);
-      toast.success(`Collateral registered! ID: ${result}`);
+      setStatus(`✅ Collateral registered! ID: ${result}`);
       setStep("loan");
     } catch (e: any) {
-      toast.error(e.message);
+      setStatus(`❌ ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -53,11 +51,7 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
 
   async function requestLoan() {
     setLoading(true);
-<<<<<<< HEAD
     setStatus(null);
-    setLoading(true);
-=======
->>>>>>> adc36bf16cea1946dea369bf560370224ff8a132
     try {
       const res = await fetch(`${API}/api/loan/request`, {
         method: "POST",
@@ -71,15 +65,13 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
       const { xdr } = await res.json();
       const { signedTxXdr } = await signTransaction(xdr, { network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET" });
       const result = await submitSignedXdr(signedTxXdr);
-      toast.success(`Loan disbursed! Loan ID: ${result}`);
+      setStatus(`✅ Loan disbursed! Loan ID: ${result}`);
     } catch (e: any) {
-      toast.error(e.message);
+      setStatus(`❌ ${e.message}`);
     } finally {
       setLoading(false);
     }
   }
-
-  if (loading && step === "collateral") return null;
 
   return (
     <div className={`${colors.background.card} rounded-2xl p-6 shadow mt-6 space-y-4`}>
@@ -107,12 +99,19 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
             onChange={(e) => setAppraisedValue(e.target.value)} 
             type="number" 
           />
-          <button 
-            onClick={registerCollateral} 
-            disabled={loading} 
-            className={`w-full ${colors.primary.bg} ${colors.primary.text} py-2.5 rounded-xl font-semibold ${colors.primary.hover} transition ${colors.interactive.disabled} ${colors.interactive.focus}`}
+          <button
+            onClick={registerCollateral}
+            disabled={loading}
+            className={`w-full ${colors.primary.bg} ${colors.primary.text} py-2.5 rounded-xl font-semibold ${colors.primary.hover} transition ${colors.interactive.disabled} ${colors.interactive.focus} flex items-center justify-center gap-2`}
           >
-            {loading ? "Processing…" : "Register & Continue"}
+            {loading ? (
+              <>
+                <Spinner />
+                Processing…
+              </>
+            ) : (
+              "Register & Continue"
+            )}
           </button>
         </>
       ) : (
@@ -132,23 +131,27 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
             onChange={(e) => setLoanAmount(e.target.value)} 
             type="number" 
           />
-          <button 
-            onClick={requestLoan} 
-            disabled={loading} 
-            className={`w-full ${colors.secondary.bg} ${colors.secondary.text} py-2.5 rounded-xl font-semibold ${colors.secondary.hover} transition ${colors.interactive.disabled} ${colors.interactive.focus}`}
+          <button
+            onClick={requestLoan}
+            disabled={loading}
+            className={`w-full ${colors.secondary.bg} ${colors.secondary.text} py-2.5 rounded-xl font-semibold ${colors.secondary.hover} transition ${colors.interactive.disabled} ${colors.interactive.focus} flex items-center justify-center gap-2`}
           >
-            {loading ? "Processing…" : "Request Loan"}
+            {loading ? (
+              <>
+                <Spinner />
+                Processing…
+              </>
+            ) : (
+              "Request Loan"
+            )}
           </button>
         </>
       )}
-<<<<<<< HEAD
       {status && (
-        <p className={`text-sm mt-2 ${status.includes('❌') ? colors.status.error.text : colors.status.success.text}`}>
+        <p className={`text-sm mt-2 ${status.includes("❌") ? colors.status.error.text : colors.status.success.text}`}>
           {status}
         </p>
       )}
-=======
->>>>>>> adc36bf16cea1946dea369bf560370224ff8a132
     </div>
   );
 }

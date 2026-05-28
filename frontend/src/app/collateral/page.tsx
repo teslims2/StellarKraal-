@@ -3,6 +3,8 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import SearchFilterBar from "@/components/SearchFilterBar";
 import PageTransition from "@/components/PageTransition";
+import Card from "@/components/Card";
+import SkeletonCollateralCard from "@/components/SkeletonCollateralCard";
 
 interface Collateral {
   id: string;
@@ -53,28 +55,35 @@ function CollateralListContent() {
       />
 
       {loading ? (
-        <p className="text-brown/60 text-sm">Loading…</p>
+        <ul className="space-y-2">
+          {[...Array(3)].map((_, i) => (
+            <li key={i}>
+              <SkeletonCollateralCard />
+            </li>
+          ))}
+        </ul>
       ) : filtered.length === 0 ? (
-        <p className="text-brown/60 text-sm">No collateral matches your filters.</p>
+        <p className="text-brown-500 text-sm">No collateral matches your filters.</p>
       ) : (
         <ul className="space-y-2">
           {filtered.map((col) => (
-            <li
-              key={col.id}
-              className="bg-white rounded-xl p-4 shadow-sm border border-brown/10 flex justify-between items-center"
-            >
-              <div>
-                <p className="font-semibold text-brown text-sm capitalize">
-                  {col.animal_type} — {col.count} head
-                </p>
-                <p className="text-xs text-brown/60 truncate max-w-xs">{col.owner}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-sm font-medium text-brown">
-                  {col.appraised_value.toLocaleString()}
-                </p>
-                <p className="text-xs text-brown/50">ID: {col.id}</p>
-              </div>
+            <li key={col.id}>
+              <Card>
+                <div className="flex justify-between items-center">
+                  <div>
+                    <p className="font-semibold text-brown-700 text-sm capitalize">
+                      {col.animal_type} — {col.count} head
+                    </p>
+                    <p className="text-xs text-brown-500 truncate max-w-xs">{col.owner}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-brown-700">
+                      {col.appraised_value.toLocaleString()}
+                    </p>
+                    <p className="text-xs text-brown-500">ID: {col.id}</p>
+                  </div>
+                </div>
+              </Card>
             </li>
           ))}
         </ul>
@@ -86,12 +95,22 @@ function CollateralListContent() {
 export default function CollateralPage() {
   return (
     <PageTransition>
-    <main className="max-w-3xl mx-auto px-4 py-10">
-      <h1 className="text-3xl font-bold text-brown mb-6">Collateral</h1>
-      <Suspense fallback={<p className="text-brown/60 text-sm">Loading…</p>}>
-        <CollateralListContent />
-      </Suspense>
-    </main>
+      <main className="max-w-3xl mx-auto px-4 py-10">
+        <h1 className="text-3xl font-bold text-brown-700 mb-6">Collateral</h1>
+        <Suspense
+          fallback={
+            <ul className="space-y-2">
+              {[...Array(3)].map((_, i) => (
+                <li key={i}>
+                  <SkeletonCollateralCard />
+                </li>
+              ))}
+            </ul>
+          }
+        >
+          <CollateralListContent />
+        </Suspense>
+      </main>
     </PageTransition>
   );
 }

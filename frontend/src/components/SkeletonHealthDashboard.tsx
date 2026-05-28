@@ -1,9 +1,14 @@
 import Skeleton from "./Skeleton";
+import Card from "./Card";
 
 export default function SkeletonHealthDashboard() {
   return (
-    <div className="mt-8 bg-white rounded-2xl p-6 shadow" aria-busy="true" aria-label="Loading health factor">
-      <Skeleton className="h-6 w-36 mb-4" />
+    <Card
+      className="mt-8"
+      header={<Skeleton className="h-6 w-36" />}
+      aria-busy="true"
+      aria-label="Loading health factor"
+    >
       <div className="flex gap-2 items-center">
         <Skeleton className="h-10 flex-1" />
         <Skeleton className="h-10 w-20" />
@@ -15,6 +20,6 @@ export default function SkeletonHealthDashboard() {
         </div>
         <Skeleton className="h-4 w-full rounded-full" />
       </div>
-    </div>
+    </Card>
   );
 }

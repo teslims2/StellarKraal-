@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { signTransaction } from "@/lib/freighterClient";
 import { submitSignedXdr } from "@/lib/stellarUtils";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import Spinner from "@/components/Spinner";
 import { motion, useReducedMotion } from "framer-motion";
 import { submitVariants } from "@/lib/animations";
 
@@ -367,9 +368,16 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
           disabled={loading || Object.keys(errors).some((key) => errors[key as keyof FormErrors])}
           variants={reduced ? undefined : submitVariants}
           animate={loading ? "loading" : "idle"}
-          className="w-full bg-brown text-cream py-2.5 rounded-xl font-semibold hover:bg-brown/80 transition disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full bg-brown text-cream py-2.5 rounded-xl font-semibold hover:bg-brown/80 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
-          {loading ? "Processing…" : "Register Collateral"}
+          {loading ? (
+            <>
+              <Spinner />
+              Processing…
+            </>
+          ) : (
+            "Register Collateral"
+          )}
         </motion.button>
       </form>
 
