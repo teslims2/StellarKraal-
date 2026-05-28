@@ -1,7 +1,8 @@
-'use client';
-import { useEffect } from 'react';
-import { colors } from '@/lib/design-tokens';
-import { useWallet } from '@/hooks/useWallet';
+"use client";
+import { useEffect } from "react";
+import { colors } from "@/lib/design-tokens";
+import { useWallet } from "@/hooks/useWallet";
+import Spinner from "@/components/Spinner";
 
 interface Props {
   onConnect: (address: string) => void;
@@ -46,9 +47,17 @@ export default function WalletConnect({ onConnect }: Props) {
     <div className="mb-6">
       <button
         onClick={connect}
-        className={`${colors.primary.bg} ${colors.primary.text} px-5 py-2.5 rounded-xl font-semibold ${colors.primary.hover} transition ${colors.interactive.focus}`}
+        disabled={connecting}
+        className={`${colors.primary.bg} ${colors.primary.text} px-5 py-2.5 rounded-xl font-semibold ${colors.primary.hover} transition ${colors.interactive.disabled} ${colors.interactive.focus} flex items-center gap-2`}
       >
-        {connecting ? 'Connecting…' : 'Connect Freighter Wallet'}
+        {connecting ? (
+          <>
+            <Spinner />
+            Connecting…
+          </>
+        ) : (
+          "Connect Freighter Wallet"
+        )}
       </button>
       {error && <p className={`${colors.status.error.text} text-sm mt-2`}>{error}</p>}
     </div>

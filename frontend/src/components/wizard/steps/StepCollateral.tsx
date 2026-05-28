@@ -2,6 +2,7 @@
 import { useWizard, AnimalType } from "@/context/LoanWizardContext";
 import { signTransaction } from "@/lib/freighterClient";
 import { submitSignedXdr } from "@/lib/stellarUtils";
+import Spinner from "@/components/Spinner";
 
 const ANIMAL_TYPES: { value: AnimalType; label: string; emoji: string; desc: string }[] = [
   { value: "cattle", label: "Cattle", emoji: "🐄", desc: "High appraisal value" },
@@ -84,48 +85,35 @@ export default function StepCollateral({ walletAddress }: Props) {
         ))}
       </div>
 
-      {/* Count */}
+      <Input
+        label="Number of Animals"
+        type="number"
+        min="1"
+        placeholder="e.g. 5"
+        value={count}
+        onChange={(e) => setField("count", e.target.value)}
+        disabled={loading}
+      />
+
       <div>
-        <label className="block text-sm font-medium text-brown mb-1">
-          Number of Animals
-        </label>
-        <input
+        <Input
+          label="Total Appraised Value (stroops)"
           type="number"
           min="1"
-          placeholder="e.g. 5"
-          value={count}
-          onChange={(e) => setField("count", e.target.value)}
-          className="w-full border border-brown/30 rounded-xl px-4 py-3 text-brown placeholder-brown/40 focus:outline-none focus:border-gold focus:ring-2 focus:ring-gold/20 transition"
+          placeholder="e.g. 10000000"
+          value={appraisedValue}
+          onChange={(e) => setField("appraisedValue", e.target.value)}
+          disabled={loading}
         />
-      </div>
-
-      {/* Appraised value */}
-      <div>
-        <label className="block text-sm font-medium text-brown mb-1">
-          Total Appraised Value <span className="text-brown/50 font-normal">(in stroops)</span>
-        </label>
-        <div className="relative">
-          <input
-            type="number"
-            min="1"
-            placeholder="e.g. 10000000"
-            value={appraisedValue}
-            onChange={(e) => setField("appraisedValue", e.target.value)}
-            className="w-full border border-brown/30 rounded-xl px-4 py-3 pr-16 text-brown placeholder-brown/40 focus:outline-none focus:border-gold focus:ring-2 focus:ring-gold/20 transition"
-          />
-          <span className="absolute right-4 top-1/2 -translate-y-1/2 text-brown/40 text-sm font-medium">
-            XLM
-          </span>
-        </div>
         {count && appraisedValue && (
-          <p className="text-xs text-brown/50 mt-1">
+          <p className="text-xs text-brown-400 mt-1">
             ≈ {(parseInt(appraisedValue) / parseInt(count) / 10_000_000).toFixed(2)} XLM per head
           </p>
         )}
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-600 text-sm">
+        <div role="alert" className="bg-error-light border border-error rounded-xl px-4 py-3 text-error-dark text-sm">
           {error}
         </div>
       )}
@@ -137,10 +125,7 @@ export default function StepCollateral({ walletAddress }: Props) {
       >
         {loading ? (
           <>
-            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-            </svg>
+            <Spinner />
             Registering on-chain…
           </>
         ) : (

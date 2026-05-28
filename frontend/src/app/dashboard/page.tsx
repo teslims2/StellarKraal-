@@ -12,6 +12,7 @@ import TransactionHistory from "@/components/TransactionHistory";
 import SkeletonHealthDashboard from "@/components/SkeletonHealthDashboard";
 import HelpMenu from "@/components/HelpMenu";
 import OnboardingModal from "@/components/OnboardingModal";
+import Card from "@/components/Card";
 import { useHealthFactor } from "@/hooks/useHealthFactor";
 import { useOnboarding } from "@/hooks/useOnboarding";
 
@@ -19,7 +20,7 @@ export default function Dashboard() {
   const router = useRouter();
   const [wallet, setWallet] = useState<string | null>(null);
   const [loanId, setLoanId] = useState("");
-  const { showOnboarding, openOnboarding, closeOnboarding } = useOnboarding();
+  const { showOnboarding, openOnboarding, closeOnboarding } = useOnboarding(wallet);
   const { healthFactor, loading: isHealthLoading, refresh: refreshHealth } = useHealthFactor(loanId);
 
   function handleProceedToRepay(nextLoanId: string, _nextAmount: string) {
@@ -58,26 +59,30 @@ export default function Dashboard() {
           {isHealthLoading ? (
             <SkeletonHealthDashboard />
           ) : (
-            <div className="mt-8 rounded-2xl bg-white p-6 shadow">
-              <h2 className="mb-3 text-xl font-semibold text-brown">
-                <GlossaryTerm termKey="healthFactor" />
-              </h2>
+            <Card
+              className="mt-8"
+              header={
+                <h2 className="text-xl font-semibold text-brown-700">
+                  <GlossaryTerm termKey="healthFactor" />
+                </h2>
+              }
+            >
               <div className="flex items-center gap-2">
                 <input
-                  className="flex-1 rounded-lg border border-brown/30 px-3 py-2"
+                  className="flex-1 rounded-lg border border-brown-300 px-3 py-2"
                   placeholder="Loan ID"
                   value={loanId}
                   onChange={(e) => setLoanId(e.target.value)}
                 />
                 <button
                   onClick={refreshHealth}
-                  className="rounded-lg bg-gold px-4 py-2 font-semibold text-brown transition hover:bg-gold/80"
+                  className="rounded-lg bg-gold-500 px-4 py-2 font-semibold text-cream-50 transition hover:bg-gold-600 flex items-center gap-2"
                 >
                   Check
                 </button>
               </div>
               {healthFactor !== null && <HealthGauge value={healthFactor} />}
-            </div>
+            </Card>
           )}
         </>
       )}

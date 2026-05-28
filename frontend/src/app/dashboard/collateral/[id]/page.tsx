@@ -2,6 +2,8 @@
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import WalletConnect from "@/components/WalletConnect";
+import Card from "@/components/Card";
+import Skeleton from "@/components/Skeleton";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
@@ -28,6 +30,27 @@ const ANIMAL_ICONS: Record<string, string> = {
   sheep: "🐑",
 };
 
+function DetailSkeleton() {
+  return (
+    <div className="space-y-6" aria-busy="true" aria-label="Loading collateral details">
+      <Card>
+        <div className="space-y-4">
+          <Skeleton className="h-16 w-16 rounded-xl" />
+          <Skeleton className="h-8 w-48" />
+          <div className="grid grid-cols-2 gap-4 pt-4">
+            <Skeleton className="h-20 w-full rounded-xl" />
+            <Skeleton className="h-20 w-full rounded-xl" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-12 w-full" />
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 export default function CollateralDetailPage() {
   const router = useRouter();
   const params = useParams();
@@ -49,9 +72,7 @@ export default function CollateralDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(
-        `${API}/api/collateral/${collateralId}?owner=${wallet}`
-      );
+      const res = await fetch(`${API}/api/collateral/${collateralId}?owner=${wallet}`);
       if (!res.ok) throw new Error("Failed to fetch collateral details");
       const data = await res.json();
       setCollateral(data.collateral);
@@ -66,7 +87,7 @@ export default function CollateralDetailPage() {
   if (!wallet) {
     return (
       <main className="max-w-2xl mx-auto px-4 py-10">
-        <h1 className="text-3xl font-bold text-brown mb-6">Collateral Details</h1>
+        <h1 className="text-3xl font-bold text-brown-700 mb-6">Collateral Details</h1>
         <WalletConnect onConnect={setWallet} />
       </main>
     );
@@ -75,10 +96,7 @@ export default function CollateralDetailPage() {
   if (loading) {
     return (
       <main className="max-w-2xl mx-auto px-4 py-10">
-        <div className="animate-pulse space-y-4">
-          <div className="h-12 bg-brown/10 rounded" />
-          <div className="h-64 bg-brown/10 rounded" />
-        </div>
+        <DetailSkeleton />
       </main>
     );
   }
@@ -86,15 +104,12 @@ export default function CollateralDetailPage() {
   if (error || !collateral) {
     return (
       <main className="max-w-2xl mx-auto px-4 py-10">
-        <button
-          onClick={() => router.back()}
-          className="text-brown hover:text-brown/70 mb-6 font-semibold"
-        >
+        <button onClick={() => router.back()} className="text-brown-600 hover:text-brown-700 mb-6 font-semibold">
           ← Back
         </button>
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-red-700">
-          {error || "Collateral not found"}
-        </div>
+        <Card variant="warning">
+          <p className="text-error-dark">{error || "Collateral not found"}</p>
+        </Card>
       </main>
     );
   }
@@ -103,66 +118,115 @@ export default function CollateralDetailPage() {
   const usdValue = (parseFloat(xlmValue) * 0.12).toFixed(2);
   const icon = ANIMAL_ICONS[collateral.animal_type] || "🐾";
 
+  // Derive outstanding balance and a simple health factor from loans
+  const totalOutstanding = loans.reduce((sum, l) => sum + l.amount, 0);
+  const outstandingXlm = (totalOutstanding / 1e7).toFixed(2);
+  // Health factor: collateral value / outstanding balance (in bps, 10000 = 1.0)
+  const healthFactorBps =
+    totalOutstanding > 0
+      ? Math.round((collateral.appraised_value / totalOutstanding) * 10000)
+      : null;
+  const isAtRisk = healthFactorBps !== null && healthFactorBps < 12000;
+
   return (
     <main className="max-w-2xl mx-auto px-4 py-10">
-      <button
-        onClick={() => router.back()}
-        className="text-brown hover:text-brown/70 mb-6 font-semibold"
-      >
+      <button onClick={() => router.back()} className="text-brown-600 hover:text-brown-700 mb-6 font-semibold">
         ← Back to Collateral
       </button>
 
-      <div className="bg-white rounded-2xl p-8 shadow mb-6">
-        <div className="flex items-start justify-between mb-6">
-          <div>
-            <div className="text-6xl mb-4">{icon}</div>
-            <h1 className="text-3xl font-bold text-brown capitalize">
+      {/* At-risk banner — visually prominent */}
+      {isAtRisk && (
+        <Card variant="warning" className="mb-4">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl" aria-hidden="true">⚠️</span>
+            <div>
+              <p className="font-bold text-warning-dark">Liquidation Risk</p>
+              <p className="text-sm text-warning-dark/80">
+                Health factor is below 1.2. Repay part of your loan to reduce risk.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Primary metrics — large, prominent */}
+      <div className="grid grid-cols-2 gap-4 mb-4">
+        <Card variant={isAtRisk ? "warning" : "highlighted"}>
+          <p className="text-xs font-medium text-brown-500 uppercase tracking-wide mb-1">
+            Health Factor
+          </p>
+          {healthFactorBps !== null ? (
+            <>
+              <p className="text-4xl font-bold text-brown-700 dark:text-cream-50">
+                {(healthFactorBps / 10000).toFixed(2)}
+              </p>
+              <p className="text-xs text-brown-500 mt-1">
+                {healthFactorBps >= 15000 ? "Healthy" : healthFactorBps >= 12000 ? "Moderate" : "At Risk"}
+              </p>
+            </>
+          ) : (
+            <p className="text-2xl font-bold text-brown-700 dark:text-cream-50">—</p>
+          )}
+        </Card>
+
+        <Card variant="highlighted">
+          <p className="text-xs font-medium text-brown-500 uppercase tracking-wide mb-1">
+            Outstanding Balance
+          </p>
+          <p className="text-4xl font-bold text-brown-700 dark:text-cream-50">
+            {outstandingXlm}
+          </p>
+          <p className="text-xs text-brown-500 mt-1">XLM</p>
+        </Card>
+      </div>
+
+      {/* Collateral overview */}
+      <Card
+        className="mb-4"
+        header={
+          <div className="flex items-center gap-3">
+            <span className="text-4xl">{icon}</span>
+            <h1 className="text-2xl font-bold text-brown-700 dark:text-cream-50 capitalize">
               {collateral.animal_type}
+              <span className="ml-2 text-base font-normal text-brown-500">× {collateral.count}</span>
             </h1>
           </div>
-          <span className="bg-brown/10 text-brown text-lg font-semibold px-4 py-2 rounded-full">
-            {collateral.count}x
-          </span>
-        </div>
-
-        <div className="grid grid-cols-2 gap-6 pt-6 border-t border-brown/10">
+        }
+      >
+        {/* Secondary details — visually subordinate */}
+        <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
           <div>
-            <p className="text-brown/60 text-sm mb-2">Appraised Value</p>
-            <p className="text-2xl font-bold text-brown">{xlmValue} XLM</p>
-            <p className="text-sm text-brown/50">${usdValue} USD</p>
+            <p className="text-brown-500 mb-0.5">Appraised Value</p>
+            <p className="font-semibold text-brown-700 dark:text-cream-50">{xlmValue} XLM</p>
+            <p className="text-xs text-brown-400">${usdValue} USD</p>
           </div>
-
           <div>
-            <p className="text-brown/60 text-sm mb-2">Registered Date</p>
-            <p className="text-lg font-semibold text-brown">
+            <p className="text-brown-500 mb-0.5">Registered</p>
+            <p className="font-semibold text-brown-700 dark:text-cream-50">
               {new Date(collateral.createdAt).toLocaleDateString()}
             </p>
-            <p className="text-sm text-brown/50">
+            <p className="text-xs text-brown-400">
               {new Date(collateral.createdAt).toLocaleTimeString()}
             </p>
           </div>
-
           <div>
-            <p className="text-brown/60 text-sm mb-2">Collateral ID</p>
-            <p className="font-mono text-sm text-brown break-all">
+            <p className="text-brown-500 mb-0.5">Collateral ID</p>
+            <p className="font-mono text-xs text-brown-600 dark:text-brown-300 break-all">
               {collateral.id}
             </p>
           </div>
-
           <div>
-            <p className="text-brown/60 text-sm mb-2">Owner Address</p>
-            <p className="font-mono text-sm text-brown break-all">
+            <p className="text-brown-500 mb-0.5">Owner</p>
+            <p className="font-mono text-xs text-brown-600 dark:text-brown-300">
               {collateral.owner.slice(0, 8)}…{collateral.owner.slice(-6)}
             </p>
           </div>
         </div>
-      </div>
+      </Card>
 
-      {loans.length > 0 && (
-        <div className="bg-white rounded-2xl p-8 shadow">
-          <h2 className="text-xl font-semibold text-brown mb-4">
-            Associated Loans
-          </h2>
+      {/* Associated loans */}
+      {loans.length > 0 ? (
+        <Card header={<h2 className="text-lg font-semibold text-brown-700 dark:text-cream-50">Associated Loans</h2>}>
           <div className="space-y-3">
             {loans.map((loan) => {
               const loanXlm = (loan.amount / 1e7).toFixed(2);
@@ -170,34 +234,35 @@ export default function CollateralDetailPage() {
               return (
                 <div
                   key={loan.id}
-                  className="border border-brown/10 rounded-lg p-4 hover:bg-brown/5 transition"
+                  className="border border-brown-100 dark:border-brown-700 rounded-lg p-4 hover:bg-brown-50 dark:hover:bg-brown-700/40 transition"
                 >
-                  <div className="flex justify-between items-start mb-2">
-                    <p className="font-semibold text-brown">Loan #{loan.id}</p>
-                    <span className="text-sm text-brown/60">
+                  <div className="flex justify-between items-start">
+                    <p className="font-semibold text-brown-700 dark:text-cream-50 text-sm">
+                      Loan #{loan.id}
+                    </p>
+                    <span className="text-xs text-brown-500">
                       {new Date(loan.createdAt).toLocaleDateString()}
                     </span>
                   </div>
-                  <p className="text-lg font-bold text-brown">
-                    {loanXlm} XLM <span className="text-sm text-brown/50">(${loanUsd})</span>
+                  <p className="text-lg font-bold text-brown-700 dark:text-cream-50 mt-1">
+                    {loanXlm} XLM{" "}
+                    <span className="text-sm font-normal text-brown-500">(${loanUsd})</span>
                   </p>
                 </div>
               );
             })}
           </div>
-        </div>
-      )}
-
-      {loans.length === 0 && (
-        <div className="bg-cream rounded-2xl p-8 text-center border border-brown/10">
-          <p className="text-brown/60 mb-4">No loans associated with this collateral</p>
+        </Card>
+      ) : (
+        <Card className="text-center">
+          <p className="text-brown-500 mb-4">No loans associated with this collateral</p>
           <button
             onClick={() => router.push("/borrow")}
-            className="bg-brown text-cream px-6 py-2 rounded-lg font-semibold hover:bg-brown/80 transition"
+            className="bg-brown-600 text-cream-50 px-6 py-2 rounded-lg font-semibold hover:bg-brown-700 transition"
           >
             Request a Loan
           </button>
-        </div>
+        </Card>
       )}
     </main>
   );
