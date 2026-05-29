@@ -1,12 +1,12 @@
-"use client";
-import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { motion, useReducedMotion } from "framer-motion";
-import SearchFilterBar from "@/components/SearchFilterBar";
-import PageTransition from "@/components/PageTransition";
-import Card from "@/components/Card";
-import SkeletonLoanCard from "@/components/SkeletonLoanCard";
-import { badgeVariants } from "@/lib/animations";
+'use client';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { motion, useReducedMotion } from 'framer-motion';
+import SearchFilterBar from '@/components/SearchFilterBar';
+import PageTransition from '@/components/PageTransition';
+import Card from '@/components/Card';
+import SkeletonLoanCard from '@/components/SkeletonLoanCard';
+import { badgeVariants } from '@/lib/animations';
 
 interface Loan {
   id: string;
@@ -23,8 +23,10 @@ const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 function LoanListContent() {
   const searchParams = useSearchParams();
+  const reduced = useReducedMotion();
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
+
   useEffect(() => {
     setLoading(true);
     fetch(`${API}/api/loans`)
@@ -36,15 +38,17 @@ function LoanListContent() {
 
   const q = (searchParams.get('q') ?? '').toLowerCase();
   const statuses = searchParams.getAll('status');
+  const dateFrom = searchParams.get('dateFrom') ?? '';
+  const dateTo = searchParams.get('dateTo') ?? '';
 
   const filtered = loans.filter((loan) => {
     const matchesQuery =
-      !q ||
-      loan.id.toLowerCase().includes(q) ||
-      loan.borrower.toLowerCase().includes(q) ||
-      loan.status.toLowerCase().includes(q);
+      !q || loan.borrower.toLowerCase().includes(q) || loan.id.toLowerCase().includes(q);
     const matchesStatus = statuses.length === 0 || statuses.includes(loan.status);
-    return matchesQuery && matchesStatus;
+    const loanDate = loan.createdAt.slice(0, 10);
+    const matchesDateFrom = !dateFrom || loanDate >= dateFrom;
+    const matchesDateTo = !dateTo || loanDate <= dateTo;
+    return matchesQuery && matchesStatus && matchesDateFrom && matchesDateTo;
   });
 
   return (
@@ -52,7 +56,7 @@ function LoanListContent() {
       <SearchFilterBar
         statusOptions={STATUS_OPTIONS}
         typeOptions={TYPE_OPTIONS}
-        searchPlaceholder="Search by loan ID, borrower, or status…"
+        searchPlaceholder="Search by borrower address…"
       />
 
       {loading ? (
@@ -76,20 +80,22 @@ function LoanListContent() {
                     <p className="text-xs text-brown-500 truncate max-w-xs">{loan.borrower}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-sm font-medium text-brown-700">{loan.amount.toLocaleString()}</p>
+                    <p className="text-sm font-medium text-brown-700">
+                      {loan.amount.toLocaleString()}
+                    </p>
                     <motion.span
                       key={loan.status}
                       variants={reduced ? undefined : badgeVariants}
                       initial="initial"
                       animate="animate"
                       className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        loan.status === "active"
-                          ? "bg-success-light text-success-dark"
-                          : loan.status === "repaid"
-                          ? "bg-blue-100 text-blue-800"
-                          : loan.status === "liquidated"
-                          ? "bg-error-light text-error-dark"
-                          : "bg-brown-100 text-brown-700"
+                        loan.status === 'active'
+                          ? 'bg-success-light text-success-dark'
+                          : loan.status === 'repaid'
+                            ? 'bg-blue-100 text-blue-800'
+                            : loan.status === 'liquidated'
+                              ? 'bg-error-light text-error-dark'
+                              : 'bg-brown-100 text-brown-700'
                       }`}
                     >
                       {loan.status}
