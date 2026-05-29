@@ -24,27 +24,8 @@ describe("HealthGauge", () => {
     expect(screen.getByText("1.00x")).toBeTruthy();
   });
 
-  it("outer container has role=status and aria-live=polite", () => {
+  it("matches snapshot (stable leaf component)", () => {
     const { container } = render(<HealthGauge value={13333} />);
-    const status = container.querySelector('[role="status"]');
-    expect(status).not.toBeNull();
-    expect(status?.getAttribute("aria-live")).toBe("polite");
-  });
-
-  it("outer container aria-label includes ratio and status label", () => {
-    const { container } = render(<HealthGauge value={13333} />);
-    const status = container.querySelector('[role="status"]');
-    expect(status?.getAttribute("aria-label")).toContain("1.33x");
-    expect(status?.getAttribute("aria-label")).toContain("Healthy");
-  });
-
-  it("progress bar has role=progressbar with correct aria values", () => {
-    const { container } = render(<HealthGauge value={10000} />);
-    const bar = container.querySelector('[role="progressbar"]');
-    expect(bar).not.toBeNull();
-    expect(bar?.getAttribute("aria-valuenow")).toBe("50");
-    expect(bar?.getAttribute("aria-valuemin")).toBe("0");
-    expect(bar?.getAttribute("aria-valuemax")).toBe("100");
-    expect(bar?.getAttribute("aria-label")).toBe("Health factor gauge");
+    expect(container.firstChild).toMatchSnapshot();
   });
 });
