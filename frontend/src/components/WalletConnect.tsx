@@ -26,7 +26,7 @@ export default function WalletConnect({ onConnect }: Props) {
 
   if (address) {
     return (
-      <div className="bg-brown/10 rounded-xl px-4 py-3 mb-6 text-sm font-mono text-brown">
+      <div className="bg-brown/10 dark:bg-gold/10 border border-brown/20 dark:border-gold/40 rounded-xl px-4 py-3 mb-6 text-sm font-mono text-brown dark:text-cream">
         ✅ {address.slice(0, 8)}…{address.slice(-6)}
       </div>
     );
@@ -36,11 +36,11 @@ export default function WalletConnect({ onConnect }: Props) {
     <div className="mb-6">
       <button
         onClick={connect}
-        className="bg-brown text-cream px-5 py-2.5 rounded-xl font-semibold hover:bg-brown/80 transition"
+        className="bg-brown dark:bg-gold text-cream dark:text-brown px-5 py-2.5 rounded-xl font-semibold hover:opacity-90 transition"
       >
         Connect Freighter Wallet
       </button>
-      {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
+      {error && <p className="text-red-500 dark:text-red-400 text-sm mt-2">{error}</p>}
     </div>
   );
 }

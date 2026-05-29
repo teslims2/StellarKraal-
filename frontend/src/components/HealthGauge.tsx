@@ -15,9 +15,10 @@ export default function HealthGauge({ value }: Props) {
     <div className="mt-4">
       <div className="flex justify-between text-sm mb-1">
         <span className="font-semibold" style={{ color }}>{label}</span>
-        <span className="text-brown/60">{(value / 10_000).toFixed(2)}x</span>
+        <span className="text-brown/60 dark:text-cream/60">{(value / 10_000).toFixed(2)}x</span>
       </div>
-      <div className="w-full bg-brown/10 rounded-full h-4 overflow-hidden">
+      {/* Track: brown/10 in light → cream/15 in dark for visible contrast */}
+      <div className="w-full bg-brown/10 dark:bg-cream/15 rounded-full h-4 overflow-hidden">
         <div
           className="h-4 rounded-full transition-all duration-500"
           style={{ width: `${pct}%`, backgroundColor: color }}

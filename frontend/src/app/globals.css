@@ -1,3 +1,44 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ── Light mode tokens ── */
+:root {
+  --bg: #FDF6EC;        /* cream */
+  --surface: #FFFFFF;
+  --text: #4A2C0A;      /* brown */
+  --text-muted: rgba(74, 44, 10, 0.60);
+  --border: rgba(212, 160, 23, 0.30);  /* gold/30 */
+  --border-focus: #D4A017;
+  --input-bg: #FFFFFF;
+}
+
+/* ── Dark mode tokens ── */
+.dark {
+  --bg: #0F0804;
+  --surface: #1C1008;
+  --text: #FDF6EC;      /* cream */
+  --text-muted: rgba(253, 246, 236, 0.60);
+  --border: rgba(212, 160, 23, 0.40);  /* gold/40 */
+  --border-focus: #F5D060;
+  --input-bg: #2A1A08;
+}
+
+/* ── Base overrides using tokens ── */
+@layer base {
+  body {
+    background-color: var(--bg);
+    color: var(--text);
+  }
+
+  input, select, textarea {
+    background-color: var(--input-bg);
+    color: var(--text);
+    border-color: var(--border);
+  }
+
+  input:focus, select:focus, textarea:focus {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 1px;
+  }
+}
