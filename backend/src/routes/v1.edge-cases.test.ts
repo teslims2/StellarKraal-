@@ -225,8 +225,8 @@ describe("Edge case tests — Issue #367", () => {
     it("listCollateral returns empty array for empty dataset", () => {
       const { listCollateral } = jest.requireActual("../db/store") as typeof store;
       const result = listCollateral();
-      expect(Array.isArray(result)).toBe(true);
-      expect(result).toHaveLength(0);
+      expect(Array.isArray(result.data)).toBe(true);
+      expect(result.data).toHaveLength(0);
     });
   });
 });

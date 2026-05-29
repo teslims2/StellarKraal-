@@ -7,12 +7,15 @@
  * In production, replace with actual database queries.
  */
 
+export type CollateralStatus = "available" | "pledged" | "liquidated";
+
 export interface CollateralRecord {
   id: string;
   owner: string;
   animal_type: string;
   count: number;
   appraised_value: number;
+  status: CollateralStatus;
   createdAt: string;
   deletedAt: string | null;
 }
@@ -55,18 +58,43 @@ const transactionTable: Map<string, TransactionRecord> = new Map();
  * @example
  * const record = insertCollateral({ id: "1", owner: "G...", animal_type: "cattle", count: 5, appraised_value: 1000000 });
  */
-export function insertCollateral(data: Omit<CollateralRecord, "createdAt" | "deletedAt">): CollateralRecord {
-  const record: CollateralRecord = { ...data, createdAt: new Date().toISOString(), deletedAt: null };
+export function insertCollateral(data: Omit<CollateralRecord, "createdAt" | "deletedAt" | "status"> & { status?: CollateralStatus }): CollateralRecord {
+  const record: CollateralRecord = { status: "available", ...data, createdAt: new Date().toISOString(), deletedAt: null };
   collateralTable.set(record.id, record);
   return record;
 }
 
 /**
- * Return all non-deleted collateral records.
- * @returns Array of active {@link CollateralRecord} objects.
+ * Return non-deleted collateral records with optional filtering and pagination.
+ * @param filters - Optional filter and pagination options.
+ * @param filters.status - Filter by collateral status.
+ * @param filters.ownerId - Filter by owner address.
+ * @param filters.page - Page number (1-indexed, default 1).
+ * @param filters.limit - Records per page (default 20, max 100).
+ * @returns Paginated result with `data`, `total`, `page`, and `limit`.
  */
-export function listCollateral(): CollateralRecord[] {
-  return [...collateralTable.values()].filter((r) => r.deletedAt === null);
+export function listCollateral(filters?: {
+  status?: CollateralStatus;
+  ownerId?: string;
+  page?: number;
+  limit?: number;
+}): { data: CollateralRecord[]; total: number; page: number; limit: number } {
+  const limit = Math.min(filters?.limit ?? 20, 100);
+  const page = Math.max(filters?.page ?? 1, 1);
+
+  let results = [...collateralTable.values()].filter((r) => r.deletedAt === null);
+
+  if (filters?.status) results = results.filter((r) => r.status === filters.status);
+  if (filters?.ownerId) results = results.filter((r) => r.owner === filters.ownerId);
+
+  // Sort by registration date descending
+  results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  const total = results.length;
+  const start = (page - 1) * limit;
+  const data = results.slice(start, start + limit);
+
+  return { data, total, page, limit };
 }
 
 /**
