@@ -16,6 +16,8 @@ const { Server } = SorobanRpc;
 const app = express();
 app.use(cors());
 app.use(express.json());
+import { logger, requestIdMiddleware } from "./logger";
+app.use(requestIdMiddleware);
 
 const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
@@ -146,12 +148,14 @@ app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFun
 });
 
 // ── error handler ─────────────────────────────────────────────────────────────
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error(err);
-  res.status(500).json({ error: err.message });
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  const message = err instanceof Error ? err.message : String(err);
+  const stack = err instanceof Error ? err.stack : undefined;
+  logger.error(message, { stack });
+  res.status(500).json({ error: message });
 });
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
-app.listen(PORT, () => console.log(`StellarKraal API running on :${PORT}`));
+app.listen(PORT, () => logger.info(`StellarKraal API running on :${PORT}`));
 
 export default app;
