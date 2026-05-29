@@ -60,8 +60,8 @@ function setIdempotencyEntry(key: string, status: number, body: unknown): void {
 
 const app = express();
 
-const isProduction = process.env.NODE_ENV === "production";
-const FRONTEND_URL = process.env.FRONTEND_URL;
+const isProduction = config.NODE_ENV === "production";
+const FRONTEND_URL = config.FRONTEND_URL;
 
 // Startup warning for CORS misconfiguration
 if (isProduction && !FRONTEND_URL) {
@@ -85,7 +85,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 app.use(express.json());
 app.use(globalLimiter);
-app.use(timeoutMiddleware(parseInt(config.TIMEOUT_GLOBAL_MS, 10)));
+app.use(timeoutMiddleware(config.TIMEOUT_GLOBAL_MS));
 
 // Request ID middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -113,18 +113,18 @@ app.use(auditMiddleware);
 app.use("/api/auth", authRouter);
 app.use(jwtMiddleware);
 
-const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
-const CONTRACT_ID = process.env.CONTRACT_ID || "";
+const RPC_URL = config.RPC_URL;
+const CONTRACT_ID = config.CONTRACT_ID;
 const NETWORK_PASSPHRASE =
   config.NEXT_PUBLIC_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
 
-const APP_VERSION = process.env.npm_package_version || "1.0.0";
+const APP_VERSION = process.env["npm_package_version"] || "1.0.0";
 const startTime = Date.now();
 
 const server = new Server(RPC_URL);
 
 // Configure appraisal cache TTL from env
-configureCacheTTL(parseInt(config.APPRAISAL_CACHE_TTL_MS, 10));
+configureCacheTTL(config.APPRAISAL_CACHE_TTL_MS);
 
 // Run DB migrations on startup
 runMigrations();
@@ -200,7 +200,7 @@ app.get("/api/health", async (req: Request, res: Response, next: NextFunction) =
 });
 
 // POST /api/collateral/register
-app.post("/api/collateral/register", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), asyncHandler(async (req: Request, res: Response) => {
+app.post("/api/collateral/register", timeoutMiddleware(config.TIMEOUT_WRITE_MS), asyncHandler(async (req: Request, res: Response) => {
   const validation = registerCollateralSchema.safeParse(req.body);
     
     if (!validation.success) {
@@ -221,7 +221,7 @@ app.post("/api/collateral/register", timeoutMiddleware(parseInt(config.TIMEOUT_W
 }));
 
 // POST /api/loan/request
-app.post("/api/loan/request", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), asyncHandler(async (req: Request, res: Response) => {
+app.post("/api/loan/request", timeoutMiddleware(config.TIMEOUT_WRITE_MS), asyncHandler(async (req: Request, res: Response) => {
   const validation = loanRequestSchema.safeParse(req.body);
     
     if (!validation.success) {
@@ -252,7 +252,7 @@ app.post("/api/loan/request", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS
 }));
 
 // POST /api/loan/repay
-app.post("/api/loan/repay", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), asyncHandler(async (req: Request, res: Response) => {
+app.post("/api/loan/repay", timeoutMiddleware(config.TIMEOUT_WRITE_MS), asyncHandler(async (req: Request, res: Response) => {
   const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
   if (!idempotencyKey) {
     return res.status(400).json({ error: "Idempotency-Key header is required for repay requests" });
@@ -358,7 +358,7 @@ app.get("/api/health/:loanId", async (req: Request, res: Response, next: NextFun
 });
 
 // POST /api/oracle/price-update — invalidate appraisal cache on oracle update
-app.post("/api/oracle/price-update", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), (req: Request, res: Response) => {
+app.post("/api/oracle/price-update", timeoutMiddleware(config.TIMEOUT_WRITE_MS), (req: Request, res: Response) => {
   invalidateAll();
   res.json({ invalidated: true });
 });
@@ -366,7 +366,7 @@ app.post("/api/oracle/price-update", timeoutMiddleware(parseInt(config.TIMEOUT_W
 // ── webhook routes ────────────────────────────────────────────────────────────
 
 // POST /api/webhooks — register a webhook URL
-app.post("/api/webhooks", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), (req: Request, res: Response) => {
+app.post("/api/webhooks", timeoutMiddleware(config.TIMEOUT_WRITE_MS), (req: Request, res: Response) => {
   const { url } = req.body;
   if (!url || typeof url !== "string") {
     return res.status(400).json({ error: "url is required" });
@@ -438,12 +438,11 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: err.message });
 });
 
-const PORT = parseInt(process.env.PORT || "3001", 10);
-app.listen(PORT, () => {
-  logger.info(`StellarKraal API running on port ${PORT}`, {
-    port: PORT,
-    environment: process.env.NODE_ENV || "development",
-    logLevel: process.env.LOG_LEVEL || "info",
+app.listen(config.PORT, () => {
+  logger.info(`StellarKraal API running on port ${config.PORT}`, {
+    port: config.PORT,
+    environment: config.NODE_ENV,
+    logLevel: config.LOG_LEVEL,
   });
 });
 

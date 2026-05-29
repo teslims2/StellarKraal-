@@ -13,10 +13,11 @@
 import { Request, Response, NextFunction, Router } from "express";
 import { createHmac, randomBytes } from "crypto";
 import { Keypair } from "@stellar/stellar-sdk";
+import { config } from "../config";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const JWT_SECRET = process.env.JWT_SECRET ?? "change-me-in-production-min-32-chars!!";
+const JWT_SECRET = config.JWT_SECRET ?? "change-me-in-production-min-32-chars!!";
 const ACCESS_TTL_MS = 15 * 60 * 1000;       // 15 minutes
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;     // 5 minutes

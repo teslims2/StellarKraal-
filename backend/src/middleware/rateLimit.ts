@@ -5,7 +5,7 @@ const windowMs = 60 * 1000; // 1 minute
 
 export const globalLimiter = rateLimit({
   windowMs,
-  max: parseInt(config.RATE_LIMIT_GLOBAL, 10),
+  max: config.RATE_LIMIT_GLOBAL,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests", retryAfter: 60 },
@@ -13,7 +13,7 @@ export const globalLimiter = rateLimit({
 
 export const writeLimiter = rateLimit({
   windowMs,
-  max: parseInt(config.RATE_LIMIT_WRITE, 10),
+  max: config.RATE_LIMIT_WRITE,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests", retryAfter: 60 },

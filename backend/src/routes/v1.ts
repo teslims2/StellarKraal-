@@ -25,12 +25,12 @@ import { writeLimiter } from "../middleware/rateLimit";
 
 const { Server } = SorobanRpc;
 
-const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
-const CONTRACT_ID = process.env.CONTRACT_ID || "";
+const RPC_URL = config.RPC_URL;
+const CONTRACT_ID = config.CONTRACT_ID;
 const NETWORK_PASSPHRASE =
   config.NEXT_PUBLIC_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
 
-const APP_VERSION = process.env.npm_package_version || "1.0.0";
+const APP_VERSION = process.env["npm_package_version"] || "1.0.0";
 const startTime = Date.now();
 
 const server = new Server(RPC_URL);
@@ -119,7 +119,7 @@ v1Router.get("/health", async (req: Request, res: Response, next: NextFunction) 
 // POST /collateral/register
 v1Router.post(
   "/collateral/register",
-  timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
+  timeoutMiddleware(config.TIMEOUT_WRITE_MS),
   writeLimiter,
   asyncHandler(async (req: Request, res: Response) => {
     const validation = registerCollateralSchema.safeParse(req.body);
@@ -140,7 +140,7 @@ v1Router.post(
 // POST /loan/request
 v1Router.post(
   "/loan/request",
-  timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
+  timeoutMiddleware(config.TIMEOUT_WRITE_MS),
   writeLimiter,
   asyncHandler(async (req: Request, res: Response) => {
     const validation = loanRequestSchema.safeParse(req.body);
@@ -165,7 +165,7 @@ v1Router.post(
 // POST /loan/repay
 v1Router.post(
   "/loan/repay",
-  timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
+  timeoutMiddleware(config.TIMEOUT_WRITE_MS),
   writeLimiter,
   asyncHandler(async (req: Request, res: Response) => {
     const validation = loanRepaySchema.safeParse(req.body);
@@ -229,7 +229,7 @@ v1Router.get("/health/:loanId", async (req: Request, res: Response, next: NextFu
 // POST /oracle/price-update
 v1Router.post(
   "/oracle/price-update",
-  timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
+  timeoutMiddleware(config.TIMEOUT_WRITE_MS),
   (_req: Request, res: Response) => {
     invalidateAll();
     res.json({ invalidated: true });
@@ -239,7 +239,7 @@ v1Router.post(
 // POST /webhooks
 v1Router.post(
   "/webhooks",
-  timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
+  timeoutMiddleware(config.TIMEOUT_WRITE_MS),
   (req: Request, res: Response) => {
     const { url } = req.body;
     if (!url || typeof url !== "string") {

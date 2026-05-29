@@ -1,19 +1,10 @@
 import winston from "winston";
+import { config } from "../config";
 
-const LOG_LEVEL = process.env.LOG_LEVEL || "info";
-const NODE_ENV = process.env.NODE_ENV || "development";
-
-/**
- * Winston logger configuration
- * - JSON format in production for log aggregation
- * - Pretty-print format in development for readability
- * - Includes timestamp, log level, and message
- * - Request ID can be added via child logger
- */
 const logger = winston.createLogger({
-  level: LOG_LEVEL,
+  level: config.LOG_LEVEL,
   format:
-    NODE_ENV === "production"
+    config.NODE_ENV === "production"
       ? winston.format.combine(
           winston.format.timestamp(),
           winston.format.errors({ stack: true }),

@@ -1,9 +1,10 @@
 import { SorobanRpc } from "@stellar/stellar-sdk";
 import CircuitBreaker from "opossum";
+import { config } from "../config";
 
 const { Server } = SorobanRpc;
 
-const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
+const RPC_URL = config.RPC_URL;
 
 // Create the base RPC server instance
 const baseServer = new Server(RPC_URL);
