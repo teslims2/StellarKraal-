@@ -10,16 +10,11 @@ import {
   softDeleteCollateral,
   restoreCollateral,
   listDeletedCollateral,
-  insertLoan,
-  listLoans,
-  getLoan,
   softDeleteLoan,
   restoreLoan,
   listDeletedLoans,
-  insertTransaction,
   listTransactions,
   getTransaction,
-  updateTransaction,
   type TransactionType,
   type TransactionStatus,
 } from "./db/store";
@@ -47,7 +42,7 @@ import {
 } from "./utils/appraisalCache";
 import { randomUUID } from "crypto";
 import { z } from "zod";
-import { globalLimiter, authLimiter } from "./middleware/rateLimit";
+import { globalLimiter, authLimiter, readLimiter } from "./middleware/rateLimit";
 import { asyncHandler } from "./utils/asyncHandler";
 import { stellarPublicKeySchema } from "./validators/stellar";
 import rpcClient from "./utils/rpcClient";
@@ -113,7 +108,9 @@ app.use(timeoutMiddleware(parseInt(config.TIMEOUT_GLOBAL_MS, 10)));
 // Request ID middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
   const requestId = randomUUID();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (req as any).requestId = requestId;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (req as any).logger = createRequestLogger(requestId);
   res.setHeader("X-Request-ID", requestId);
   next();
@@ -134,6 +131,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 // Request logging middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const reqLogger = (req as any).logger;
   reqLogger.info(`${req.method} ${req.path}`, {
     method: req.method,
@@ -353,6 +351,7 @@ app.get("/metrics", async (req: Request, res: Response) => {
 // GET /api/health - Health check endpoint
 app.get(
   "/api/health",
+  readLimiter,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const uptime = Math.floor((Date.now() - startTime) / 1000);
@@ -546,6 +545,7 @@ app.post(
       .build();
 
     const loanResult = await rpcClient.simulateTransaction(loanTx);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const parsed = parseLoanFromSimulation((loanResult as any).result?.retval);
 
     // Fetch dynamic fee config; fallback keeps preview resilient if read fails.
@@ -560,6 +560,7 @@ app.post(
         .build();
       const feeResult = await rpcClient.simulateTransaction(feeTx);
       const feeConfig = parseFeeConfigFromSimulation(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (feeResult as any).result?.retval,
       );
       if (feeConfig) {
@@ -606,6 +607,7 @@ app.post(
 // Deprecated: unpaginated usage will be removed in a future version.
 app.get(
   "/api/loans",
+  readLimiter,
   asyncHandler(async (req: Request, res: Response) => {
     const pageRaw = req.query.page !== undefined ? Number(req.query.page) : 1;
     const pageSizeRaw =
@@ -642,6 +644,7 @@ app.get(
 // GET /api/loan/:id
 app.get(
   "/api/loan/:id",
+  readLimiter,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const contract = new Contract(CONTRACT_ID);
@@ -662,6 +665,7 @@ app.get(
         .build();
 
       const result = await rpcClient.simulateTransaction(tx);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       res.json({ result: (result as any).result?.retval });
     } catch (error) {
       next(error);
@@ -692,6 +696,7 @@ app.get(
         .build();
 
       const result = await rpcClient.simulateTransaction(tx);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       res.json({ health_factor: (result as any).result?.retval });
     } catch (error) {
       next(error);
@@ -722,6 +727,7 @@ app.post(
     }
     try {
       return res.status(201).json(registerWebhook(url));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       return res.status(400).json({ error: err.message });
     }
@@ -901,7 +907,9 @@ app.get(
 );
 
 // ── error handler ─────────────────────────────────────────────────────────────
-app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+  void next; // required 4th param for Express error handlers
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const reqLogger = (req as any).logger || logger;
   if (err instanceof PoolExhaustedError) {
     track5xx();
