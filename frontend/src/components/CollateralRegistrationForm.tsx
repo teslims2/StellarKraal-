@@ -7,6 +7,7 @@ import Spinner from "@/components/Spinner";
 import { motion, useReducedMotion } from "framer-motion";
 import { submitVariants } from "@/lib/animations";
 import { Input, Select, Button } from "@/components/ui";
+import { useToast } from "@/components/toast";
 
 interface Props {
   walletAddress: string;
@@ -39,6 +40,7 @@ const STORAGE_KEY = "stellarkraal_collateral_form";
 
 export default function CollateralRegistrationForm({ walletAddress, onSuccess }: Props) {
   const reduced = useReducedMotion();
+  const toast = useToast();
   const [formData, setFormData] = useState<FormData>({
     animalType: "cattle",
     quantity: "",
@@ -48,7 +50,6 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
     appraisedValue: "",
   });
   const [errors, setErrors] = useState<FormErrors>({});
-  const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showRestorePrompt, setShowRestorePrompt] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
@@ -147,7 +148,6 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
 
   const registerCollateral = async () => {
     setLoading(true);
-    setStatus(null);
     try {
       const res = await fetch(`${API}/api/v1/collateral/register`, {
         method: "POST",
@@ -168,20 +168,18 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
         network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET",
       });
       const result = await submitSignedXdr(signedTxXdr);
-      setStatus(`Collateral registered successfully! ID: ${result}`);
+      toast.success(`Collateral registered successfully! ID: ${result}`);
       localStorage.removeItem(STORAGE_KEY);
       setLastSaved(null);
       setFormData({ animalType: "cattle", quantity: "", weight: "", healthStatus: "good", location: "", appraisedValue: "" });
       setErrors({});
       onSuccess?.(result);
     } catch (e: any) {
-      setStatus(`error:${e.message}`);
+      toast.error(e.message || "Registration failed");
     } finally {
       setLoading(false);
     }
   };
-
-  const isError = status?.startsWith("error:");
 
   return (
     <div className="bg-white rounded-2xl p-6 shadow space-y-4">
@@ -267,7 +265,8 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
           disabled={loading}
         />
 
-        <motion.div
+        <motion.button
+          type="submit"
           variants={reduced ? undefined : submitVariants}
           animate={loading ? "loading" : "idle"}
           className="w-full bg-brown text-cream py-2.5 rounded-xl font-semibold hover:bg-brown/80 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
@@ -287,17 +286,6 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
         <p className="text-xs text-brown-400 text-center">
           Auto-saved at {lastSaved.toLocaleTimeString()}
         </p>
-      )}
-
-      {status && (
-        <div
-          role="status"
-          className={`p-3 rounded-xl text-sm ${
-            isError ? "bg-error-light text-error-dark" : "bg-success-light text-success-dark"
-          }`}
-        >
-          {isError ? status.replace("error:", "") : status}
-        </div>
       )}
 
       <ConfirmDialog
