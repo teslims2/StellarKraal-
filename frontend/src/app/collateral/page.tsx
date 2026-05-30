@@ -1,10 +1,11 @@
-"use client";
-import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import SearchFilterBar from "@/components/SearchFilterBar";
-import PageTransition from "@/components/PageTransition";
-import Card from "@/components/Card";
-import SkeletonCollateralCard from "@/components/SkeletonCollateralCard";
+'use client';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import SearchFilterBar from '@/components/SearchFilterBar';
+import PageTransition from '@/components/PageTransition';
+import Card from '@/components/Card';
+import SkeletonCollateralCard from '@/components/SkeletonCollateralCard';
+import EmptyState from '@/components/EmptyState';
 
 interface Collateral {
   id: string;
@@ -64,7 +65,15 @@ function CollateralListContent() {
           ))}
         </ul>
       ) : filtered.length === 0 ? (
-        <p className="text-brown-500 text-sm">No collateral matches your filters.</p>
+        <EmptyState
+          icon="🐄"
+          heading={q || types.length > 0 ? 'No Collateral Found' : 'No Collateral Registered'}
+          message={
+            q || types.length > 0
+              ? 'Try adjusting your search or filters to find collateral.'
+              : 'No collateral has been registered yet. Register your livestock to get started.'
+          }
+        />
       ) : (
         <ul className="space-y-2">
           {filtered.map((col) => (
