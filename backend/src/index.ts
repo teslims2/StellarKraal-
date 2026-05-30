@@ -10,9 +10,13 @@ import {
   softDeleteCollateral,
   restoreCollateral,
   listDeletedCollateral,
+  getLoan,
+  insertLoan,
   softDeleteLoan,
   restoreLoan,
   listDeletedLoans,
+  updateLoan,
+  insertTransaction,
   listTransactions,
   getTransaction,
   type TransactionType,
@@ -909,6 +913,43 @@ app.get(
       return res.status(404).json({ error: "Transaction not found" });
     }
     res.json(transaction);
+  }),
+);
+
+// PUT /api/loans/:id/repay — record a repayment against a loan
+app.put(
+  "/api/loans/:id/repay",
+  timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
+  writeLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { amount, transactionHash } = req.body as { amount?: unknown; transactionHash?: unknown };
+
+    if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ error: "amount must be a positive number" });
+    }
+    if (typeof transactionHash !== "string" || !transactionHash) {
+      return res.status(400).json({ error: "transactionHash is required" });
+    }
+
+    const loan = getLoan(req.params.id);
+    if (!loan) return res.status(404).json({ error: "Loan not found" });
+
+    if (amount > loan.outstanding_balance) {
+      return res.status(400).json({ error: "amount exceeds outstanding balance" });
+    }
+
+    const newBalance = loan.outstanding_balance - amount;
+    const updated = updateLoan(req.params.id, { outstanding_balance: newBalance });
+
+    insertTransaction({
+      borrower: loan.borrower,
+      type: "repayment",
+      status: "completed",
+      amount,
+      loanId: loan.id,
+    });
+
+    res.json(updated);
   }),
 );
 

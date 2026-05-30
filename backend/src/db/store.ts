@@ -22,6 +22,7 @@ export interface LoanRecord {
   borrower: string;
   collateral_id: string;
   amount: number;
+  outstanding_balance: number;
   createdAt: string;
   deletedAt: string | null;
 }
@@ -155,12 +156,21 @@ export function listLoans(filters?: {
 
 /**
  * Fetch a single loan record by ID (excludes soft-deleted records).
- * @param id - Loan record ID.
- * @returns The {@link LoanRecord} or `undefined` if not found or deleted.
  */
 export function getLoan(id: string): LoanRecord | undefined {
   const r = loanTable.get(id);
   return r && r.deletedAt === null ? r : undefined;
+}
+
+/**
+ * Update fields on an existing loan record.
+ */
+export function updateLoan(id: string, updates: Partial<Omit<LoanRecord, "id" | "createdAt">>): LoanRecord | undefined {
+  const record = loanTable.get(id);
+  if (!record) return undefined;
+  const updated = { ...record, ...updates };
+  loanTable.set(id, updated);
+  return updated;
 }
 
 /**
