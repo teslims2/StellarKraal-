@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import Link from "next/link";
 
 interface HelpMenuProps {
   onShowOnboarding: () => void;
@@ -34,10 +35,17 @@ export default function HelpMenu({ onShowOnboarding }: HelpMenuProps) {
                 onShowOnboarding();
                 setIsOpen(false);
               }}
-              className="w-full text-left px-4 py-3 text-brown-700 hover:bg-brown-50 rounded-lg transition"
+              className="w-full text-left px-4 py-3 text-brown-700 hover:bg-brown-50 rounded-t-lg transition"
             >
               Show Getting Started Guide
             </button>
+            <Link
+              href="/help"
+              onClick={() => setIsOpen(false)}
+              className="block px-4 py-3 text-brown-700 hover:bg-brown-50 rounded-b-lg transition"
+            >
+              Help &amp; Guides
+            </Link>
           </div>
         </>
       )}

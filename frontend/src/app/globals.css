@@ -17,10 +17,34 @@
     --color-text: #f5e6d0;
     --color-text-muted: rgba(245, 230, 208, 0.75);
     --color-border: rgba(245, 230, 208, 0.2);
-  }
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
 
-  body {
-    background-color: var(--color-bg);
-    color: var(--color-text);
+.skeleton-shimmer {
+  background: linear-gradient(90deg, #e8ddd0 25%, #f5ede0 50%, #e8ddd0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
   }
+}
+
+@keyframes toast-fade-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+}
+
+.toast-enter {
+  animation: toast-slide-in 0.3s ease-out forwards;
+}
+
+.toast-exit {
+  animation: toast-fade-out 0.3s ease-in forwards;
+
 }

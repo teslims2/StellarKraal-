@@ -34,7 +34,6 @@ import {
   Address,
   xdr,
 } from "@stellar/stellar-sdk";
-import { SorobanRpc } from "@stellar/stellar-sdk";
 import logger, { createRequestLogger } from "./utils/logger";
 import { pool, PoolExhaustedError } from "./utils/connectionPool";
 import { auditMiddleware } from "./middleware/audit";
@@ -48,14 +47,19 @@ import {
 } from "./utils/appraisalCache";
 import { randomUUID } from "crypto";
 import { z } from "zod";
-import { globalLimiter } from "./middleware/rateLimit";
+import { globalLimiter, authLimiter } from "./middleware/rateLimit";
 import { asyncHandler } from "./utils/asyncHandler";
 import { stellarPublicKeySchema } from "./validators/stellar";
 import rpcClient from "./utils/rpcClient";
-import { registerWebhook, getWebhooks, getDeliveryLogs } from "./webhooks";
+import { registerWebhook, getWebhooks, getDeliveryLogs, fireWebhooks } from "./webhooks";
 import { fireAlert } from "./utils/alerting";
 import { rules } from "./utils/alertRules";
-const { Server } = SorobanRpc;
+import {
+  registry,
+  httpRequestsTotal,
+  httpRequestDurationSeconds,
+  httpActiveConnections,
+} from "./metrics";
 
 // ── 5xx spike tracking (rolling 60s window) ───────────────────────────────────
 const fivexxTimestamps: number[] = [];
@@ -141,9 +145,28 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // Audit logging middleware — logs all requests with redacted body to audit log
 app.use(auditMiddleware);
 
+// ── Prometheus instrumentation middleware ─────────────────────────────────────
+app.use((req: Request, res: Response, next: NextFunction) => {
+  httpActiveConnections.inc();
+  const end = httpRequestDurationSeconds.startTimer();
+  res.on("finish", () => {
+    const route = (req.route?.path as string) ?? req.path;
+    const labels = { method: req.method, route, status_code: String(res.statusCode) };
+    httpRequestsTotal.inc(labels);
+    end(labels);
+    httpActiveConnections.dec();
+  });
+  next();
+});
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
-app.use("/api/auth", authRouter);
+app.use("/api/auth", authLimiter, authRouter);
 app.use(jwtMiddleware);
+
+// ── API Docs (Swagger UI) ─────────────────────────────────────────────────────
+import swaggerUi from "swagger-ui-express";
+import openApiSpec from "../openapi.json";
+app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(openApiSpec));
 
 // ── API Versioning ────────────────────────────────────────────────────────────
 import { v1Router } from "./routes/v1";
@@ -151,28 +174,12 @@ import { v1Router } from "./routes/v1";
 // Mount v1 routes
 app.use("/api/v1", v1Router);
 
-// Redirect unversioned routes to v1 with deprecation warning
-app.use("/api/:endpoint(*)", (req: Request, res: Response, next: NextFunction) => {
-  // Skip if already versioned or is auth/health
-  if (req.path.startsWith("/api/v1") || req.path === "/api/health" || req.path.startsWith("/api/auth")) {
-    return next();
-  }
-  
-  const newPath = req.path.replace(/^\/api/, "/api/v1");
-  res.setHeader("Deprecation", "true");
-  res.setHeader("Warning", '299 - "Unversioned API routes are deprecated. Use /api/v1/ prefix."');
-  res.redirect(301, newPath + (req.url.includes("?") ? req.url.substring(req.url.indexOf("?")) : ""));
-});
-
-const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
 const NETWORK_PASSPHRASE =
   config.NEXT_PUBLIC_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
 
 const APP_VERSION = process.env.npm_package_version || "1.0.0";
 const startTime = Date.now();
-
-const server = new Server(RPC_URL);
 
 // Configure appraisal cache TTL from env
 configureCacheTTL(parseInt(config.APPRAISAL_CACHE_TTL_MS, 10));
@@ -330,6 +337,19 @@ async function buildContractTx(
 
 // ── routes ────────────────────────────────────────────────────────────────────
 
+// GET /metrics - Prometheus metrics (token-protected)
+app.get("/metrics", async (req: Request, res: Response) => {
+  const token = process.env.METRICS_TOKEN;
+  if (token) {
+    const auth = req.headers.authorization;
+    if (auth !== `Bearer ${token}`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+  }
+  res.set("Content-Type", registry.contentType);
+  res.end(await registry.metrics());
+});
+
 // GET /api/health - Health check endpoint
 app.get(
   "/api/health",
@@ -342,7 +362,7 @@ app.get(
         await pool.run((server) => server.getHealth());
         rpcReachable = true;
       } catch (error) {
-        console.warn("RPC health check failed:", (error as Error).message);
+        logger.warn("RPC health check failed", { error: (error as Error).message });
       }
 
       const circuitStates = rpcClient.getCircuitStates();
@@ -375,19 +395,34 @@ app.post(
     const validation = registerCollateralSchema.safeParse(req.body);
 
     if (!validation.success) {
+      logger.warn("Validation failed for collateral registration", {
+        requestId: req.requestId,
+        errors: validation.error.errors,
+      });
       return res.status(400).json({
         error: "Validation failed",
-        details: validation.error.errors,
+        details: validation.error.issues,
       });
     }
 
     const { owner, animal_type, count, appraised_value } = validation.data;
+    logger.debug("Building collateral registration transaction", {
+      requestId: req.requestId,
+      owner,
+      animal_type,
+      count,
+      appraised_value,
+    });
     const xdrTx = await buildContractTx(owner, "register_livestock", [
       new Address(owner).toScVal(),
       nativeToScVal(animal_type, { type: "symbol" }),
       nativeToScVal(count, { type: "u32" }),
       nativeToScVal(BigInt(appraised_value), { type: "i128" }),
     ]);
+    logger.info("Collateral registration transaction built successfully", {
+      requestId: req.requestId,
+      owner,
+    });
     res.json({ xdr: xdrTx });
   }),
 );
@@ -400,9 +435,13 @@ app.post(
     const validation = loanRequestSchema.safeParse(req.body);
 
     if (!validation.success) {
+      logger.warn("Validation failed for loan request", {
+        requestId: req.requestId,
+        errors: validation.error.errors,
+      });
       return res.status(400).json({
         error: "Validation failed",
-        details: validation.error.errors,
+        details: validation.error.issues,
       });
     }
 
@@ -450,13 +489,19 @@ app.post(
     if (!validation.success) {
       const body = {
         error: "Validation failed",
-        details: validation.error.errors,
+        details: validation.error.issues,
       };
       setIdempotencyEntry(idempotencyKey, 400, body);
       return res.status(400).json(body);
     }
 
     const { borrower, loan_id, amount } = validation.data;
+    logger.debug("Building loan repayment transaction", {
+      requestId: req.requestId,
+      borrower,
+      loan_id,
+      amount,
+    });
     const xdrTx = await buildContractTx(borrower, "repay_loan", [
       new Address(borrower).toScVal(),
       nativeToScVal(BigInt(loan_id), { type: "u64" }),
@@ -477,7 +522,7 @@ app.post(
     if (!validation.success) {
       return res.status(400).json({
         error: "Validation failed",
-        details: validation.error.errors,
+        details: validation.error.issues,
       });
     }
 
@@ -724,6 +769,64 @@ app.delete("/api/collateral/:id", (req: Request, res: Response) => {
   res.json({ deleted: true, id: req.params.id });
 });
 
+// ── v1 collateral CRUD ────────────────────────────────────────────────────────
+
+const v1CollateralSchema = z.object({
+  owner: stellarPublicKeySchema,
+  animal_type: z.string().min(1),
+  count: z.number().int().positive(),
+  appraised_value: z.number().int().positive(),
+});
+
+// POST /api/v1/collateral — register collateral (DB record)
+app.post("/api/v1/collateral", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), asyncHandler(async (req: Request, res: Response) => {
+  const validation = v1CollateralSchema.safeParse(req.body);
+  if (!validation.success) {
+    return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
+  }
+  const { owner, animal_type, count, appraised_value } = validation.data;
+  const record = insertCollateral({ id: randomUUID(), owner, animal_type, count, appraised_value });
+  res.status(201).json(record);
+}));
+
+// GET /api/v1/collateral — list collateral with optional filters and pagination
+app.get("/api/v1/collateral", asyncHandler(async (req: Request, res: Response) => {
+  const page = req.query.page !== undefined ? Number(req.query.page) : 1;
+  const pageSize = req.query.pageSize !== undefined ? Number(req.query.pageSize) : 20;
+  if (!Number.isInteger(page) || page < 1) {
+    return res.status(400).json({ error: "page must be a positive integer" });
+  }
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    return res.status(400).json({ error: "pageSize must be between 1 and 100" });
+  }
+  let records = listCollateral();
+  if (req.query.owner) records = records.filter((r) => r.owner === req.query.owner);
+  if (req.query.animal_type) records = records.filter((r) => r.animal_type === req.query.animal_type);
+  const total = records.length;
+  const data = records.slice((page - 1) * pageSize, page * pageSize);
+  res.json({ data, total, page, pageSize });
+}));
+
+// PUT /api/v1/collateral/:id/appraise — update appraised_value
+app.put("/api/v1/collateral/:id/appraise", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), asyncHandler(async (req: Request, res: Response) => {
+  const { appraised_value } = req.body;
+  if (typeof appraised_value !== "number" || !Number.isInteger(appraised_value) || appraised_value <= 0) {
+    return res.status(400).json({ error: "appraised_value must be a positive integer" });
+  }
+  const record = getCollateral(req.params.id);
+  if (!record) return res.status(404).json({ error: "Record not found" });
+  record.appraised_value = appraised_value;
+  setAppraisal(req.params.id, appraised_value);
+  res.json(record);
+}));
+
+// DELETE /api/v1/collateral/:id — soft delete
+app.delete("/api/v1/collateral/:id", (req: Request, res: Response) => {
+  const ok = softDeleteCollateral(req.params.id);
+  if (!ok) return res.status(404).json({ error: "Record not found" });
+  res.json({ deleted: true, id: req.params.id });
+});
+
 // GET /api/admin/deleted/loans — list soft-deleted loan records
 app.get("/api/admin/deleted/loans", (req: Request, res: Response) => {
   res.json(listDeletedLoans());
@@ -822,7 +925,7 @@ const httpServer = app.listen(PORT, () => {
     environment: process.env.NODE_ENV || "development",
     logLevel: process.env.LOG_LEVEL || "info",
   });
-}
+});
 
 // ── Graceful Shutdown ─────────────────────────────────────────────────────────
 
@@ -902,6 +1005,19 @@ process.on("unhandledRejection", (reason: unknown) => {
     reason: reason instanceof Error ? reason.message : String(reason),
   });
   gracefulShutdown("unhandledRejection");
+});
+
+// Redirect unversioned routes to v1 with deprecation warning
+app.use("/api", (req: Request, res: Response, next: NextFunction) => {
+  // Skip if already versioned or is auth/health
+  if (req.path.startsWith("/api/v1") || req.path === "/api/health" || req.path.startsWith("/api/auth")) {
+    return next();
+  }
+
+  const newPath = req.path.replace(/^\/api/, "/api/v1");
+  res.setHeader("Deprecation", "true");
+  res.setHeader("Warning", '299 - "Unversioned API routes are deprecated. Use /api/v1/ prefix."');
+  res.redirect(301, newPath + (req.url.includes("?") ? req.url.substring(req.url.indexOf("?")) : ""));
 });
 
 export default app;

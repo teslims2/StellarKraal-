@@ -12,7 +12,6 @@ import {
   xdr,
   Networks,
 } from "@stellar/stellar-sdk";
-import { SorobanRpc } from "@stellar/stellar-sdk";
 import { z } from "zod";
 import { config } from "../config";
 import { pool } from "../utils/connectionPool";
@@ -24,19 +23,14 @@ import { timeoutMiddleware } from "../middleware/timeout";
 import { writeLimiter } from "../middleware/rateLimit";
 import { fireAlert } from "../utils/alerting";
 import { rules } from "../utils/alertRules";
-
-const { Server } = SorobanRpc;
-
-const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
+import rpcClient from "../utils/rpcClient";
+import { listLoans } from "../db/store";
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
 const NETWORK_PASSPHRASE =
   config.NEXT_PUBLIC_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
 
 const APP_VERSION = process.env.npm_package_version || "1.0.0";
 const startTime = Date.now();
-
-const server = new Server(RPC_URL);
-const rpcClient = server;
 
 // ── Validation Schemas ────────────────────────────────────────────────────────
 
@@ -65,6 +59,11 @@ const loanLiquidateSchema = z.object({
   repay_amount: z.number().int().positive(),
 });
 
+const paginationSchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).optional().default(20),
+});
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 async function buildContractTx(
@@ -72,7 +71,7 @@ async function buildContractTx(
   method: string,
   args: xdr.ScVal[]
 ): Promise<string> {
-  const account = await rpcClient.getAccount(sourceAddress);
+  const account = await rpcClient.getAccount(sourceAddress) as any;
   const contract = new Contract(CONTRACT_ID);
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
@@ -81,7 +80,7 @@ async function buildContractTx(
     .addOperation(contract.call(method, ...args))
     .setTimeout(30)
     .build();
-  const prepared = await rpcClient.prepareTransaction(tx);
+  const prepared = await rpcClient.prepareTransaction(tx) as any;
   return prepared.toXDR();
 }
 
@@ -132,7 +131,7 @@ v1Router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const validation = registerCollateralSchema.safeParse(req.body);
     if (!validation.success) {
-      return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
+      return res.status(400).json({ error: "Validation failed", details: validation.error.issues });
     }
     const { owner, animal_type, count, appraised_value } = validation.data;
     const xdrTx = await buildContractTx(owner, "register_livestock", [
@@ -153,7 +152,7 @@ v1Router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const validation = loanRequestSchema.safeParse(req.body);
     if (!validation.success) {
-      return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
+      return res.status(400).json({ error: "Validation failed", details: validation.error.issues });
     }
     const { borrower, collateral_ids, amount } = validation.data;
     const idsScVal = xdr.ScVal.scvVec(collateral_ids.map(id => nativeToScVal(BigInt(id), { type: "u64" })));
@@ -175,7 +174,7 @@ v1Router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const validation = loanRepaySchema.safeParse(req.body);
     if (!validation.success) {
-      return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
+      return res.status(400).json({ error: "Validation failed", details: validation.error.issues });
     }
     const { borrower, loan_id, amount } = validation.data;
     const xdrTx = await buildContractTx(borrower, "repay_loan", [
@@ -196,7 +195,7 @@ v1Router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const validation = loanLiquidateSchema.safeParse(req.body);
     if (!validation.success) {
-      return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
+      return res.status(400).json({ error: "Validation failed", details: validation.error.issues });
     }
     const { liquidator, loan_id, repay_amount } = validation.data;
     const xdrTx = await buildContractTx(liquidator, "liquidate", [
@@ -215,12 +214,12 @@ v1Router.get("/loan/:id", async (req: Request, res: Response, next: NextFunction
     const contract = new Contract(CONTRACT_ID);
     const account = await rpcClient.getAccount(
       "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN"
-    );
+    ) as any;
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
       networkPassphrase: NETWORK_PASSPHRASE,
     })
-      .addOperation(contract.call("get_loan", nativeToScVal(BigInt(req.params.id), { type: "u64" })))
+      .addOperation(contract.call("get_loan", nativeToScVal(BigInt(req.params.id as string), { type: "u64" })))
       .setTimeout(30)
       .build();
     const result = await rpcClient.simulateTransaction(tx);
@@ -236,13 +235,13 @@ v1Router.get("/health/:loanId", async (req: Request, res: Response, next: NextFu
     const contract = new Contract(CONTRACT_ID);
     const account = await rpcClient.getAccount(
       "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN"
-    );
+    ) as any;
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
       networkPassphrase: NETWORK_PASSPHRASE,
     })
       .addOperation(
-        contract.call("health_factor", nativeToScVal(BigInt(req.params.loanId), { type: "u64" }))
+        contract.call("health_factor", nativeToScVal(BigInt(req.params.loanId as string), { type: "u64" }))
       )
       .setTimeout(30)
       .build();
@@ -252,6 +251,31 @@ v1Router.get("/health/:loanId", async (req: Request, res: Response, next: NextFu
     next(err);
   }
 });
+
+// GET /loans - List loans with pagination
+v1Router.get("/loans", asyncHandler(async (req: Request, res: Response) => {
+  const validation = paginationSchema.safeParse(req.query);
+  if (!validation.success) {
+    return res.status(400).json({ error: "Invalid pagination parameters", details: validation.error.issues });
+  }
+
+  const { page, pageSize } = validation.data;
+
+  // Add deprecation warning header for unpaginated usage
+  if (!req.query.page && !req.query.pageSize) {
+    res.set("Deprecation", "true");
+    res.set("Sunset", new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toUTCString());
+    res.set("Warning", '299 - "Unpaginated loan listing is deprecated. Use ?page=1&pageSize=20 parameters."');
+  }
+
+  const result = listLoans({ page, pageSize });
+  res.json({
+    data: result.data,
+    total: result.total,
+    page: result.page,
+    pageSize: result.pageSize,
+  });
+}));
 
 // POST /oracle/price-update
 v1Router.post(
@@ -326,3 +350,57 @@ v1Router.post("/alerts/webhook", async (req: Request, res: Response) => {
 });
 
 export { v1Router, startTime, APP_VERSION };
+
+// ── User Settings ─────────────────────────────────────────────────────────────
+
+const settingsSchema = z.object({
+  notifications: z.object({
+    loanApproved: z.boolean(),
+    loanRepaid: z.boolean(),
+    liquidationWarning: z.boolean(),
+  }).optional(),
+  language: z.string().min(2).max(10).optional(),
+  currency: z.string().min(3).max(6).optional(),
+});
+
+type UserSettings = z.infer<typeof settingsSchema> & {
+  walletAddress: string;
+  joinDate: string;
+};
+
+// In-memory store (replace with DB persistence in production)
+const settingsStore = new Map<string, UserSettings>();
+
+v1Router.get("/settings/:wallet", (req: Request, res: Response) => {
+  const wallet = req.params.wallet as string;
+  const existing = settingsStore.get(wallet);
+  if (!existing) {
+    // Return defaults for new users
+    return res.json({
+      walletAddress: wallet,
+      joinDate: new Date().toISOString(),
+      notifications: { loanApproved: true, loanRepaid: true, liquidationWarning: true },
+      language: "en",
+      currency: "USD",
+    });
+  }
+  res.json(existing);
+});
+
+v1Router.put("/settings/:wallet", (req: Request, res: Response) => {
+  const wallet = req.params.wallet as string;
+  const validation = settingsSchema.safeParse(req.body);
+  if (!validation.success) {
+    return res.status(400).json({ error: "Validation failed", details: validation.error.issues });
+  }
+  const existing = settingsStore.get(wallet) ?? {
+    walletAddress: wallet,
+    joinDate: new Date().toISOString(),
+    notifications: { loanApproved: true, loanRepaid: true, liquidationWarning: true },
+    language: "en",
+    currency: "USD",
+  };
+  const updated: UserSettings = { ...existing, ...validation.data };
+  settingsStore.set(wallet, updated);
+  res.json(updated);
+});

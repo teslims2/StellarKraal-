@@ -27,9 +27,19 @@ jobs:
       - name: Build backend image
         run: docker build -t stellarkraal-backend:${{ github.sha }} ./backend
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        continue-on-error: true
+      - name: Run Trivy vulnerability scanner (CRITICAL — fail build)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: stellarkraal-backend:${{ github.sha }}
+          format: table
+          severity: CRITICAL
+          exit-code: 1
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+
+      - name: Run Trivy vulnerability scanner (SARIF upload)
+        if: always()
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: stellarkraal-backend:${{ github.sha }}
           format: sarif
@@ -39,12 +49,20 @@ jobs:
           ignore-unfixed: true
           trivyignores: .trivyignore
 
-      - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
-        if: always()
+      - name: Upload Trivy SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always() && hashFiles('trivy-backend-results.sarif') != ''
         with:
           sarif_file: trivy-backend-results.sarif
           category: backend-image
+
+      - name: Upload Trivy scan results as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-backend-results
+          path: trivy-backend-results.sarif
+          retention-days: 30
 
   scan-frontend:
     runs-on: ubuntu-latest
@@ -58,9 +76,19 @@ jobs:
       - name: Build frontend image
         run: docker build -t stellarkraal-frontend:${{ github.sha }} ./frontend
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        continue-on-error: true
+      - name: Run Trivy vulnerability scanner (CRITICAL — fail build)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: stellarkraal-frontend:${{ github.sha }}
+          format: table
+          severity: CRITICAL
+          exit-code: 1
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+
+      - name: Run Trivy vulnerability scanner (SARIF upload)
+        if: always()
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: stellarkraal-frontend:${{ github.sha }}
           format: sarif
@@ -70,9 +98,17 @@ jobs:
           ignore-unfixed: true
           trivyignores: .trivyignore
 
-      - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
-        if: always()
+      - name: Upload Trivy SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always() && hashFiles('trivy-frontend-results.sarif') != ''
         with:
           sarif_file: trivy-frontend-results.sarif
           category: frontend-image
+
+      - name: Upload Trivy scan results as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-frontend-results
+          path: trivy-frontend-results.sarif
+          retention-days: 30

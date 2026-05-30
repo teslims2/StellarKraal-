@@ -31,23 +31,21 @@ const envSchema = z.object({
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
-  const missing = parsed.error.issues.filter((i) => i.code === "invalid_type" && i.received === "undefined");
-  const invalid = parsed.error.issues.filter((i) => !(i.code === "invalid_type" && i.received === "undefined"));
-  
-  console.error("\n❌ Environment validation failed\n");
-  
+  const missing = parsed.error.issues.filter((i) => i.code === "invalid_type" && (i as any).received === "undefined");
+  const invalid = parsed.error.issues.filter((i) => !(i.code === "invalid_type" && (i as any).received === "undefined"));
+
+  const lines: string[] = ["\n❌ Environment validation failed\n"];
   if (missing.length > 0) {
-    console.error("Missing required variables:");
-    missing.forEach((i) => console.error(`  - ${i.path.join(".")}: ${i.message}`));
+    lines.push("Missing required variables:");
+    missing.forEach((i) => lines.push(`  - ${i.path.join(".")}: ${i.message}`));
   }
-  
   if (invalid.length > 0) {
-    console.error("\nInvalid variable values:");
-    invalid.forEach((i) => console.error(`  - ${i.path.join(".")}: ${i.message}`));
+    lines.push("\nInvalid variable values:");
+    invalid.forEach((i) => lines.push(`  - ${i.path.join(".")}: ${i.message}`));
   }
-  
-  console.error("\nPlease check your .env file or environment configuration.");
-  console.error("See env.example for reference.\n");
+  lines.push("\nPlease check your .env file or environment configuration.");
+  lines.push("See env.example for reference.\n");
+  process.stderr.write(lines.join("\n") + "\n");
   process.exit(1);
 }
 
