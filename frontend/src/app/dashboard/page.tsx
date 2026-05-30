@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import WalletConnect from "@/components/WalletConnect";
 import CollateralCard from "@/components/CollateralCard";
@@ -17,6 +17,12 @@ export default function Dashboard() {
   const [wallet, setWallet] = useState<string | null>(null);
   const [loanId, setLoanId] = useState("");
   const [activeLoanId, setActiveLoanId] = useState("");
+  
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.location.search.includes("mockWallet=true")) {
+      setWallet("GBXXXXXXMOCKWALLETADDRESSXXXXXX");
+    }
+  }, []);
   
   const { showOnboarding, openOnboarding, closeOnboarding } = useOnboarding();
   const { healthFactor } = useHealthFactor(activeLoanId);

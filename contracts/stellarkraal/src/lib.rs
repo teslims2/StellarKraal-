@@ -4,7 +4,7 @@ mod tests;
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env, Symbol,
-    Vec, events,
+    Vec,
 };
 
 // ── Storage keys ────────────────────────────────────────────────────────────
@@ -17,6 +17,9 @@ const TREASURY: Symbol = symbol_short!("TREASURY");
 const ORIG_FEE: Symbol = symbol_short!("ORIGFEE"); // origination fee bps e.g. 50 = 0.5%
 const INT_FEE: Symbol = symbol_short!("INTFEE");   // interest fee bps e.g. 1000 = 10%
 const CLOSE_FACTOR: Symbol = symbol_short!("CLSFACT"); // close factor bps e.g. 5000 = 50%
+const PAUSED: Symbol = symbol_short!("PAUSED");   // pause state flag
+const PAUSE_EXP: Symbol = symbol_short!("PAUSEXP"); // pause expiry timestamp
+const ORACLES: Symbol = symbol_short!("ORACLES");
 
 // ── Errors ───────────────────────────────────────────────────────────────────
 #[contracterror]
@@ -35,6 +38,13 @@ pub enum Error {
     InvalidFeeRate = 10,
     ExceedsCloseFactor = 11,
     InvalidCloseFactor = 12,
+    ContractPaused = 13,
+    OracleAlreadyRegistered = 14,
+    OracleLimitReached = 15,
+    OracleNotFound = 16,
+    InsufficientOracleQuorum = 17,
+    InvalidPrice = 18,
+    NotPaused = 19,
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -73,6 +83,14 @@ pub struct LoanRecord {
 pub struct FeeConfig {
     pub origination_fee_bps: u32,
     pub interest_fee_bps: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleReport {
+    pub median: i128,
+    pub responses: u32,
+    pub flagged_count: u32,
 }
 
 // ── Storage helpers ──────────────────────────────────────────────────────────
@@ -226,7 +244,7 @@ impl StellarKraal {
         if fee > 0 {
             let treasury: Address = env.storage().instance().get(&TREASURY).unwrap();
             token_client.transfer(&env.current_contract_address(), &treasury, &fee);
-            env.events().publish((symbol_short!("FeeCollect"), loan_id), (symbol_short!("originate"), fee));
+            env.events().publish((symbol_short!("FeeCol"), loan_id), (symbol_short!("originate"), fee));
         }
 
         // Disburse net amount to borrower
@@ -279,7 +297,7 @@ impl StellarKraal {
         if interest_fee > 0 {
             let treasury: Address = env.storage().instance().get(&TREASURY).unwrap();
             token_client.transfer(&env.current_contract_address(), &treasury, &interest_fee);
-            env.events().publish((symbol_short!("FeeCollect"), loan_id), (symbol_short!("interest"), interest_fee));
+            env.events().publish((symbol_short!("FeeCol"), loan_id), (symbol_short!("interest"), interest_fee));
         }
 
         loan.outstanding = loan.outstanding.checked_sub(repay_amount).ok_or(Error::InvalidAmount)?;
@@ -437,6 +455,182 @@ impl StellarKraal {
         })
     }
 
+    // ── set_pause_duration ────────────────────────────────────────────────
+    pub fn set_pause_duration(env: Env, admin: Address, duration: u64) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        admin.require_auth();
+        let stored_admin: Address = env.storage().instance().get(&ADMIN).ok_or(Error::NotInitialized)?;
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+        env.storage().instance().set(&symbol_short!("PAUSEDUR"), &duration);
+        Ok(())
+    }
+
+    // ── pause ─────────────────────────────────────────────────────────────
+    pub fn pause(env: Env, admin: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        admin.require_auth();
+        let stored_admin: Address = env.storage().instance().get(&ADMIN).ok_or(Error::NotInitialized)?;
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+        env.storage().instance().set(&PAUSED, &true);
+        let duration: u64 = env.storage().instance().get(&symbol_short!("PAUSEDUR")).unwrap_or(0);
+        if duration > 0 {
+            let expires_at = env.ledger().timestamp().checked_add(duration).ok_or(Error::InvalidAmount)?;
+            env.storage().instance().set(&PAUSE_EXP, &expires_at);
+        } else {
+            env.storage().instance().set(&PAUSE_EXP, &0u64);
+        }
+        Ok(())
+    }
+
+    // ── unpause ───────────────────────────────────────────────────────────
+    pub fn unpause(env: Env, admin: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        admin.require_auth();
+        let stored_admin: Address = env.storage().instance().get(&ADMIN).ok_or(Error::NotInitialized)?;
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+        let paused: bool = env.storage().instance().get(&PAUSED).unwrap_or(false);
+        if !paused {
+            return Err(Error::NotPaused);
+        }
+        env.storage().instance().set(&PAUSED, &false);
+        env.storage().instance().set(&PAUSE_EXP, &0u64);
+        Ok(())
+    }
+
+    // ── add_oracle ────────────────────────────────────────────────────────
+    pub fn add_oracle(env: Env, admin: Address, oracle: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        admin.require_auth();
+        let stored_admin: Address = env.storage().instance().get(&ADMIN).ok_or(Error::NotInitialized)?;
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+        
+        let mut oracles = Self::get_oracles(env.clone());
+        if oracles.contains(&oracle) {
+            return Err(Error::OracleAlreadyRegistered);
+        }
+        if oracles.len() >= 5 {
+            return Err(Error::OracleLimitReached);
+        }
+        oracles.push_back(oracle);
+        env.storage().instance().set(&ORACLES, &oracles);
+        Ok(())
+    }
+
+    // ── remove_oracle ─────────────────────────────────────────────────────
+    pub fn remove_oracle(env: Env, admin: Address, oracle: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        admin.require_auth();
+        let stored_admin: Address = env.storage().instance().get(&ADMIN).ok_or(Error::NotInitialized)?;
+        if admin != stored_admin {
+            return Err(Error::Unauthorized);
+        }
+        
+        let mut oracles = Self::get_oracles(env.clone());
+        let mut index = None;
+        for i in 0..oracles.len() {
+            if oracles.get(i).unwrap() == oracle {
+                index = Some(i);
+                break;
+            }
+        }
+        if let Some(idx) = index {
+            oracles.remove(idx);
+            env.storage().instance().set(&ORACLES, &oracles);
+            Ok(())
+        } else {
+            Err(Error::OracleNotFound)
+        }
+    }
+
+    // ── get_oracles ───────────────────────────────────────────────────────
+    pub fn get_oracles(env: Env) -> Vec<Address> {
+        if let Some(oracles) = env.storage().instance().get::<_, Vec<Address>>(&ORACLES) {
+            oracles
+        } else {
+            let mut oracles = Vec::new(&env);
+            if let Some(oracle) = env.storage().instance().get::<_, Address>(&ORACLE) {
+                oracles.push_back(oracle);
+            }
+            oracles
+        }
+    }
+
+    // ── submit_oracle_prices ──────────────────────────────────────────────
+    pub fn submit_oracle_prices(
+        env: Env,
+        submitter: Address,
+        prices: Vec<i128>,
+    ) -> Result<OracleReport, Error> {
+        Self::assert_initialized(&env)?;
+        submitter.require_auth();
+        
+        let oracles = Self::get_oracles(env.clone());
+        if prices.len() != oracles.len() {
+            return Err(Error::InvalidPrice);
+        }
+        
+        let mut non_zero_prices = Vec::new(&env);
+        let mut responses = 0;
+        for price in prices.iter() {
+            if price > 0 {
+                non_zero_prices.push_back(price);
+                responses += 1;
+            }
+        }
+        
+        let min_quorum = if oracles.len() >= 3 { 3 } else { oracles.len() };
+        if responses < min_quorum {
+            return Err(Error::InsufficientOracleQuorum);
+        }
+        
+        let mut arr = [0i128; 5];
+        for i in 0..responses {
+            arr[i as usize] = non_zero_prices.get(i).unwrap();
+        }
+        
+        // Bubble sort
+        for i in 0..responses {
+            for j in (i+1)..responses {
+                if arr[i as usize] > arr[j as usize] {
+                    let tmp = arr[i as usize];
+                    arr[i as usize] = arr[j as usize];
+                    arr[j as usize] = tmp;
+                }
+            }
+        }
+        
+        let median = if responses % 2 == 1 {
+            arr[(responses / 2) as usize]
+        } else {
+            let mid = (responses / 2) as usize;
+            (arr[mid - 1] + arr[mid]) / 2
+        };
+        
+        let mut flagged_count = 0;
+        for price in prices.iter() {
+            if price > 0 {
+                let diff = if price > median { price - median } else { median - price };
+                if median > 0 && diff * 100 > median * 50 {
+                    flagged_count += 1;
+                }
+            }
+        }
+        
+        Ok(OracleReport {
+            median,
+            responses,
+            flagged_count,
+        })
+    }
+
     // ── internal helpers ──────────────────────────────────────────────────
     fn assert_initialized(env: &Env) -> Result<(), Error> {
         if !env.storage().instance().has(&ADMIN) {
@@ -460,6 +654,9 @@ impl StellarKraal {
         }
         // Check auto-expiry
         let expires_at: u64 = env.storage().instance().get(&PAUSE_EXP).unwrap_or(0);
+        if expires_at == 0 {
+            return true;
+        }
         let now = env.ledger().timestamp();
         now < expires_at
     }

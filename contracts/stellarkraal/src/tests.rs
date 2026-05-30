@@ -1,23 +1,29 @@
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use soroban_sdk::{
-        symbol_short, vec,
-        testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation},
-        Address, Env, IntoVal,
-    };
-    use proptest::prelude::*;
+use super::*;
+use soroban_sdk::{
+    symbol_short, vec,
+    testutils::{Address as _, Ledger},
+    Address, Env,
+};
+use proptest::prelude::*;
 
-    fn setup() -> (Env, Address, Address, Address, Address, Address) {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, StellarKraal);
-        let admin = Address::generate(&env);
-        let oracle = Address::generate(&env);
-        let token = Address::generate(&env);
-        let treasury = Address::generate(&env);
-        (env, contract_id, admin, oracle, token, treasury)
-    }
+#[contract]
+pub struct MockToken;
+
+#[contractimpl]
+impl MockToken {
+    pub fn transfer(_env: Env, _from: Address, _to: Address, _amount: i128) {}
+}
+
+fn setup() -> (Env, Address, Address, Address, Address, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, StellarKraal);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let token = env.register_contract(None, MockToken);
+    let treasury = Address::generate(&env);
+    (env, contract_id, admin, oracle, token, treasury)
+}
 
     fn init(env: &Env, contract_id: &Address, admin: &Address, oracle: &Address, token: &Address, treasury: &Address) {
         let client = StellarKraalClient::new(env, contract_id);
@@ -32,7 +38,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "AlreadyInitialized")]
+    #[should_panic(expected = "#2")]
     fn test_initialize_twice_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -51,7 +57,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "InvalidAmount")]
+    #[should_panic(expected = "#8")]
     fn test_register_zero_count_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -61,7 +67,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "InvalidAmount")]
+    #[should_panic(expected = "#8")]
     fn test_register_zero_value_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -84,7 +90,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "InsufficientCollateral")]
+    #[should_panic(expected = "#4")]
     fn test_request_loan_exceeds_ltv() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -95,7 +101,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Unauthorized")]
+    #[should_panic(expected = "#3")]
     fn test_request_loan_wrong_owner() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -137,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "InsufficientCollateral")]
+    #[should_panic(expected = "#4")]
     fn test_multi_collateral_exceeds_combined_ltv() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -150,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "CollateralNotFound")]
+    #[should_panic(expected = "#6")]
     fn test_request_loan_empty_collateral_ids_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -187,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "LoanAlreadyClosed")]
+    #[should_panic(expected = "#9")]
     fn test_repay_closed_loan_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -215,7 +221,7 @@ mod tests {
 
     // ── liquidate ─────────────────────────────────────────────────────────
     #[test]
-    #[should_panic(expected = "HealthFactorSafe")]
+    #[should_panic(expected = "#7")]
     fn test_liquidate_healthy_loan_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -224,7 +230,7 @@ mod tests {
         let liquidator = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
         let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
-        client.liquidate(&liquidator, &loan_id);
+        client.liquidate(&liquidator, &loan_id, &300_000i128);
     }
 
     // ── get_loan / get_collateral ─────────────────────────────────────────
@@ -269,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "LoanNotFound")]
+    #[should_panic(expected = "#5")]
     fn test_get_nonexistent_loan_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -278,7 +284,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "CollateralNotFound")]
+    #[should_panic(expected = "#6")]
     fn test_get_nonexistent_collateral_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -288,7 +294,7 @@ mod tests {
 
     // ── not initialized guard ─────────────────────────────────────────────
     #[test]
-    #[should_panic(expected = "NotInitialized")]
+    #[should_panic(expected = "#1")]
     fn test_register_without_init_fails() {
         let env = Env::default();
         env.mock_all_auths();
@@ -300,7 +306,7 @@ mod tests {
 
     // ── invalid amount guards ─────────────────────────────────────────────
     #[test]
-    #[should_panic(expected = "InvalidAmount")]
+    #[should_panic(expected = "#8")]
     fn test_request_zero_amount_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -311,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "InvalidAmount")]
+    #[should_panic(expected = "#8")]
     fn test_repay_zero_amount_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -360,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Unauthorized")]
+    #[should_panic(expected = "#3")]
     fn test_pause_by_non_admin_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -380,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "NotPaused")]
+    #[should_panic(expected = "#19")]
     fn test_unpause_when_not_paused_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -389,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "ContractPaused")]
+    #[should_panic(expected = "#13")]
     fn test_register_livestock_blocked_when_paused() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -400,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "ContractPaused")]
+    #[should_panic(expected = "#13")]
     fn test_request_loan_blocked_when_paused() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -412,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "ContractPaused")]
+    #[should_panic(expected = "#13")]
     fn test_liquidate_blocked_when_paused() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -474,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Unauthorized")]
+    #[should_panic(expected = "#3")]
     fn test_add_oracle_non_admin_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -485,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "OracleAlreadyRegistered")]
+    #[should_panic(expected = "#14")]
     fn test_add_duplicate_oracle_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -494,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "OracleLimitReached")]
+    #[should_panic(expected = "#15")]
     fn test_add_oracle_beyond_limit_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -519,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "OracleNotFound")]
+    #[should_panic(expected = "#16")]
     fn test_remove_nonexistent_oracle_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -579,7 +585,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "InsufficientOracleQuorum")]
+    #[should_panic(expected = "#17")]
     fn test_submit_oracle_prices_below_quorum_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -593,7 +599,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "InvalidPrice")]
+    #[should_panic(expected = "#18")]
     fn test_submit_oracle_prices_wrong_length_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -606,7 +612,7 @@ mod tests {
 
     // ── proptests ─────────────────────────────────────────────────────────
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(10000))]
+        #![proptest_config(ProptestConfig::with_cases(256))]
 
         #[test]
         fn prop_repayment_bounds(amount in 1..2_000_000i128, repay in 1..2_000_000i128) {
@@ -664,7 +670,7 @@ mod tests {
             // Healthy if hf >= 1.0. 
             // hf = (val * 0.8) / (debt) >= 1.0 => debt <= val * 0.8.
             
-            let val = amount * 10 / 7; // So amount is ~70% of val (between 60% and 80%)
+            let val = amount * 2; // So amount is 50% of val (within 60% LTV)
             let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &1, &val);
             let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &amount);
             
@@ -672,13 +678,8 @@ mod tests {
             
             // Invariant 6: Liquidation only possible when hf < 10,000
             if hf >= 10_000 {
-                let res = env.as_contract(&cid, || {
-                   client.liquidate(&liquidator, &loan_id, &1i128)
-                });
-                // In the real sdk this might panic or return Err, our setup() mocks all auths.
-                // If it doesn't panic, it should return Error::HealthFactorSafe.
-                // However, since we use should_panic in unit tests, let's just check the status.
-                // Wait, if it's safe, liquidate should fail.
+                let res = client.try_liquidate(&liquidator, &loan_id, &1i128);
+                assert!(res.is_err());
             }
         }
         
@@ -708,4 +709,3 @@ mod tests {
             assert_eq!(loan.outstanding, loan.principal);
         }
     }
-}

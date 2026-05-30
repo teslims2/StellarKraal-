@@ -7,7 +7,7 @@
     --color-bg: #FDF6EC;
     --color-surface: #ffffff;
     --color-text: #4A2C0A;
-    --color-text-muted: rgba(74, 44, 10, 0.6);
+    --color-text-muted: rgba(74, 44, 10, 0.75);
     --color-border: rgba(74, 44, 10, 0.3);
   }
 
@@ -15,7 +15,7 @@
     --color-bg: #1a1008;
     --color-surface: #2a1a0e;
     --color-text: #f5e6d0;
-    --color-text-muted: rgba(245, 230, 208, 0.6);
+    --color-text-muted: rgba(245, 230, 208, 0.75);
     --color-border: rgba(245, 230, 208, 0.2);
   }
 

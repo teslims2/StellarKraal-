@@ -1,11 +1,17 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import WalletConnect from "@/components/WalletConnect";
 import CollateralRegistrationForm from "@/components/CollateralRegistrationForm";
 
 export default function Borrow() {
   const [wallet, setWallet] = useState<string | null>(null);
   const [collateralId, setCollateralId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.location.search.includes("mockWallet=true")) {
+      setWallet("GBXXXXXXMOCKWALLETADDRESSXXXXXX");
+    }
+  }, []);
 
   return (
     <main className="max-w-lg mx-auto px-4 py-10">

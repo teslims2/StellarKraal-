@@ -19,6 +19,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.8.5",
+    "@playwright/test": "^1.60.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^15.0.6",
     "@types/node": "^20.12.7",
@@ -41,7 +42,11 @@
       "@testing-library/jest-dom",
       "<rootDir>/src/__tests__/setup.ts"
     ],
-    "testMatch": ["**/__tests__/**/*.tsx", "**/*.test.tsx", "**/*.test.ts"],
+    "testMatch": [
+      "**/__tests__/**/*.tsx",
+      "**/*.test.tsx",
+      "**/*.test.ts"
+    ],
     "moduleNameMapper": {
       "^@/(.*)$": "<rootDir>/src/$1"
     },
