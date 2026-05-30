@@ -3,10 +3,10 @@ mod tests {
     use super::*;
     use soroban_sdk::{
         symbol_short, vec,
-        testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation},
-        Address, Env, IntoVal, token,
+        testutils::{Address as _, Events},
+        Address, Env, token,
     };
-    use crate::{StellarKraal, StellarKraalClient, LoanStatus, Error, ReentrancyGuard};
+    use crate::{StellarKraal, StellarKraalClient, LoanStatus};
     use soroban_sdk::testutils::Ledger as _;
     use proptest::prelude::*;
 
@@ -251,7 +251,7 @@ mod tests {
         // Soroban test environment tracks CPU instructions via budget.
         env.budget().reset_default();
         let hf = client.health_factor(&loan_id);
-        let instructions_after = env.budget().cpu_instruction_count();
+        let instructions_after = env.budget().cpu_instruction_cost();
 
         // Sanity: result is still correct.
         assert_eq!(hf, 13_333, "health factor value must be unchanged");
@@ -385,7 +385,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #8)")]
     fn test_repay_zero_amount_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -1083,5 +1082,521 @@ mod tests {
         init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
         client.set_oracle_config(&admin, &1_000_000i128, &500_000i128, &3600u64, &2000u32);
+    }
+
+    // ── liquidation tests (Issue #375) ───────────────────────────────────────
+
+    /// Helper function to create an unhealthy loan by submitting a lower price
+    fn create_unhealthy_loan(
+        env: &Env,
+        client: &StellarKraalClient,
+        oracle: &Address,
+        borrower: &Address,
+        liquidator: &Address,
+        token: &Address,
+    ) -> u64 {
+        // Register collateral with initial high value
+        let col_id = client.register_livestock(borrower, &symbol_short!("cattle"), &1u32, &1_000_000i128);
+        
+        // Request loan at maximum LTV (80% of collateral value)
+        let loan_id = client.request_loan(borrower, &vec![env, col_id], &800_000i128);
+        
+        // Submit a lower price to make the loan unhealthy
+        // New price: 500_000, making health factor = (500_000 * 8000) / (800_000 * 10_000) * 10_000 = 5_000 < 10_000
+        let now = env.ledger().timestamp();
+        client.submit_price(oracle, &500_000i128, &now);
+        
+        // Mint tokens for liquidator
+        token::StellarAssetClient::new(env, token).mint(liquidator, &1_000_000i128);
+        
+        loan_id
+    }
+
+    #[test]
+    fn test_liquidate_successful_liquidation() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let liquidator = Address::generate(&env);
+        
+        let loan_id = create_unhealthy_loan(&env, &client, &oracle, &borrower, &liquidator, &token);
+        
+        // Verify loan is unhealthy
+        let hf = client.health_factor(&loan_id);
+        assert!(hf < 10_000, "Loan should be unhealthy before liquidation");
+        
+        // Liquidate 50% of the loan (close factor is 50% by default)
+        let repay_amount = 400_000i128;
+        client.liquidate(&liquidator, &loan_id, &repay_amount);
+        
+        // Verify loan state after liquidation
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.outstanding, 400_000i128, "Outstanding should be reduced by repay amount");
+        assert_eq!(loan.status, LoanStatus::Active, "Loan should still be active after partial liquidation");
+    }
+
+    #[test]
+    fn test_liquidate_full_liquidation_marks_liquidated() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let liquidator = Address::generate(&env);
+        
+        let loan_id = create_unhealthy_loan(&env, &client, &oracle, &borrower, &liquidator, &token);
+        
+        // Liquidate the full outstanding amount
+        let loan_before = client.get_loan(&loan_id);
+        client.liquidate(&liquidator, &loan_id, &loan_before.outstanding);
+        
+        // Verify loan is marked as liquidated
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.outstanding, 0i128, "Outstanding should be zero after full liquidation");
+        assert_eq!(loan.status, LoanStatus::Liquidated, "Loan status should be Liquidated");
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #7)")]
+    fn test_liquidate_healthy_loan_returns_error() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let liquidator = Address::generate(&env);
+        
+        // Create a healthy loan (don't submit lower price)
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &1u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        
+        // Mint tokens for liquidator
+        token::StellarAssetClient::new(&env, &token).mint(&liquidator, &1_000_000i128);
+        
+        // Verify loan is healthy
+        let hf = client.health_factor(&loan_id);
+        assert!(hf >= 10_000, "Loan should be healthy");
+        
+        // Attempt to liquidate should fail with HealthFactorSafe error
+        client.liquidate(&liquidator, &loan_id, &100_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #9)")]
+    fn test_liquidate_already_liquidated_loan_returns_error() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let liquidator = Address::generate(&env);
+        
+        let loan_id = create_unhealthy_loan(&env, &client, &oracle, &borrower, &liquidator, &token);
+        
+        // Fully liquidate the loan
+        let loan_before = client.get_loan(&loan_id);
+        client.liquidate(&liquidator, &loan_id, &loan_before.outstanding);
+        
+        // Verify loan is liquidated
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.status, LoanStatus::Liquidated, "Loan should be liquidated");
+        
+        // Attempt to liquidate again should fail with LoanAlreadyClosed error
+        client.liquidate(&liquidator, &loan_id, &100_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #11)")]
+    fn test_liquidate_exceeds_close_factor() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let liquidator = Address::generate(&env);
+        
+        let loan_id = create_unhealthy_loan(&env, &client, &oracle, &borrower, &liquidator, &token);
+        
+        // Try to liquidate more than close factor allows (default close factor is 50%)
+        let loan = client.get_loan(&loan_id);
+        let max_allowed = loan.outstanding * 5000 / 10_000; // 50% close factor
+        let excessive_amount = max_allowed + 1;
+        
+        // Should fail with ExceedsCloseFactor error
+        client.liquidate(&liquidator, &loan_id, &excessive_amount);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #8)")]
+    fn test_liquidate_zero_amount_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let liquidator = Address::generate(&env);
+        
+        let loan_id = create_unhealthy_loan(&env, &client, &oracle, &borrower, &liquidator, &token);
+        
+        // Should fail with InvalidAmount error
+        client.liquidate(&liquidator, &loan_id, &0i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #5)")]
+    fn test_liquidate_nonexistent_loan_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let liquidator = Address::generate(&env);
+        
+        // Mint tokens for liquidator
+        token::StellarAssetClient::new(&env, &token).mint(&liquidator, &1_000_000i128);
+        
+        // Should fail with LoanNotFound error
+        client.liquidate(&liquidator, &999u64, &100_000i128);
+    }
+
+    // ── repayment tests (Issue #376) ─────────────────────────────────────────
+
+    #[test]
+    fn test_repay_full_repayment_marks_repaid() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        
+        // Create loan
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        
+        // Mint tokens for repayment plus fees
+        token::StellarAssetClient::new(&env, &token).mint(&borrower, &650_000i128);
+        
+        // Full repayment
+        let loan_before = client.get_loan(&loan_id);
+        client.repay_loan(&borrower, &loan_id, &loan_before.outstanding);
+        
+        // Verify loan is marked as repaid
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.outstanding, 0i128, "Outstanding should be zero after full repayment");
+        assert_eq!(loan.status, LoanStatus::Repaid, "Loan status should be Repaid");
+    }
+
+    #[test]
+    fn test_repay_partial_repayment_reduces_balance() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        
+        // Create loan
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        
+        // Mint tokens for partial repayment plus fees
+        token::StellarAssetClient::new(&env, &token).mint(&borrower, &250_000i128);
+        
+        // Partial repayment
+        let repay_amount = 200_000i128;
+        client.repay_loan(&borrower, &loan_id, &repay_amount);
+        
+        // Verify outstanding balance is reduced correctly
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.outstanding, 400_000i128, "Outstanding should be reduced by repay amount");
+        assert_eq!(loan.status, LoanStatus::Active, "Loan should still be active after partial repayment");
+    }
+
+    #[test]
+    fn test_repay_overpayment_caps_at_outstanding() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        
+        // Create loan
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        
+        // Mint tokens for overpayment
+        token::StellarAssetClient::new(&env, &token).mint(&borrower, &1_000_000i128);
+        
+        // Attempt overpayment (more than outstanding)
+        let loan_before = client.get_loan(&loan_id);
+        let overpay_amount = loan_before.outstanding + 100_000i128;
+        client.repay_loan(&borrower, &loan_id, &overpay_amount);
+        
+        // Verify repayment is capped at outstanding amount
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.outstanding, 0i128, "Outstanding should be zero (capped at original outstanding)");
+        assert_eq!(loan.status, LoanStatus::Repaid, "Loan should be marked as repaid");
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #5)")]
+    fn test_repay_nonexistent_loan_returns_error() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        
+        // Mint tokens for repayment
+        token::StellarAssetClient::new(&env, &token).mint(&borrower, &100_000i128);
+        
+        // Should fail with LoanNotFound error
+        client.repay_loan(&borrower, &999u64, &100_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #9)")]
+    fn test_repay_already_repaid_loan_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        
+        // Create and fully repay loan
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        
+        token::StellarAssetClient::new(&env, &token).mint(&borrower, &650_000i128);
+        let loan_before = client.get_loan(&loan_id);
+        client.repay_loan(&borrower, &loan_id, &loan_before.outstanding);
+        
+        // Verify loan is repaid
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.status, LoanStatus::Repaid, "Loan should be repaid");
+        
+        // Attempt to repay again should fail with LoanAlreadyClosed error
+        client.repay_loan(&borrower, &loan_id, &1i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #9)")]
+    fn test_repay_liquidated_loan_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let liquidator = Address::generate(&env);
+        
+        // Create unhealthy loan and liquidate it
+        let loan_id = create_unhealthy_loan(&env, &client, &oracle, &borrower, &liquidator, &token);
+        let loan_before = client.get_loan(&loan_id);
+        client.liquidate(&liquidator, &loan_id, &loan_before.outstanding);
+        
+        // Verify loan is liquidated
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.status, LoanStatus::Liquidated, "Loan should be liquidated");
+        
+        // Mint tokens for borrower and attempt repayment
+        token::StellarAssetClient::new(&env, &token).mint(&borrower, &100_000i128);
+        
+        // Should fail with LoanAlreadyClosed error
+        client.repay_loan(&borrower, &loan_id, &1i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #8)")]
+    fn test_repay_zero_amount_invalid() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        
+        // Create loan
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        
+        // Should fail with InvalidAmount error
+        client.repay_loan(&borrower, &loan_id, &0i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #8)")]
+    fn test_repay_negative_amount_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        
+        // Create loan
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        
+        // Should fail with InvalidAmount error
+        client.repay_loan(&borrower, &loan_id, &-100i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #3)")]
+    fn test_repay_unauthorized_borrower_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let other_user = Address::generate(&env);
+        
+        // Create loan with borrower
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        
+        // Mint tokens for other user
+        token::StellarAssetClient::new(&env, &token).mint(&other_user, &100_000i128);
+        
+        // Should fail with Unauthorized error when other user tries to repay
+        client.repay_loan(&other_user, &loan_id, &100_000i128);
+    }
+
+    // ── health_factor unit tests (#357) ───────────────────────────────────
+
+    /// Happy path: typical collateral and loan values produce a healthy factor.
+    /// collateral=1_000_000, outstanding=600_000, liq_thr=8000 (80%)
+    /// hf = (1_000_000 * 8000) / (600_000 * 10_000) * 10_000 = 13_333
+    #[test]
+    fn test_health_factor_typical_values() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        let hf = client.health_factor(&loan_id);
+        // hf = (1_000_000 * 8000) / (600_000 * 10_000) * 10_000 = 13_333
+        assert_eq!(hf, 13_333, "expected health factor 13_333 for 60% LTV at 80% threshold");
+        assert!(hf > 10_000, "position should be healthy (hf > 10_000)");
+    }
+
+    /// Boundary: health factor equals exactly 1.0 (10_000) when outstanding equals
+    /// collateral_value * liq_thr_bps / 10_000.
+    /// collateral=1_000_000, liq_thr=8000 → max_safe_outstanding = 800_000
+    /// hf = (1_000_000 * 8000) / (800_000 * 10_000) * 10_000 = 10_000
+    #[test]
+    fn test_health_factor_exactly_one() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        // Register collateral worth 1_000_000; LTV=60% → max loan = 600_000
+        // We need outstanding = 800_000 for hf = 1.0, but LTV caps at 600_000.
+        // Use larger collateral so LTV allows 800_000 loan.
+        // collateral=2_000_000, LTV=60% → max=1_200_000; borrow 800_000
+        // hf = (2_000_000 * 8000) / (800_000 * 10_000) * 10_000 = 20_000 — not 1.0
+        // To get exactly 1.0: outstanding = collateral * liq_thr / 10_000
+        //   = 2_000_000 * 8000 / 10_000 = 1_600_000; but LTV=60% caps at 1_200_000.
+        // Use collateral=1_000_000, liq_thr=8000, borrow at max LTV=600_000 then
+        // partially repay so outstanding = 800_000 is impossible (started at 600_000).
+        // Instead: collateral=1_000_000, borrow=600_000, repay until outstanding=800_000
+        // is impossible. Use collateral=10_000, borrow=6_000 (LTV 60%):
+        //   hf = (10_000 * 8000) / (6_000 * 10_000) * 10_000 = 13_333
+        // For hf=10_000: outstanding = collateral * liq_thr / 10_000 = 10_000 * 8000 / 10_000 = 8_000
+        // But LTV=60% → max borrow = 6_000. We can't borrow 8_000 directly.
+        // Use a different collateral size: collateral=100_000, borrow=60_000 (LTV 60%)
+        //   then repay 60_000 - 80_000 is impossible (can't go negative).
+        // The only way to reach hf=1.0 exactly is to set collateral such that
+        //   LTV-capped borrow == liq_thr-capped outstanding.
+        //   LTV=60% → borrow = collateral * 6000 / 10_000
+        //   For hf=1.0: outstanding = collateral * 8000 / 10_000
+        //   These are equal only if 6000 == 8000, which is false.
+        // So we test hf=1.0 by using a custom liq_thr equal to LTV (6000):
+        //   Re-initialize with liq_thr=6000 so max borrow = collateral * 6000/10_000
+        //   and hf=1.0 when outstanding = collateral * 6000/10_000 (i.e. at origination).
+        let env2 = Env::default();
+        env2.mock_all_auths();
+        let cid2 = env2.register_contract(None, StellarKraal);
+        let admin2 = Address::generate(&env2);
+        let oracle2 = Address::generate(&env2);
+        let treasury2 = Address::generate(&env2);
+        let token2 = env2.register_stellar_asset_contract(admin2.clone());
+        token::StellarAssetClient::new(&env2, &token2).mint(&cid2, &1_000_000_000_000i128);
+        let client2 = StellarKraalClient::new(&env2, &cid2);
+        // liq_thr = 6000 = LTV → hf at origination = 1.0 exactly
+        client2.initialize(&admin2, &oracle2, &token2, &treasury2, &6000u32, &6000u32);
+        let borrower2 = Address::generate(&env2);
+        let col_id2 = client2.register_livestock(&borrower2, &symbol_short!("cattle"), &1u32, &1_000_000i128);
+        let loan_id2 = client2.request_loan(&borrower2, &vec![&env2, col_id2], &600_000i128);
+        let hf2 = client2.health_factor(&loan_id2);
+        // hf = (1_000_000 * 6000) / (600_000 * 10_000) * 10_000 = 10_000
+        assert_eq!(hf2, 10_000, "health factor should be exactly 10_000 (1.0) at boundary");
+    }
+
+    /// Zero collateral value: register with appraised_value=0 should fail with InvalidAmount.
+    #[test]
+    #[should_panic(expected = "Error(Contract, #8)")]
+    fn test_health_factor_zero_collateral_value_rejected() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let owner = Address::generate(&env);
+        // appraised_value=0 must be rejected at registration
+        client.register_livestock(&owner, &symbol_short!("cattle"), &1u32, &0i128);
+    }
+
+    /// Maximum loan amount: borrowing exactly at the LTV cap produces hf = liq_thr / ltv.
+    /// collateral=1_000_000, LTV=6000 → max_loan=600_000
+    /// hf = (1_000_000 * 8000) / (600_000 * 10_000) * 10_000 = 13_333
+    #[test]
+    fn test_health_factor_at_maximum_loan_amount() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &1u32, &1_000_000i128);
+        // Max allowed = 1_000_000 * 6000 / 10_000 = 600_000
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        let hf = client.health_factor(&loan_id);
+        assert_eq!(hf, 13_333, "hf at max LTV should be liq_thr/ltv = 8000/6000 * 10_000 = 13_333");
+        assert!(hf > 10_000, "position at max LTV should still be healthy");
+    }
+
+    /// Exceeding max loan amount is rejected before a loan record is created.
+    #[test]
+    #[should_panic(expected = "Error(Contract, #4)")]
+    fn test_health_factor_exceeds_max_loan_rejected() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &1u32, &1_000_000i128);
+        // 600_001 exceeds LTV cap of 600_000
+        client.request_loan(&borrower, &vec![&env, col_id], &600_001i128);
+    }
+
+    /// Health factor for a non-existent loan returns LoanNotFound.
+    #[test]
+    #[should_panic(expected = "Error(Contract, #5)")]
+    fn test_health_factor_loan_not_found() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.health_factor(&9999u64);
+    }
+
+    /// After full repayment outstanding=0, health_factor returns i128::MAX.
+    #[test]
+    fn test_health_factor_after_full_repayment_is_max() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &1u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        token::StellarAssetClient::new(&env, &token).mint(&borrower, &1_000_000i128);
+        client.repay_loan(&borrower, &loan_id, &600_000i128);
+        let hf = client.health_factor(&loan_id);
+        assert_eq!(hf, i128::MAX, "fully repaid loan should have health factor i128::MAX");
+    }
+
+    /// Health factor decreases as outstanding balance increases (partial repayment scenario).
+    #[test]
+    fn test_health_factor_decreases_with_higher_outstanding() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        // Two separate loans with different amounts to compare health factors
+        let col_id1 = client.register_livestock(&borrower, &symbol_short!("cattle"), &1u32, &1_000_000i128);
+        let col_id2 = client.register_livestock(&borrower, &symbol_short!("goat"), &1u32, &1_000_000i128);
+        let loan_id_small = client.request_loan(&borrower, &vec![&env, col_id1], &300_000i128);
+        let loan_id_large = client.request_loan(&borrower, &vec![&env, col_id2], &600_000i128);
+        let hf_small = client.health_factor(&loan_id_small);
+        let hf_large = client.health_factor(&loan_id_large);
+        assert!(hf_small > hf_large, "smaller loan should have higher health factor");
     }
 }

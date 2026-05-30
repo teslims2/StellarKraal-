@@ -71,7 +71,7 @@ async function buildContractTx(
   method: string,
   args: xdr.ScVal[]
 ): Promise<string> {
-  const account = await rpcClient.getAccount(sourceAddress);
+  const account = await rpcClient.getAccount(sourceAddress) as any;
   const contract = new Contract(CONTRACT_ID);
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
@@ -80,7 +80,7 @@ async function buildContractTx(
     .addOperation(contract.call(method, ...args))
     .setTimeout(30)
     .build();
-  const prepared = await rpcClient.prepareTransaction(tx);
+  const prepared = await rpcClient.prepareTransaction(tx) as any;
   return prepared.toXDR();
 }
 
@@ -131,7 +131,7 @@ v1Router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const validation = registerCollateralSchema.safeParse(req.body);
     if (!validation.success) {
-      return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
+      return res.status(400).json({ error: "Validation failed", details: validation.error.issues });
     }
     const { owner, animal_type, count, appraised_value } = validation.data;
     const xdrTx = await buildContractTx(owner, "register_livestock", [
@@ -152,7 +152,7 @@ v1Router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const validation = loanRequestSchema.safeParse(req.body);
     if (!validation.success) {
-      return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
+      return res.status(400).json({ error: "Validation failed", details: validation.error.issues });
     }
     const { borrower, collateral_ids, amount } = validation.data;
     const idsScVal = xdr.ScVal.scvVec(collateral_ids.map(id => nativeToScVal(BigInt(id), { type: "u64" })));
@@ -174,7 +174,7 @@ v1Router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const validation = loanRepaySchema.safeParse(req.body);
     if (!validation.success) {
-      return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
+      return res.status(400).json({ error: "Validation failed", details: validation.error.issues });
     }
     const { borrower, loan_id, amount } = validation.data;
     const xdrTx = await buildContractTx(borrower, "repay_loan", [
@@ -195,7 +195,7 @@ v1Router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const validation = loanLiquidateSchema.safeParse(req.body);
     if (!validation.success) {
-      return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
+      return res.status(400).json({ error: "Validation failed", details: validation.error.issues });
     }
     const { liquidator, loan_id, repay_amount } = validation.data;
     const xdrTx = await buildContractTx(liquidator, "liquidate", [
@@ -214,12 +214,12 @@ v1Router.get("/loan/:id", async (req: Request, res: Response, next: NextFunction
     const contract = new Contract(CONTRACT_ID);
     const account = await rpcClient.getAccount(
       "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN"
-    );
+    ) as any;
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
       networkPassphrase: NETWORK_PASSPHRASE,
     })
-      .addOperation(contract.call("get_loan", nativeToScVal(BigInt(req.params.id), { type: "u64" })))
+      .addOperation(contract.call("get_loan", nativeToScVal(BigInt(req.params.id as string), { type: "u64" })))
       .setTimeout(30)
       .build();
     const result = await rpcClient.simulateTransaction(tx);
@@ -235,13 +235,13 @@ v1Router.get("/health/:loanId", async (req: Request, res: Response, next: NextFu
     const contract = new Contract(CONTRACT_ID);
     const account = await rpcClient.getAccount(
       "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN"
-    );
+    ) as any;
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
       networkPassphrase: NETWORK_PASSPHRASE,
     })
       .addOperation(
-        contract.call("health_factor", nativeToScVal(BigInt(req.params.loanId), { type: "u64" }))
+        contract.call("health_factor", nativeToScVal(BigInt(req.params.loanId as string), { type: "u64" }))
       )
       .setTimeout(30)
       .build();
@@ -256,7 +256,7 @@ v1Router.get("/health/:loanId", async (req: Request, res: Response, next: NextFu
 v1Router.get("/loans", asyncHandler(async (req: Request, res: Response) => {
   const validation = paginationSchema.safeParse(req.query);
   if (!validation.success) {
-    return res.status(400).json({ error: "Invalid pagination parameters", details: validation.error.errors });
+    return res.status(400).json({ error: "Invalid pagination parameters", details: validation.error.issues });
   }
 
   const { page, pageSize } = validation.data;
@@ -372,7 +372,7 @@ type UserSettings = z.infer<typeof settingsSchema> & {
 const settingsStore = new Map<string, UserSettings>();
 
 v1Router.get("/settings/:wallet", (req: Request, res: Response) => {
-  const wallet = req.params.wallet;
+  const wallet = req.params.wallet as string;
   const existing = settingsStore.get(wallet);
   if (!existing) {
     // Return defaults for new users
@@ -388,10 +388,10 @@ v1Router.get("/settings/:wallet", (req: Request, res: Response) => {
 });
 
 v1Router.put("/settings/:wallet", (req: Request, res: Response) => {
-  const wallet = req.params.wallet;
+  const wallet = req.params.wallet as string;
   const validation = settingsSchema.safeParse(req.body);
   if (!validation.success) {
-    return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
+    return res.status(400).json({ error: "Validation failed", details: validation.error.issues });
   }
   const existing = settingsStore.get(wallet) ?? {
     walletAddress: wallet,

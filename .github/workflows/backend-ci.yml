@@ -27,6 +27,7 @@ jobs:
 
       - run: npm ci
       - run: npm run lint
+      - run: npm run format:check
 
   test:
     name: Test & Coverage
@@ -47,6 +48,7 @@ jobs:
       - name: Run tests with coverage
         env:
           NODE_ENV: test
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
         run: npm run test:coverage -- --coverageReporters=json-summary --coverageReporters=text
 
       - name: Upload coverage artifact
@@ -56,12 +58,3 @@ jobs:
           name: backend-coverage
           path: backend/coverage/
           retention-days: 7
-
-      - name: Post coverage comment
-        if: always() && github.event_name == 'pull_request'
-        uses: ArtiomTr/jest-coverage-report-action@v2
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          coverage-file: backend/coverage/coverage-summary.json
-          base-coverage-file: backend/coverage/coverage-summary.json
-          working-directory: backend

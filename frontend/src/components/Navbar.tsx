@@ -1,48 +1,61 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import ThemeToggle from "./ThemeToggle";
 
-const NAV_LINKS = [
-  { href: "/", label: "Home" },
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/borrow", label: "Borrow" },
-];
+const NAV_SECTIONS = [
+  { href: "/dashboard", label: "Dashboard", icon: "⊞" },
+  { href: "/loans", label: "Loans", icon: "📋" },
+  { href: "/collateral", label: "Collateral", icon: "🐄" },
+  { href: "/settings", label: "Settings", icon: "⚙" },
+] as const;
 
 export default function Navbar() {
   const [open, setOpen] = useState(false);
+  const pathname = usePathname();
 
   return (
     <nav
+      aria-label="Main navigation"
       className="border-b px-4"
       style={{
         backgroundColor: "var(--color-nav-bg)",
         borderColor: "var(--color-nav-border)",
       }}
     >
-      <div className="max-w-4xl mx-auto flex items-center justify-between h-14">
-        {/* Logo / brand */}
+      <div className="max-w-5xl mx-auto flex items-center justify-between h-14">
+        {/* Brand */}
         <Link
           href="/"
-          className="font-bold text-lg min-h-[44px] flex items-center"
+          className="font-bold text-lg flex items-center min-h-[44px]"
           style={{ color: "var(--color-text)" }}
         >
           🐄 StellarKraal
         </Link>
 
         {/* Desktop nav */}
-        <ul className="hidden md:flex items-center gap-6">
-          {NAV_LINKS.map(({ href, label }) => (
-            <li key={href}>
-              <Link
-                href={href}
-                className="font-medium transition min-h-[44px] min-w-[44px] flex items-center hover:opacity-70"
-                style={{ color: "var(--color-text)" }}
-              >
-                {label}
-              </Link>
-            </li>
-          ))}
+        <ul className="hidden md:flex items-center gap-1" role="list">
+          {NAV_SECTIONS.map(({ href, label, icon }) => {
+            const active = pathname === href || pathname.startsWith(href + "/");
+            return (
+              <li key={href}>
+                <Link
+                  href={href}
+                  aria-current={active ? "page" : undefined}
+                  className={`flex items-center gap-1.5 px-3 min-h-[44px] rounded-lg font-medium transition ${
+                    active
+                      ? "bg-[var(--color-border)] text-[var(--color-text)]"
+                      : "hover:bg-[var(--color-border)] hover:opacity-90"
+                  }`}
+                  style={{ color: "var(--color-text)" }}
+                >
+                  <span aria-hidden="true">{icon}</span>
+                  {label}
+                </Link>
+              </li>
+            );
+          })}
         </ul>
 
         {/* Right side: theme toggle + hamburger */}
@@ -50,13 +63,13 @@ export default function Navbar() {
           {/* Theme toggle — visible on all screen sizes */}
           <ThemeToggle />
 
-          {/* Hamburger button — mobile only */}
+          {/* Hamburger — mobile only */}
           <button
             aria-label={open ? "Close menu" : "Open menu"}
             aria-expanded={open}
-            onClick={() => setOpen((prev) => !prev)}
-            className="md:hidden flex flex-col justify-center items-center gap-1.5 min-h-[44px] min-w-[44px] rounded-lg transition"
-            style={{ color: "var(--color-text)" }}
+            aria-controls="mobile-menu"
+            onClick={() => setOpen((v) => !v)}
+            className="md:hidden flex flex-col justify-center items-center gap-1.5 min-h-[44px] min-w-[44px] rounded-lg transition hover:bg-[var(--color-border)]"
           >
             <span
               className={`block w-6 h-0.5 transition-transform duration-200 ${open ? "translate-y-2 rotate-45" : ""}`}
@@ -77,21 +90,32 @@ export default function Navbar() {
       {/* Mobile drawer */}
       {open && (
         <ul
-          className="md:hidden flex flex-col py-2 border-t"
+          id="mobile-menu"
+          className="md:hidden flex flex-col border-t py-2"
           style={{ borderColor: "var(--color-nav-border)" }}
+          role="list"
         >
-          {NAV_LINKS.map(({ href, label }) => (
-            <li key={href}>
-              <Link
-                href={href}
-                onClick={() => setOpen(false)}
-                className="block px-4 font-medium transition min-h-[44px] flex items-center hover:opacity-70"
-                style={{ color: "var(--color-text)" }}
-              >
-                {label}
-              </Link>
-            </li>
-          ))}
+          {NAV_SECTIONS.map(({ href, label, icon }) => {
+            const active = pathname === href || pathname.startsWith(href + "/");
+            return (
+              <li key={href}>
+                <Link
+                  href={href}
+                  aria-current={active ? "page" : undefined}
+                  onClick={() => setOpen(false)}
+                  className={`flex items-center gap-2 px-4 min-h-[44px] font-medium transition ${
+                    active
+                      ? "bg-[var(--color-border)] text-[var(--color-text)]"
+                      : "hover:bg-[var(--color-border)]"
+                  }`}
+                  style={{ color: "var(--color-text)" }}
+                >
+                  <span aria-hidden="true">{icon}</span>
+                  {label}
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       )}
     </nav>
