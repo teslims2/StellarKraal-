@@ -31,6 +31,7 @@ export default function CollateralCard({ walletAddress }: Props) {
       header={<h2 className={`text-xl font-semibold ${colors.text.primary}`}>Loan Lookup</h2>}
     >
       <div className="flex gap-2">
+        <label htmlFor="lookup-loan-id" className="sr-only">Loan ID</label>
         <input
           className={`${colors.form.input} rounded-lg px-3 py-2 flex-1 ${colors.text.primary} ${colors.form.placeholder}`}
           placeholder="Loan ID"
