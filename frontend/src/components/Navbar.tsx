@@ -42,13 +42,9 @@ export default function Navbar() {
               <li key={href}>
                 <Link
                   href={href}
-                  aria-current={active ? "page" : undefined}
-                  className={`flex items-center gap-1.5 px-3 min-h-[44px] rounded-lg font-medium transition ${
-                    active
-                      ? "bg-[var(--color-border)] text-[var(--color-text)]"
-                      : "hover:bg-[var(--color-border)] hover:opacity-90"
-                  }`}
-                  style={{ color: "var(--color-text)" }}
+                  aria-current={active ? 'page' : undefined}
+                  className={`flex items-center gap-1.5 px-3 min-h-[44px] rounded-lg transition
+                    ${active ? 'bg-brown text-cream font-bold' : 'text-brown/70 font-medium hover:text-brown hover:bg-brown/5'}`}
                 >
                   <span aria-hidden="true">{icon}</span>
                   {label}
@@ -109,6 +105,8 @@ export default function Navbar() {
                       : "hover:bg-[var(--color-border)]"
                   }`}
                   style={{ color: "var(--color-text)" }}
+                  className={`flex items-center gap-2 px-4 min-h-[44px] transition
+                    ${active ? 'bg-brown text-cream font-bold' : 'text-brown/70 font-medium hover:bg-brown/5 hover:text-brown'}`}
                 >
                   <span aria-hidden="true">{icon}</span>
                   {label}

@@ -1,10 +1,13 @@
-"use client";
-import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import SearchFilterBar from "@/components/SearchFilterBar";
-import PageTransition from "@/components/PageTransition";
-import Card from "@/components/Card";
-import SkeletonCollateralCard from "@/components/SkeletonCollateralCard";
+'use client';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import SearchFilterBar from '@/components/SearchFilterBar';
+import PageTransition from '@/components/PageTransition';
+import Card from '@/components/Card';
+import SkeletonCollateralCard from '@/components/SkeletonCollateralCard';
+import EmptyState from '@/components/EmptyState';
+import Pagination from '@/components/Pagination';
+import { usePagination } from '@/hooks/usePagination';
 
 interface Collateral {
   id: string;
@@ -47,6 +50,9 @@ function CollateralListContent() {
     return matchesQuery && matchesType;
   });
 
+  const { page, limit, totalPages, setPage, setLimit, slice } = usePagination(filtered.length);
+  const paginated = slice(filtered);
+
   return (
     <div className="space-y-4">
       <SearchFilterBar
@@ -64,30 +70,47 @@ function CollateralListContent() {
           ))}
         </ul>
       ) : filtered.length === 0 ? (
-        <p className="text-brown-500 text-sm">No collateral matches your filters.</p>
+        <EmptyState
+          icon="🐄"
+          heading={q || types.length > 0 ? 'No Collateral Found' : 'No Collateral Registered'}
+          message={
+            q || types.length > 0
+              ? 'Try adjusting your search or filters to find collateral.'
+              : 'No collateral has been registered yet. Register your livestock to get started.'
+          }
+        />
       ) : (
-        <ul className="space-y-2">
-          {filtered.map((col) => (
-            <li key={col.id}>
-              <Card>
-                <div className="flex justify-between items-center">
-                  <div>
-                    <p className="font-semibold text-brown-700 text-sm capitalize">
-                      {col.animal_type} — {col.count} head
-                    </p>
-                    <p className="text-xs text-brown-500 truncate max-w-xs">{col.owner}</p>
+        <>
+          <ul className="space-y-2">
+            {paginated.map((col) => (
+              <li key={col.id}>
+                <Card>
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <p className="font-semibold text-brown-700 text-sm capitalize">
+                        {col.animal_type} — {col.count} head
+                      </p>
+                      <p className="text-xs text-brown-500 truncate max-w-xs">{col.owner}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-medium text-brown-700">
+                        {col.appraised_value.toLocaleString()}
+                      </p>
+                      <p className="text-xs text-brown-500">ID: {col.id}</p>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-brown-700">
-                      {col.appraised_value.toLocaleString()}
-                    </p>
-                    <p className="text-xs text-brown-500">ID: {col.id}</p>
-                  </div>
-                </div>
-              </Card>
-            </li>
-          ))}
-        </ul>
+                </Card>
+              </li>
+            ))}
+          </ul>
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            limit={limit}
+            onPageChange={setPage}
+            onLimitChange={setLimit}
+          />
+        </>
       )}
     </div>
   );
