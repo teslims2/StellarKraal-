@@ -12,6 +12,7 @@ import {
   restoreLoan,
   softDeleteLoan,
 } from "./db/store";
+import { getMigrationStatus } from "./db/migrationRunner";
 import { corsMiddleware } from "./middleware/cors";
 import { correlationMiddleware } from "./middleware/correlation";
 import { loggingMiddleware } from "./middleware/logging";
@@ -511,7 +512,75 @@ app.get(
   }),
 );
 
-// GET /api/loan/:id
+// GET /api/collateral — paginated, filterable collateral listing
+const collateralQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().max(100).optional().default(20),
+  status: z.enum(["available", "pledged", "liquidated"]).optional(),
+  ownerId: z.string().optional(),
+});
+
+app.get(
+  "/api/collateral",
+  asyncHandler(async (req: Request, res: Response) => {
+    const validation = collateralQuerySchema.safeParse(req.query);
+    if (!validation.success) {
+      return res.status(400).json({
+        errors: validation.error.issues.map((i) => ({
+          field: i.path.join("."),
+          message: i.message,
+        })),
+      });
+    }
+    const { page, limit, status, ownerId } = validation.data;
+    const result = listCollateral({
+      page,
+      limit,
+      status: status as CollateralStatus | undefined,
+      ownerId,
+    });
+    res.json(result);
+  }),
+);
+
+// GET /api/loans/:id — full loan detail with collateral and on-chain status
+app.get(
+  "/api/loans/:id",
+  asyncHandler(async (req: Request, res: Response) => {
+    const loan = getLoan(req.params.id as string);
+    if (!loan) {
+      return res.status(404).json({ error: `Loan ${req.params.id} not found` });
+    }
+
+    const collateral = getCollateral(loan.collateral_id);
+
+    // Fetch on-chain status from Soroban contract
+    let onChainStatus: unknown = null;
+    try {
+      const contract = new Contract(CONTRACT_ID);
+      const account = await rpcClient.getAccount(
+        "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+      );
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: NETWORK_PASSPHRASE,
+      })
+        .addOperation(
+          contract.call("get_loan", nativeToScVal(BigInt(loan.id), { type: "u64" })),
+        )
+        .setTimeout(30)
+        .build();
+      const result = await rpcClient.simulateTransaction(tx);
+      onChainStatus = (result as any).result?.retval ?? null;
+    } catch {
+      // on-chain fetch is best-effort; don't fail the request
+    }
+
+    res.json({ loan, collateral: collateral ?? null, onChainStatus });
+  }),
+);
+
+// GET /api/loan/:id (legacy — kept for backwards compat)
 app.get(
   "/api/loan/:id",
   readLimiter,
@@ -729,7 +798,7 @@ const v1CollateralSchema = z.object({
 app.post("/api/v1/collateral", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), asyncHandler(async (req: Request, res: Response) => {
   const validation = v1CollateralSchema.safeParse(req.body);
   if (!validation.success) {
-    return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
+    return res.status(400).json({ error: "Validation failed", details: validation.error.issues });
   }
   const { owner, animal_type, count, appraised_value } = validation.data;
   const record = insertCollateral({ id: randomUUID(), owner, animal_type, count, appraised_value });
@@ -746,12 +815,13 @@ app.get("/api/v1/collateral", asyncHandler(async (req: Request, res: Response) =
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
     return res.status(400).json({ error: "pageSize must be between 1 and 100" });
   }
-  let records = listCollateral();
-  if (req.query.owner) records = records.filter((r) => r.owner === req.query.owner);
-  if (req.query.animal_type) records = records.filter((r) => r.animal_type === req.query.animal_type);
-  const total = records.length;
-  const data = records.slice((page - 1) * pageSize, page * pageSize);
-  res.json({ data, total, page, pageSize });
+  const ownerId = typeof req.query.owner === "string" ? req.query.owner : undefined;
+  const result = listCollateral({ page, limit: pageSize, ownerId });
+  // Apply animal_type filter post-fetch (not part of the new store API)
+  const animalType = typeof req.query.animal_type === "string" ? req.query.animal_type : undefined;
+  const data = animalType ? result.data.filter((r) => r.animal_type === animalType) : result.data;
+  const total = animalType ? data.length : result.total;
+  res.json({ data, total, page: result.page, pageSize: result.limit });
 }));
 
 // PUT /api/v1/collateral/:id/appraise — update appraised_value
