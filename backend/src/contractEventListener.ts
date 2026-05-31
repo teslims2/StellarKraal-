@@ -14,7 +14,7 @@ import logger from "./utils/logger";
 import { insertCollateral, insertLoan, updateTransaction } from "./db/store";
 
 const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
-const CONTRACT_ID = process.env.CONTRACT_ID || "";
+const getContractId = () => process.env.CONTRACT_ID || "";
 const POLL_INTERVAL_MS = parseInt(process.env.EVENT_POLL_INTERVAL_MS || "5000", 10);
 
 let lastLedger = 0;
@@ -84,7 +84,8 @@ function handleEvent(event: SorobanRpc.Api.RawEventResponse): void {
  * Poll the Soroban RPC for new contract events since the last processed ledger.
  */
 async function poll(): Promise<void> {
-  if (!CONTRACT_ID) return;
+  const contractId = getContractId();
+  if (!contractId) return;
 
   try {
     const server = new SorobanRpc.Server(RPC_URL);
@@ -92,7 +93,7 @@ async function poll(): Promise<void> {
 
     const response = await server.getEvents({
       startLedger,
-      filters: [{ type: "contract", contractIds: [CONTRACT_ID] }],
+      filters: [{ type: "contract", contractIds: [contractId] }],
     });
 
     for (const event of response.events) {
@@ -111,11 +112,12 @@ async function poll(): Promise<void> {
  * @param intervalMs - Polling interval in milliseconds (default: POLL_INTERVAL_MS env var or 5000)
  */
 export function startEventListener(intervalMs = POLL_INTERVAL_MS): void {
-  if (!CONTRACT_ID) {
+  const contractId = getContractId();
+  if (!contractId) {
     logger.warn("event_listener_disabled", { reason: "CONTRACT_ID not set" });
     return;
   }
-  logger.info("event_listener_started", { contractId: CONTRACT_ID, intervalMs });
+  logger.info("event_listener_started", { contractId, intervalMs });
 
   const tick = async () => {
     await poll();

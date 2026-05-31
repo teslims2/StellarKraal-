@@ -175,7 +175,7 @@ describe("JWT Authentication", () => {
   describe("JWT middleware — protected routes", () => {
     it("POST without token returns 401", async () => {
       const res = await request(app).post("/api/collateral/register").send({
-        owner: "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+        owner: "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6",
         animal_type: "cattle",
         count: 5,
         appraised_value: 1_000_000,

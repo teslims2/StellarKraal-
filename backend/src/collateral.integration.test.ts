@@ -5,6 +5,7 @@
  */
 import request from "supertest";
 import app from "./index";
+import { insertLoan } from "./db/store";
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
@@ -46,10 +47,17 @@ jest.mock("@stellar/stellar-sdk", () => {
   };
 });
 
-// Bypass JWT auth for all tests
+// Bypass JWT auth for all tests, but inject user context
+let testUser: any = { publicKey: "GBGBE57DSWNBO73HMKLGPCNUR7V4T3WYCXU34AHVZAR3FFFOSVZLEABQ" };
+
 jest.mock("./middleware/auth", () => ({
   authRouter: require("express").Router(),
-  jwtMiddleware: (_req: any, _res: any, next: any) => next(),
+  jwtMiddleware: (req: any, res: any, next: any) => {
+    if (testUser) {
+      req.user = testUser;
+    }
+    next();
+  },
 }));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -62,6 +70,7 @@ function validPayload(overrides = {}) {
 
 async function createCollateral(overrides = {}) {
   const res = await request(app).post("/api/v1/collateral").send(validPayload(overrides));
+  if (res.status !== 201) console.log("CREATE COLLATERAL ERROR STATUS:", res.status, "BODY:", res.body);
   return res;
 }
 
@@ -258,5 +267,42 @@ describe("DELETE /api/v1/collateral/:id", () => {
     const listRes = await request(app).get(`/api/v1/collateral?owner=${VALID_OWNER}`);
     const ids = listRes.body.data.map((r: any) => r.id);
     expect(ids).not.toContain(created.id);
+  });
+
+  it("returns 409 when the collateral is pledged to an active loan", async () => {
+    const { body: created } = await createCollateral();
+    insertLoan({
+      id: "test-loan-pledged-" + created.id,
+      borrower: VALID_OWNER,
+      collateral_id: created.id,
+      amount: 500_000,
+      status: "active",
+    });
+    const res = await request(app).delete(`/api/v1/collateral/${created.id}`);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("pledged to an active loan");
+  });
+
+  it("returns 403 when user is not the owner or admin", async () => {
+    const { body: created } = await createCollateral();
+    testUser = { publicKey: "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6" };
+    try {
+      const res = await request(app).delete(`/api/v1/collateral/${created.id}`);
+      expect(res.status).toBe(403);
+    } finally {
+      testUser = { publicKey: VALID_OWNER };
+    }
+  });
+
+  it("allows deletion if user is an admin", async () => {
+    const { body: created } = await createCollateral();
+    testUser = { publicKey: "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6", role: "admin" };
+    try {
+      const res = await request(app).delete(`/api/v1/collateral/${created.id}`);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ deleted: true, id: created.id });
+    } finally {
+      testUser = { publicKey: VALID_OWNER };
+    }
   });
 });

@@ -208,7 +208,7 @@ v1Router.get("/loan/:id", async (req: Request, res: Response, next: NextFunction
   try {
     const contract = new Contract(CONTRACT_ID);
     const account = await rpcClient.getAccount(
-      "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN"
+      "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6"
     ) as any;
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -229,7 +229,7 @@ v1Router.get("/health/:loanId", async (req: Request, res: Response, next: NextFu
   try {
     const contract = new Contract(CONTRACT_ID);
     const account = await rpcClient.getAccount(
-      "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN"
+      "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6"
     ) as any;
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -250,14 +250,23 @@ v1Router.get("/health/:loanId", async (req: Request, res: Response, next: NextFu
 // GET /loans - List loans with filtering and pagination
 v1Router.get("/loans", asyncHandler(async (req: Request, res: Response) => {
   const pageRaw = req.query.page !== undefined ? Number(req.query.page) : 1;
-  const limitRaw = req.query.limit !== undefined ? Number(req.query.limit) : 20;
+  let limitRaw = 20;
+  let isPageSize = false;
+  if (req.query.pageSize !== undefined) {
+    limitRaw = Number(req.query.pageSize);
+    isPageSize = true;
+  } else if (req.query.limit !== undefined) {
+    limitRaw = Number(req.query.limit);
+  }
 
-  if (!Number.isInteger(pageRaw) || pageRaw < 1) {
-    return res.status(400).json({ error: "page must be a positive integer" });
+  if (!Number.isInteger(pageRaw) || pageRaw < 1 || !Number.isInteger(limitRaw) || limitRaw < 1) {
+    return res.status(400).json({ error: "Invalid pagination parameters" });
   }
-  if (!Number.isInteger(limitRaw) || limitRaw < 1 || limitRaw > 100) {
-    return res.status(400).json({ error: "limit must be between 1 and 100" });
+
+  if (!isPageSize && limitRaw > 100) {
+    return res.status(400).json({ error: "Invalid pagination parameters" });
   }
+  const maxLimit = Math.min(limitRaw, 100);
 
   const { status, borrowerAddress, from, to } = req.query as Record<string, string | undefined>;
 
@@ -272,8 +281,19 @@ v1Router.get("/loans", asyncHandler(async (req: Request, res: Response) => {
     return res.status(400).json({ error: "to must be a valid ISO date" });
   }
 
-  const result = listLoans({ status, borrowerAddress, from, to, page: pageRaw, limit: limitRaw });
-  res.json({ data: result.data, total: result.total, page: result.page, limit: result.limit });
+  if (req.query.page === undefined && req.query.pageSize === undefined && req.query.limit === undefined) {
+    res.setHeader("Deprecation", "true");
+    res.setHeader("Warning", '299 - "Unpaginated loan listing is deprecated; use ?page=1&pageSize=20"');
+  }
+
+  const result = listLoans({ status, borrowerAddress, from, to, page: pageRaw, limit: maxLimit });
+  res.json({
+    data: result.data,
+    total: result.total,
+    page: result.page,
+    limit: result.limit,
+    pageSize: result.limit,
+  });
 }));
 
 // POST /oracle/price-update

@@ -1,4 +1,5 @@
 import { Server } from "http";
+import "./index";
 
 describe("Graceful Shutdown", () => {
   let originalEnv: NodeJS.ProcessEnv;

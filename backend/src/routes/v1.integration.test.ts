@@ -7,7 +7,7 @@ import request from "supertest";
 import express, { Express } from "express";
 import { v1Router } from "./v1";
 
-const VALID_ADDRESS = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+const VALID_ADDRESS = "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6";
 const INVALID_ADDRESS = "INVALID_KEY";
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ jest.mock("@stellar/stellar-sdk", () => {
     },
     SorobanRpc: {
       Server: jest.fn().mockImplementation(() => ({
-        getAccount: jest.fn().mockResolvedValue({ id: VALID_ADDRESS, sequence: "1" }),
+        getAccount: jest.fn().mockResolvedValue({ id: "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6", sequence: "1" }),
         prepareTransaction: jest.fn().mockResolvedValue({ toXDR: () => "prepared_xdr" }),
         simulateTransaction: jest.fn().mockResolvedValue({
           result: { retval: { value: 150 } },

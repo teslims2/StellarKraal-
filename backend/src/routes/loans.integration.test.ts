@@ -23,7 +23,7 @@ jest.mock("../middleware/rateLimit", () => {
   return { globalLimiter: noop, authLimiter: noop, writeLimiter: noop };
 });
 
-const _MOCK_ADDR = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+const _MOCK_ADDR = "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6";
 
 jest.mock("../utils/connectionPool", () => ({
   pool: {

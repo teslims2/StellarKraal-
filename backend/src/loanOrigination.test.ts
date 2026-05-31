@@ -18,7 +18,7 @@ import { makeCollateral, makeLoan } from "../../tests/fixtures";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-const VALID_BORROWER = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+const VALID_BORROWER = "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6";
 const LTV_BPS = 6000; // 60%
 
 /** Compute max loan amount from collateral value at 60% LTV. */

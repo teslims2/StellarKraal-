@@ -8,16 +8,17 @@ import {
 } from "./appraisalCache";
 
 // Silence logger output during tests
-const mockLogger = {
-  debug: jest.fn(),
-  info: jest.fn(),
-  warn: jest.fn(),
-  error: jest.fn(),
-};
 jest.mock("./logger", () => ({
   __esModule: true,
-  default: mockLogger,
+  default: {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  },
 }));
+import loggerMock from "./logger";
+const mockLogger = loggerMock as any;
 
 beforeEach(() => {
   invalidateAll();

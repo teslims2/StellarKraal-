@@ -31,7 +31,8 @@ export interface LoanRecord {
   borrower: string;
   collateral_id: string;
   amount: number;
-  status: "active" | "repaid" | "liquidated";
+  status: LoanStatus;
+  health_factor?: number | null;
   createdAt: string;
   deletedAt: string | null;
 }
@@ -156,7 +157,13 @@ export function listDeletedCollateral(): CollateralRecord[] {
  * const loan = insertLoan({ id: "1", borrower: "G...", collateral_id: "1", amount: 600000 });
  */
 export function insertLoan(data: Omit<LoanRecord, "createdAt" | "deletedAt"> & { status?: LoanRecord["status"] }): LoanRecord {
-  const record: LoanRecord = { ...data, status: data.status ?? "active", createdAt: new Date().toISOString(), deletedAt: null };
+  const record: LoanRecord = {
+    ...data,
+    status: data.status ?? "active",
+    health_factor: data.health_factor ?? null,
+    createdAt: new Date().toISOString(),
+    deletedAt: null
+  };
   loanTable.set(record.id, record);
   return record;
 }
@@ -191,6 +198,12 @@ export function listLoans(filters?: {
   const data = results.slice((page - 1) * limit, page * limit);
 
   return { data, total, page, limit };
+}
+
+export function listActiveLoans(): LoanRecord[] {
+  return [...loanTable.values()].filter(
+    (r) => r.deletedAt === null && (r.status === "active" || r.status === "at_risk")
+  );
 }
 
 /**
@@ -242,6 +255,17 @@ export function restoreLoan(id: string): boolean {
  */
 export function listDeletedLoans(): LoanRecord[] {
   return [...loanTable.values()].filter((r) => r.deletedAt !== null);
+}
+
+/**
+ * Check if a collateral record is currently pledged to an active loan.
+ * @param collateralId - Collateral record ID.
+ * @returns `true` if pledged to an active or at-risk, non-deleted loan, `false` otherwise.
+ */
+export function isCollateralPledged(collateralId: string): boolean {
+  return [...loanTable.values()].some(
+    (r) => r.collateral_id === collateralId && (r.status === "active" || r.status === "at_risk") && r.deletedAt === null
+  );
 }
 
 // ── Migration exports ─────────────────────────────────────────────────────────

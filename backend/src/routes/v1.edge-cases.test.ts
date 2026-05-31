@@ -134,7 +134,7 @@ describe("Edge case tests — Issue #367", () => {
     it("returns fewer items than limit on the last page", async () => {
       const partialPage = Array.from({ length: 5 }, (_, i) => ({
         id: String(i + 21),
-        borrower: "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+        borrower: "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6",
         collateral_id: "1",
         amount: 1000,
         status: "active" as const,

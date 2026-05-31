@@ -14,6 +14,7 @@ jest.mock("@stellar/stellar-sdk", () => ({
 }));
 
 jest.mock("./utils/logger", () => ({
+  __esModule: true,
   default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 

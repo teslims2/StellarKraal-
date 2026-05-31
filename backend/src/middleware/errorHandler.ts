@@ -34,5 +34,6 @@ export function errorHandler(
     path: req.path,
   });
 
+  console.error("DEBUG ERROR HANDLER:", err);
   res.status(statusCode).json({ error: err.message, code, correlationId });
 }

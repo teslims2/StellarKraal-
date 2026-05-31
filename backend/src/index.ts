@@ -1,18 +1,29 @@
 import "./config"; // validate env at startup
 import { config } from "./config";
 import express, { Request, Response, NextFunction } from "express";
+import cors from "cors";
 import { runMigrations as runDbMigrations, checkDbHealth, getMigrationStatus } from "./db/migrationRunner";
 import { errorHandler } from "./middleware/errorHandler";
 import {
-  runMigrations,
-  listDeletedCollateral,
-  restoreCollateral,
+  insertCollateral,
+  getCollateral,
+  listCollateral,
   softDeleteCollateral,
-  listDeletedLoans,
-  restoreLoan,
+  restoreCollateral,
+  listDeletedCollateral,
+  isCollateralPledged,
+  insertLoan,
+  getLoan,
+  listLoans,
+  updateLoan,
   softDeleteLoan,
+  restoreLoan,
+  listDeletedLoans,
+  insertTransaction,
+  listTransactions,
+  getTransaction,
+  type TransactionType,
 } from "./db/store";
-import { getMigrationStatus } from "./db/migrationRunner";
 import { corsMiddleware } from "./middleware/cors";
 import { correlationMiddleware } from "./middleware/correlation";
 import { loggingMiddleware } from "./middleware/logging";
@@ -31,7 +42,6 @@ import { pool, PoolExhaustedError } from "./utils/connectionPool";
 import { auditMiddleware } from "./middleware/audit";
 import { authRouter, jwtMiddleware } from "./middleware/auth";
 import { timeoutMiddleware } from "./middleware/timeout";
-import { authRouter, jwtMiddleware } from "./middleware/auth";
 import {
   getAppraisal,
   setAppraisal,
@@ -39,12 +49,39 @@ import {
   configureCacheTTL,
 } from "./utils/appraisalCache";
 import { randomUUID } from "crypto";
+import path from "path";
+import { mkdirSync } from "fs";
+import multer from "multer";
 import { z } from "zod";
-import { globalLimiter, authLimiter, readLimiter } from "./middleware/rateLimit";
+import { globalLimiter, authLimiter, readLimiter, writeLimiter } from "./middleware/rateLimit";
 import { asyncHandler } from "./utils/asyncHandler";
 import { stellarPublicKeySchema } from "./validators/stellar";
 import rpcClient from "./utils/rpcClient";
-import { registerWebhook, getWebhooks, getDeliveryLogs } from "./webhooks";
+import { registerWebhook, getWebhooks, getDeliveryLogs, fireWebhooks } from "./webhooks";
+import { scheduleHealthFactorJob } from "./jobs/healthFactorJob";
+import { httpActiveConnections, httpRequestDurationSeconds, httpRequestsTotal } from "./metrics";
+import { fireAlert } from "./utils/alerting";
+import { rules } from "./utils/alertRules";
+
+// ── 5xx spike tracking (rolling 60s window) ───────────────────────────────────
+const fivexxTimestamps: number[] = [];
+const FIVEXX_WINDOW_MS = 60_000;
+const FIVEXX_THRESHOLD = 10;
+
+function track5xx() {
+  const now = Date.now();
+  fivexxTimestamps.push(now);
+  // evict old entries
+  while (fivexxTimestamps.length && fivexxTimestamps[0] < now - FIVEXX_WINDOW_MS) {
+    fivexxTimestamps.shift();
+  }
+  if (fivexxTimestamps.length >= FIVEXX_THRESHOLD) {
+    fireAlert(rules.fivexxSpike, `${fivexxTimestamps.length} 5xx errors in the last 60s`, {
+      count: fivexxTimestamps.length,
+      window: "60s",
+    });
+  }
+}
 
 // ── Idempotency cache (in-memory, 24h TTL) ───────────────────────────────────
 interface IdempotencyEntry {
@@ -79,25 +116,7 @@ const isProduction = process.env.NODE_ENV === "production";
 const FRONTEND_URL = process.env.FRONTEND_URL;
 
 // Startup warning for CORS misconfiguration
-if (isProduction && !FRONTEND_URL) {
-  logger.warn(
-    "CORS misconfiguration: FRONTEND_URL is not set in production environment. Requests may be blocked.",
-  );
-}
-
-// Secure CORS configuration
-app.use((req: Request, res: Response, next: NextFunction) => {
-  // Allow credentials only for authenticated routes (e.g., API endpoints excluding health check)
-  const isAuthRoute = req.path.startsWith("/api") && req.path !== "/api/health";
-
-  const corsOptions: cors.CorsOptions = {
-    origin: isProduction ? FRONTEND_URL || false : isAuthRoute ? true : "*",
-    credentials: isAuthRoute,
-    maxAge: 86400, // Cache preflight requests for 24 hours
-  };
-
-  cors(corsOptions)(req, res, next);
-});
+app.use(corsMiddleware);
 app.use(express.json());
 
 // ── Health check — excluded from rate limiting and JWT ────────────────────────
@@ -105,12 +124,21 @@ app.use(express.json());
 app.get("/api/health", async (_req: Request, res: Response) => {
   const uptime = Math.floor((Date.now() - startTime) / 1000);
   const dbHealthy = await checkDbHealth();
-  const status = dbHealthy ? "healthy" : "degraded";
-  res.status(dbHealthy ? 200 : 503).json({
+  let rpcReachable = false;
+  try {
+    await pool.run((server) => server.getHealth());
+    rpcReachable = true;
+  } catch (error) {
+    console.warn("RPC health check failed:", (error as Error).message);
+  }
+  const status = dbHealthy && rpcReachable ? "healthy" : "degraded";
+  res.status(dbHealthy && rpcReachable ? 200 : 503).json({
     status,
     version: APP_VERSION,
     uptime,
     db: dbHealthy ? "ok" : "unreachable",
+    rpcReachable,
+    pool: pool.stats(),
     timestamp: new Date().toISOString(),
   });
 });
@@ -176,13 +204,6 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // ── Auth ──────────────────────────────────────────────────────────────────────
 app.use("/api/auth", authLimiter, authRouter);
 app.use(jwtMiddleware);
-
-const CONTRACT_ID = process.env.CONTRACT_ID || "";
-const NETWORK_PASSPHRASE =
-  config.NEXT_PUBLIC_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
-
-const APP_VERSION = process.env["npm_package_version"] || "1.0.0";
-const startTime = Date.now();
 
 // Configure appraisal cache TTL from env
 configureCacheTTL(config.APPRAISAL_CACHE_TTL_MS);
@@ -340,36 +361,7 @@ async function buildContractTx(
 
 // ── routes ────────────────────────────────────────────────────────────────────
 
-// GET /api/health - Health check endpoint
-app.get(
-  "/api/health",
-  readLimiter,
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const uptime = Math.floor((Date.now() - startTime) / 1000);
 
-      let rpcReachable = false;
-      try {
-        await pool.run((server) => server.getHealth());
-        rpcReachable = true;
-      } catch (error) {
-        console.warn("RPC health check failed:", (error as Error).message);
-      }
-
-      const healthData = {
-        status: rpcReachable ? "healthy" : "degraded",
-        version: APP_VERSION,
-        uptime,
-        rpcReachable,
-        pool: pool.stats(),
-      };
-
-      res.status(rpcReachable ? 200 : 503).json(healthData);
-    } catch (error) {
-      next(error);
-    }
-  },
-);
 
 // POST /api/collateral/register
 app.post(
@@ -498,17 +490,32 @@ app.get(
   readLimiter,
   asyncHandler(async (req: Request, res: Response) => {
     const pageRaw = req.query.page !== undefined ? Number(req.query.page) : 1;
-    const limitRaw = req.query.limit !== undefined ? Number(req.query.limit) : 20;
+    const pageSizeVal = req.query.pageSize !== undefined ? req.query.pageSize : req.query.limit;
+    const limitRaw = pageSizeVal !== undefined ? Number(pageSizeVal) : 20;
 
     if (!Number.isInteger(pageRaw) || pageRaw < 1) {
       return res.status(400).json({ error: "page must be a positive integer" });
     }
     if (!Number.isInteger(limitRaw) || limitRaw < 1 || limitRaw > 100) {
-      return res.status(400).json({ error: "limit must be between 1 and 100" });
+      return res.status(400).json({ error: "pageSize must be between 1 and 100" });
+    }
+
+    if (req.query.page === undefined) {
+      res.setHeader("Deprecation", "true");
+      res.setHeader(
+        "Warning",
+        '299 - "Unpaginated usage is deprecated; use ?page=1&pageSize=20"',
+      );
     }
 
     const result = listLoans({ page: pageRaw, limit: limitRaw });
-    res.json({ data: result.data, total: result.total, page: result.page, limit: result.limit });
+    res.json({
+      data: result.data,
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      pageSize: result.limit,
+    });
   }),
 );
 
@@ -559,7 +566,7 @@ app.get(
     try {
       const contract = new Contract(CONTRACT_ID);
       const account = await rpcClient.getAccount(
-        "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+        "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6",
       );
       const tx = new TransactionBuilder(account, {
         fee: BASE_FEE,
@@ -643,6 +650,101 @@ app.get(
   },
 );
 
+// POST /api/loan/repayment-preview
+app.post(
+  "/api/loan/repayment-preview",
+  timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
+  asyncHandler(async (req: Request, res: Response) => {
+    const validation = loanRepaymentPreviewSchema.safeParse(req.body);
+
+    if (!validation.success) {
+      logger.warn("Validation failed for loan repayment preview", {
+        requestId: req.requestId,
+        errors: validation.error.errors,
+      });
+      return res.status(400).json({
+        error: "Validation failed",
+        details: validation.error.issues,
+      });
+    }
+
+    const { loan_id, amount } = validation.data;
+
+    // Fetch loan details from contract (simulated)
+    const contract = new Contract(CONTRACT_ID);
+    const account = await rpcClient.getAccount(
+      "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6", // fee-less read account
+    );
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        contract.call(
+          "get_loan",
+          nativeToScVal(BigInt(loan_id), { type: "u64" }),
+        ),
+      )
+      .setTimeout(30)
+      .build();
+
+    const result = await rpcClient.simulateTransaction(tx);
+    const parsed = parseLoanFromSimulation((result as any).result?.retval);
+
+    // Fetch interest fee config
+    let interestFeeBps = 100; // default 1%
+    try {
+      const feeTx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: NETWORK_PASSPHRASE,
+      })
+        .addOperation(contract.call("fee_config"))
+        .setTimeout(30)
+        .build();
+      const feeResult = await rpcClient.simulateTransaction(feeTx);
+      const feeConfig = parseFeeConfigFromSimulation(
+        (feeResult as any).result?.retval,
+      );
+      if (feeConfig) {
+        interestFeeBps = feeConfig.interest_fee_bps;
+      }
+    } catch {
+      // Preview remains available with sane default when fee config lookup fails.
+    }
+
+    const cappedRepayment = Math.min(amount, parsed.outstanding);
+    const interestOutstanding = Math.max(
+      parsed.outstanding - parsed.principal,
+      0,
+    );
+    const interestPaid = Math.min(cappedRepayment, interestOutstanding);
+    const principalPaid = cappedRepayment - interestPaid;
+    const fees = Math.floor((interestPaid * interestFeeBps) / 10_000);
+    const remainingBalance = Math.max(parsed.outstanding - cappedRepayment, 0);
+
+    const projectedHealthFactorBps =
+      remainingBalance === 0
+        ? null
+        : Math.floor(
+            (parsed.collateral_value * 8000 * 10_000) /
+              (remainingBalance * 10_000),
+          );
+
+    res.json({
+      loan_id,
+      repayment_amount: cappedRepayment,
+      breakdown: {
+        principal: principalPaid,
+        interest: interestPaid,
+        fees,
+        remaining_balance: remainingBalance,
+      },
+      projected_health_factor_bps: projectedHealthFactorBps,
+      fully_repaid: remainingBalance === 0,
+    });
+  }),
+);
+
 // POST /api/oracle/price-update — invalidate appraisal cache on oracle update
 app.post(
   "/api/oracle/price-update",
@@ -664,8 +766,12 @@ app.post(
     if (!url || typeof url !== "string") {
       return res.status(400).json({ error: "url is required" });
     }
-    const reg = registerWebhook(url);
-    res.status(201).json(reg);
+    try {
+      const reg = registerWebhook(url);
+      res.status(201).json(reg);
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message });
+    }
   },
 );
 
@@ -703,12 +809,44 @@ app.post("/api/admin/restore/collateral/:id", (req: Request, res: Response) => {
   res.json({ restored: true, id: req.params.id });
 });
 
-// DELETE /api/collateral/:id — soft delete a collateral record
-app.delete("/api/collateral/:id", (req: Request, res: Response) => {
-  const ok = softDeleteCollateral(req.params.id);
+/**
+ * Handle deletion of a collateral record.
+ * Validates active loan status and owner/admin authorization.
+ * @param req - Express request object.
+ * @param res - Express response object.
+ * @returns A promise or value resolving to void.
+ */
+const handleDeleteCollateral = (req: Request, res: Response) => {
+  const id = req.params.id;
+  const record = getCollateral(id);
+  if (!record) {
+    return res.status(404).json({ error: "Record not found" });
+  }
+
+  // Check if pledged to an active loan
+  if (isCollateralPledged(id)) {
+    return res.status(409).json({ error: "Collateral is currently pledged to an active loan" });
+  }
+
+  // Check authorization: owner or admin
+  const user = (req as Request & { user?: { publicKey: string; role?: string } }).user;
+  const isOwner = user && user.publicKey === record.owner;
+  const isUserAdmin =
+    (user && user.role === "admin") ||
+    (config.ADMIN_API_KEY && user && user.publicKey === config.ADMIN_API_KEY) ||
+    (config.ADMIN_API_KEY && (req.headers["x-admin-key"] === config.ADMIN_API_KEY || req.headers["admin-api-key"] === config.ADMIN_API_KEY));
+
+  if (!isOwner && !isUserAdmin) {
+    return res.status(403).json({ error: "Forbidden: Only the owner or an admin can delete this collateral" });
+  }
+
+  const ok = softDeleteCollateral(id);
   if (!ok) return res.status(404).json({ error: "Record not found" });
-  res.json({ deleted: true, id: req.params.id });
-});
+  res.json({ deleted: true, id });
+};
+
+// DELETE /api/collateral/:id — soft delete a collateral record
+app.delete("/api/collateral/:id", handleDeleteCollateral);
 
 // ── POST /api/collateral — animal registration with image upload ──────────────
 
@@ -838,11 +976,7 @@ app.put("/api/v1/collateral/:id/appraise", timeoutMiddleware(parseInt(config.TIM
 }));
 
 // DELETE /api/v1/collateral/:id — soft delete
-app.delete("/api/v1/collateral/:id", (req: Request, res: Response) => {
-  const ok = softDeleteCollateral(req.params.id);
-  if (!ok) return res.status(404).json({ error: "Record not found" });
-  res.json({ deleted: true, id: req.params.id });
-});
+app.delete("/api/v1/collateral/:id", handleDeleteCollateral);
 
 // GET /api/admin/deleted/loans — list soft-deleted loan records
 app.get("/api/admin/deleted/loans", (req: Request, res: Response) => {
