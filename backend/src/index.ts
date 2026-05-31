@@ -1,6 +1,8 @@
 import "./config"; // validate env at startup
 import { config } from "./config";
 import express, { Request, Response, NextFunction } from "express";
+import { runMigrations as runDbMigrations, checkDbHealth, getMigrationStatus } from "./db/migrationRunner";
+import { errorHandler } from "./middleware/errorHandler";
 import {
   runMigrations,
   listDeletedCollateral,
@@ -64,6 +66,12 @@ function setIdempotencyEntry(key: string, status: number, body: unknown): void {
   idempotencyCache.set(key, { status, body, createdAt: Date.now() });
 }
 
+const CONTRACT_ID = process.env.CONTRACT_ID || "";
+const NETWORK_PASSPHRASE =
+  config.NEXT_PUBLIC_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
+const APP_VERSION = process.env.npm_package_version || "1.0.0";
+const startTime = Date.now();
+
 const app = express();
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -90,6 +98,22 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   cors(corsOptions)(req, res, next);
 });
 app.use(express.json());
+
+// ── Health check — excluded from rate limiting and JWT ────────────────────────
+// GET /api/health
+app.get("/api/health", async (_req: Request, res: Response) => {
+  const uptime = Math.floor((Date.now() - startTime) / 1000);
+  const dbHealthy = await checkDbHealth();
+  const status = dbHealthy ? "healthy" : "degraded";
+  res.status(dbHealthy ? 200 : 503).json({
+    status,
+    version: APP_VERSION,
+    uptime,
+    db: dbHealthy ? "ok" : "unreachable",
+    timestamp: new Date().toISOString(),
+  });
+});
+
 app.use(globalLimiter);
 app.use(timeoutMiddleware(parseInt(config.TIMEOUT_GLOBAL_MS, 10)));
 app.use(correlationMiddleware);
@@ -165,7 +189,7 @@ configureCacheTTL(parseInt(config.APPRAISAL_CACHE_TTL_MS, 10));
 // Run DB migrations on startup (automatic in development, manual in production)
 (async () => {
   try {
-    await runMigrations();
+    await runDbMigrations();
   } catch (error) {
     logger.error("Failed to run migrations on startup", {
       error: error instanceof Error ? error.message : String(error),
@@ -473,34 +497,17 @@ app.get(
   readLimiter,
   asyncHandler(async (req: Request, res: Response) => {
     const pageRaw = req.query.page !== undefined ? Number(req.query.page) : 1;
-    const pageSizeRaw =
-      req.query.pageSize !== undefined ? Number(req.query.pageSize) : 20;
+    const limitRaw = req.query.limit !== undefined ? Number(req.query.limit) : 20;
 
     if (!Number.isInteger(pageRaw) || pageRaw < 1) {
       return res.status(400).json({ error: "page must be a positive integer" });
     }
-    if (
-      !Number.isInteger(pageSizeRaw) ||
-      pageSizeRaw < 1 ||
-      pageSizeRaw > 100
-    ) {
-      return res
-        .status(400)
-        .json({ error: "pageSize must be between 1 and 100" });
+    if (!Number.isInteger(limitRaw) || limitRaw < 1 || limitRaw > 100) {
+      return res.status(400).json({ error: "limit must be between 1 and 100" });
     }
 
-    if (req.query.page === undefined) {
-      res.setHeader("Deprecation", "true");
-      res.setHeader(
-        "Warning",
-        '299 - "Unpaginated usage is deprecated; use ?page=1&pageSize=20"',
-      );
-    }
-
-    // Placeholder: in production this would query a DB. Returns empty list with envelope.
-    const total = 0;
-    const data: unknown[] = [];
-    res.json({ data, total, page: pageRaw, pageSize: pageSizeRaw });
+    const result = listLoans({ page: pageRaw, limit: limitRaw });
+    res.json({ data: result.data, total: result.total, page: result.page, limit: result.limit });
   }),
 );
 
@@ -879,20 +886,13 @@ app.put(
 
 // ── error handler ─────────────────────────────────────────────────────────────
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  void next; // required 4th param for Express error handlers
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const reqLogger = (req as any).logger || logger;
   if (err instanceof PoolExhaustedError) {
     return res
       .status(503)
       .json({ error: "Service unavailable: connection pool exhausted" });
   }
-  reqLogger.error("Unhandled error", {
-    error: err.message,
-    stack: err.stack,
-  });
   track5xx();
-  res.status(500).json({ error: err.message });
+  errorHandler(err, req, res, next);
 });
 
 if (process.env.NODE_ENV !== "test") {
