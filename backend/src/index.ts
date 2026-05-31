@@ -1,29 +1,20 @@
 import "./config"; // validate env at startup
 import { config } from "./config";
 import express, { Request, Response, NextFunction } from "express";
+import { runMigrations as runDbMigrations, checkDbHealth, getMigrationStatus } from "./db/migrationRunner";
+import { errorHandler } from "./middleware/errorHandler";
 import {
   runMigrations,
-  getMigrationStatus,
-  insertCollateral,
-  listCollateral,
-  getCollateral,
-  softDeleteCollateral,
-  restoreCollateral,
   listDeletedCollateral,
-  insertLoan,
-  listLoans,
-  getLoan,
-  softDeleteLoan,
-  restoreLoan,
+  restoreCollateral,
+  softDeleteCollateral,
   listDeletedLoans,
-  insertTransaction,
-  listTransactions,
-  getTransaction,
-  updateTransaction,
-  type TransactionType,
-  type TransactionStatus,
+  restoreLoan,
+  softDeleteLoan,
 } from "./db/store";
 import { corsMiddleware } from "./middleware/cors";
+import { correlationMiddleware } from "./middleware/correlation";
+import { loggingMiddleware } from "./middleware/logging";
 import {
   Networks,
   TransactionBuilder,
@@ -39,6 +30,7 @@ import { pool, PoolExhaustedError } from "./utils/connectionPool";
 import { auditMiddleware } from "./middleware/audit";
 import { authRouter, jwtMiddleware } from "./middleware/auth";
 import { timeoutMiddleware } from "./middleware/timeout";
+import { authRouter, jwtMiddleware } from "./middleware/auth";
 import {
   getAppraisal,
   setAppraisal,
@@ -47,39 +39,11 @@ import {
 } from "./utils/appraisalCache";
 import { randomUUID } from "crypto";
 import { z } from "zod";
-import { globalLimiter } from "./middleware/rateLimit";
+import { globalLimiter, authLimiter, readLimiter } from "./middleware/rateLimit";
 import { asyncHandler } from "./utils/asyncHandler";
 import { stellarPublicKeySchema } from "./validators/stellar";
 import rpcClient from "./utils/rpcClient";
 import { registerWebhook, getWebhooks, getDeliveryLogs } from "./webhooks";
-import { fireAlert } from "./utils/alerting";
-import { rules } from "./utils/alertRules";
-import {
-  registry,
-  httpRequestsTotal,
-  httpRequestDurationSeconds,
-  httpActiveConnections,
-} from "./metrics";
-
-// ── 5xx spike tracking (rolling 60s window) ───────────────────────────────────
-const fivexxTimestamps: number[] = [];
-const FIVEXX_WINDOW_MS = 60_000;
-const FIVEXX_THRESHOLD = 10;
-
-function track5xx() {
-  const now = Date.now();
-  fivexxTimestamps.push(now);
-  // evict old entries
-  while (fivexxTimestamps.length && fivexxTimestamps[0] < now - FIVEXX_WINDOW_MS) {
-    fivexxTimestamps.shift();
-  }
-  if (fivexxTimestamps.length >= FIVEXX_THRESHOLD) {
-    fireAlert(rules.fivexxSpike, `${fivexxTimestamps.length} 5xx errors in the last 60s`, {
-      count: fivexxTimestamps.length,
-      window: "60s",
-    });
-  }
-}
 
 // ── Idempotency cache (in-memory, 24h TTL) ───────────────────────────────────
 interface IdempotencyEntry {
@@ -102,18 +66,66 @@ function setIdempotencyEntry(key: string, status: number, body: unknown): void {
   idempotencyCache.set(key, { status, body, createdAt: Date.now() });
 }
 
+const CONTRACT_ID = process.env.CONTRACT_ID || "";
+const NETWORK_PASSPHRASE =
+  config.NEXT_PUBLIC_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
+const APP_VERSION = process.env.npm_package_version || "1.0.0";
+const startTime = Date.now();
+
 const app = express();
 
+const isProduction = process.env.NODE_ENV === "production";
+const FRONTEND_URL = process.env.FRONTEND_URL;
+
+// Startup warning for CORS misconfiguration
+if (isProduction && !FRONTEND_URL) {
+  logger.warn(
+    "CORS misconfiguration: FRONTEND_URL is not set in production environment. Requests may be blocked.",
+  );
+}
+
 // Secure CORS configuration
-app.use(corsMiddleware);
+app.use((req: Request, res: Response, next: NextFunction) => {
+  // Allow credentials only for authenticated routes (e.g., API endpoints excluding health check)
+  const isAuthRoute = req.path.startsWith("/api") && req.path !== "/api/health";
+
+  const corsOptions: cors.CorsOptions = {
+    origin: isProduction ? FRONTEND_URL || false : isAuthRoute ? true : "*",
+    credentials: isAuthRoute,
+    maxAge: 86400, // Cache preflight requests for 24 hours
+  };
+
+  cors(corsOptions)(req, res, next);
+});
 app.use(express.json());
+
+// ── Health check — excluded from rate limiting and JWT ────────────────────────
+// GET /api/health
+app.get("/api/health", async (_req: Request, res: Response) => {
+  const uptime = Math.floor((Date.now() - startTime) / 1000);
+  const dbHealthy = await checkDbHealth();
+  const status = dbHealthy ? "healthy" : "degraded";
+  res.status(dbHealthy ? 200 : 503).json({
+    status,
+    version: APP_VERSION,
+    uptime,
+    db: dbHealthy ? "ok" : "unreachable",
+    timestamp: new Date().toISOString(),
+  });
+});
+
 app.use(globalLimiter);
 app.use(timeoutMiddleware(parseInt(config.TIMEOUT_GLOBAL_MS, 10)));
+app.use(correlationMiddleware);
+app.use(loggingMiddleware);
+app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
 
 // Request ID middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
   const requestId = randomUUID();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (req as any).requestId = requestId;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (req as any).logger = createRequestLogger(requestId);
   res.setHeader("X-Request-ID", requestId);
   next();
@@ -134,6 +146,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 // Request logging middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const reqLogger = (req as any).logger;
   reqLogger.info(`${req.method} ${req.path}`, {
     method: req.method,
@@ -160,32 +173,8 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-app.use("/api/auth", authRouter);
+app.use("/api/auth", authLimiter, authRouter);
 app.use(jwtMiddleware);
-
-// ── API Docs (Swagger UI) ─────────────────────────────────────────────────────
-import swaggerUi from "swagger-ui-express";
-import openApiSpec from "../openapi.json";
-app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(openApiSpec));
-
-// ── API Versioning ────────────────────────────────────────────────────────────
-import { v1Router } from "./routes/v1";
-
-// Mount v1 routes
-app.use("/api/v1", v1Router);
-
-// Redirect unversioned routes to v1 with deprecation warning
-app.use("/api/:endpoint(*)", (req: Request, res: Response, next: NextFunction) => {
-  // Skip if already versioned or is auth/health
-  if (req.path.startsWith("/api/v1") || req.path === "/api/health" || req.path.startsWith("/api/auth")) {
-    return next();
-  }
-  
-  const newPath = req.path.replace(/^\/api/, "/api/v1");
-  res.setHeader("Deprecation", "true");
-  res.setHeader("Warning", '299 - "Unversioned API routes are deprecated. Use /api/v1/ prefix."');
-  res.redirect(301, newPath + (req.url.includes("?") ? req.url.substring(req.url.indexOf("?")) : ""));
-});
 
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
 const NETWORK_PASSPHRASE =
@@ -200,7 +189,7 @@ configureCacheTTL(parseInt(config.APPRAISAL_CACHE_TTL_MS, 10));
 // Run DB migrations on startup (automatic in development, manual in production)
 (async () => {
   try {
-    await runMigrations();
+    await runDbMigrations();
   } catch (error) {
     logger.error("Failed to run migrations on startup", {
       error: error instanceof Error ? error.message : String(error),
@@ -350,22 +339,10 @@ async function buildContractTx(
 
 // ── routes ────────────────────────────────────────────────────────────────────
 
-// GET /metrics - Prometheus metrics (token-protected)
-app.get("/metrics", async (req: Request, res: Response) => {
-  const token = process.env.METRICS_TOKEN;
-  if (token) {
-    const auth = req.headers.authorization;
-    if (auth !== `Bearer ${token}`) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-  }
-  res.set("Content-Type", registry.contentType);
-  res.end(await registry.metrics());
-});
-
 // GET /api/health - Health check endpoint
 app.get(
   "/api/health",
+  readLimiter,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const uptime = Math.floor((Date.now() - startTime) / 1000);
@@ -378,22 +355,15 @@ app.get(
         console.warn("RPC health check failed:", (error as Error).message);
       }
 
-      const circuitStates = rpcClient.getCircuitStates();
-      const circuitHealthy = rpcClient.isHealthy();
-
       const healthData = {
-        status: rpcReachable && circuitHealthy ? "healthy" : "degraded",
+        status: rpcReachable ? "healthy" : "degraded",
         version: APP_VERSION,
         uptime,
         rpcReachable,
-        circuitBreaker: {
-          healthy: circuitHealthy,
-          states: circuitStates,
-        },
         pool: pool.stats(),
       };
 
-      res.status(rpcReachable && circuitHealthy ? 200 : 503).json(healthData);
+      res.status(rpcReachable ? 200 : 503).json(healthData);
     } catch (error) {
       next(error);
     }
@@ -408,19 +378,34 @@ app.post(
     const validation = registerCollateralSchema.safeParse(req.body);
 
     if (!validation.success) {
+      logger.warn("Validation failed for collateral registration", {
+        requestId: req.requestId,
+        errors: validation.error.errors,
+      });
       return res.status(400).json({
         error: "Validation failed",
-        details: validation.error.errors,
+        details: validation.error.issues,
       });
     }
 
     const { owner, animal_type, count, appraised_value } = validation.data;
+    logger.debug("Building collateral registration transaction", {
+      requestId: req.requestId,
+      owner,
+      animal_type,
+      count,
+      appraised_value,
+    });
     const xdrTx = await buildContractTx(owner, "register_livestock", [
       new Address(owner).toScVal(),
       nativeToScVal(animal_type, { type: "symbol" }),
       nativeToScVal(count, { type: "u32" }),
       nativeToScVal(BigInt(appraised_value), { type: "i128" }),
     ]);
+    logger.info("Collateral registration transaction built successfully", {
+      requestId: req.requestId,
+      owner,
+    });
     res.json({ xdr: xdrTx });
   }),
 );
@@ -433,9 +418,13 @@ app.post(
     const validation = loanRequestSchema.safeParse(req.body);
 
     if (!validation.success) {
+      logger.warn("Validation failed for loan request", {
+        requestId: req.requestId,
+        errors: validation.error.errors,
+      });
       return res.status(400).json({
         error: "Validation failed",
-        details: validation.error.errors,
+        details: validation.error.issues,
       });
     }
 
@@ -497,96 +486,7 @@ app.post(
     ]);
     const body = { xdr: xdrTx };
     setIdempotencyEntry(idempotencyKey, 200, body);
-    fireWebhooks("loan.repaid", { borrower, loan_id, amount });
     res.json(body);
-  }),
-);
-
-// POST /api/loan/repayment-preview
-app.post(
-  "/api/loan/repayment-preview",
-  asyncHandler(async (req: Request, res: Response) => {
-    const validation = loanRepaymentPreviewSchema.safeParse(req.body);
-    if (!validation.success) {
-      return res.status(400).json({
-        error: "Validation failed",
-        details: validation.error.errors,
-      });
-    }
-
-    const { loan_id, amount } = validation.data;
-    const contract = new Contract(CONTRACT_ID);
-    const account = await rpcClient.getAccount(
-      "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
-    );
-
-    const loanTx = new TransactionBuilder(account, {
-      fee: BASE_FEE,
-      networkPassphrase: NETWORK_PASSPHRASE,
-    })
-      .addOperation(
-        contract.call(
-          "get_loan",
-          nativeToScVal(BigInt(loan_id), { type: "u64" }),
-        ),
-      )
-      .setTimeout(30)
-      .build();
-
-    const loanResult = await rpcClient.simulateTransaction(loanTx);
-    const parsed = parseLoanFromSimulation((loanResult as any).result?.retval);
-
-    // Fetch dynamic fee config; fallback keeps preview resilient if read fails.
-    let interestFeeBps = 1000;
-    try {
-      const feeTx = new TransactionBuilder(account, {
-        fee: BASE_FEE,
-        networkPassphrase: NETWORK_PASSPHRASE,
-      })
-        .addOperation(contract.call("get_fee_config"))
-        .setTimeout(30)
-        .build();
-      const feeResult = await rpcClient.simulateTransaction(feeTx);
-      const feeConfig = parseFeeConfigFromSimulation(
-        (feeResult as any).result?.retval,
-      );
-      if (feeConfig) {
-        interestFeeBps = feeConfig.interest_fee_bps;
-      }
-    } catch {
-      // Preview remains available with sane default when fee config lookup fails.
-    }
-
-    const cappedRepayment = Math.min(amount, parsed.outstanding);
-    const interestOutstanding = Math.max(
-      parsed.outstanding - parsed.principal,
-      0,
-    );
-    const interestPaid = Math.min(cappedRepayment, interestOutstanding);
-    const principalPaid = cappedRepayment - interestPaid;
-    const fees = Math.floor((interestPaid * interestFeeBps) / 10_000);
-    const remainingBalance = Math.max(parsed.outstanding - cappedRepayment, 0);
-
-    const projectedHealthFactorBps =
-      remainingBalance === 0
-        ? null
-        : Math.floor(
-            (parsed.collateral_value * 8000 * 10_000) /
-              (remainingBalance * 10_000),
-          );
-
-    res.json({
-      loan_id,
-      repayment_amount: cappedRepayment,
-      breakdown: {
-        principal: principalPaid,
-        interest: interestPaid,
-        fees,
-        remaining_balance: remainingBalance,
-      },
-      projected_health_factor_bps: projectedHealthFactorBps,
-      fully_repaid: remainingBalance === 0,
-    });
   }),
 );
 
@@ -594,47 +494,32 @@ app.post(
 // Deprecated: unpaginated usage will be removed in a future version.
 app.get(
   "/api/loans",
+  readLimiter,
   asyncHandler(async (req: Request, res: Response) => {
     const pageRaw = req.query.page !== undefined ? Number(req.query.page) : 1;
-    const pageSizeRaw =
-      req.query.pageSize !== undefined ? Number(req.query.pageSize) : 20;
+    const limitRaw = req.query.limit !== undefined ? Number(req.query.limit) : 20;
 
     if (!Number.isInteger(pageRaw) || pageRaw < 1) {
       return res.status(400).json({ error: "page must be a positive integer" });
     }
-    if (
-      !Number.isInteger(pageSizeRaw) ||
-      pageSizeRaw < 1 ||
-      pageSizeRaw > 100
-    ) {
-      return res
-        .status(400)
-        .json({ error: "pageSize must be between 1 and 100" });
+    if (!Number.isInteger(limitRaw) || limitRaw < 1 || limitRaw > 100) {
+      return res.status(400).json({ error: "limit must be between 1 and 100" });
     }
 
-    if (req.query.page === undefined) {
-      res.setHeader("Deprecation", "true");
-      res.setHeader(
-        "Warning",
-        '299 - "Unpaginated usage is deprecated; use ?page=1&pageSize=20"',
-      );
-    }
-
-    // Placeholder: in production this would query a DB. Returns empty list with envelope.
-    const total = 0;
-    const data: unknown[] = [];
-    res.json({ data, total, page: pageRaw, pageSize: pageSizeRaw });
+    const result = listLoans({ page: pageRaw, limit: limitRaw });
+    res.json({ data: result.data, total: result.total, page: result.page, limit: result.limit });
   }),
 );
 
 // GET /api/loan/:id
 app.get(
   "/api/loan/:id",
+  readLimiter,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const contract = new Contract(CONTRACT_ID);
       const account = await rpcClient.getAccount(
-        "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN", // fee-less read account
+        "GAKH4BC5GSE5UQDWWPCBCNVYRDBI5JGYRQRGZJT3YJ477ZFDK5EUBMBH", // fee-less read account
       );
       const tx = new TransactionBuilder(account, {
         fee: BASE_FEE,
@@ -650,6 +535,7 @@ app.get(
         .build();
 
       const result = await rpcClient.simulateTransaction(tx);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       res.json({ result: (result as any).result?.retval });
     } catch (error) {
       next(error);
@@ -664,7 +550,7 @@ app.get(
     try {
       const contract = new Contract(CONTRACT_ID);
       const account = await rpcClient.getAccount(
-        "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+        "GAKH4BC5GSE5UQDWWPCBCNVYRDBI5JGYRQRGZJT3YJ477ZFDK5EUBMBH",
       );
       const tx = new TransactionBuilder(account, {
         fee: BASE_FEE,
@@ -680,6 +566,7 @@ app.get(
         .build();
 
       const result = await rpcClient.simulateTransaction(tx);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       res.json({ health_factor: (result as any).result?.retval });
     } catch (error) {
       next(error);
@@ -708,11 +595,8 @@ app.post(
     if (!url || typeof url !== "string") {
       return res.status(400).json({ error: "url is required" });
     }
-    try {
-      return res.status(201).json(registerWebhook(url));
-    } catch (err: any) {
-      return res.status(400).json({ error: err.message });
-    }
+    const reg = registerWebhook(url);
+    res.status(201).json(reg);
   },
 );
 
@@ -752,6 +636,139 @@ app.post("/api/admin/restore/collateral/:id", (req: Request, res: Response) => {
 
 // DELETE /api/collateral/:id — soft delete a collateral record
 app.delete("/api/collateral/:id", (req: Request, res: Response) => {
+  const ok = softDeleteCollateral(req.params.id);
+  if (!ok) return res.status(404).json({ error: "Record not found" });
+  res.json({ deleted: true, id: req.params.id });
+});
+
+// ── POST /api/collateral — animal registration with image upload ──────────────
+
+const uploadsDir = path.join(__dirname, "..", "uploads");
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, uploadsDir),
+    filename: (_req, file, cb) => cb(null, `${randomUUID()}${path.extname(file.originalname)}`),
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files are allowed"));
+  },
+});
+
+// Ensure uploads directory exists
+mkdirSync(uploadsDir, { recursive: true });
+
+app.post(
+  "/api/collateral",
+  timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
+  writeLimiter,
+  upload.single("image"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { species, breed, age, weight } = req.body as {
+      species?: string;
+      breed?: string;
+      age?: string;
+      weight?: string;
+    };
+
+    if (!species || typeof species !== "string" || species.trim() === "") {
+      return res.status(400).json({ error: "species is required" });
+    }
+    if (!breed || typeof breed !== "string" || breed.trim() === "") {
+      return res.status(400).json({ error: "breed is required" });
+    }
+    const ageNum = Number(age);
+    if (!age || !Number.isFinite(ageNum) || ageNum < 0) {
+      return res.status(400).json({ error: "age must be a non-negative number" });
+    }
+    const weightNum = Number(weight);
+    if (!weight || !Number.isFinite(weightNum) || weightNum <= 0) {
+      return res.status(400).json({ error: "weight must be a positive number" });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: "image file is required" });
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const owner = (req as any).user?.publicKey as string | undefined;
+    if (!owner) {
+      return res.status(401).json({ error: "Authenticated wallet address required" });
+    }
+
+    const imageUrl = `/uploads/${req.file.filename}`;
+    const appraised_value = Math.round(weightNum * 100); // simple appraisal: 100 per kg
+
+    const record = insertCollateral({
+      id: randomUUID(),
+      owner,
+      animal_type: species.trim(),
+      count: 1,
+      appraised_value,
+      species: species.trim(),
+      breed: breed.trim(),
+      age: ageNum,
+      weight: weightNum,
+      image_url: imageUrl,
+    });
+
+    res.status(201).json(record);
+  }),
+);
+
+// ── v1 collateral CRUD ────────────────────────────────────────────────────────
+
+const v1CollateralSchema = z.object({
+  owner: stellarPublicKeySchema,
+  animal_type: z.string().min(1),
+  count: z.number().int().positive(),
+  appraised_value: z.number().int().positive(),
+});
+
+// POST /api/v1/collateral — register collateral (DB record)
+app.post("/api/v1/collateral", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), asyncHandler(async (req: Request, res: Response) => {
+  const validation = v1CollateralSchema.safeParse(req.body);
+  if (!validation.success) {
+    return res.status(400).json({ error: "Validation failed", details: validation.error.errors });
+  }
+  const { owner, animal_type, count, appraised_value } = validation.data;
+  const record = insertCollateral({ id: randomUUID(), owner, animal_type, count, appraised_value });
+  res.status(201).json(record);
+}));
+
+// GET /api/v1/collateral — list collateral with optional filters and pagination
+app.get("/api/v1/collateral", asyncHandler(async (req: Request, res: Response) => {
+  const page = req.query.page !== undefined ? Number(req.query.page) : 1;
+  const pageSize = req.query.pageSize !== undefined ? Number(req.query.pageSize) : 20;
+  if (!Number.isInteger(page) || page < 1) {
+    return res.status(400).json({ error: "page must be a positive integer" });
+  }
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    return res.status(400).json({ error: "pageSize must be between 1 and 100" });
+  }
+  let records = listCollateral();
+  if (req.query.owner) records = records.filter((r) => r.owner === req.query.owner);
+  if (req.query.animal_type) records = records.filter((r) => r.animal_type === req.query.animal_type);
+  const total = records.length;
+  const data = records.slice((page - 1) * pageSize, page * pageSize);
+  res.json({ data, total, page, pageSize });
+}));
+
+// PUT /api/v1/collateral/:id/appraise — update appraised_value
+app.put("/api/v1/collateral/:id/appraise", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), asyncHandler(async (req: Request, res: Response) => {
+  const { appraised_value } = req.body;
+  if (typeof appraised_value !== "number" || !Number.isInteger(appraised_value) || appraised_value <= 0) {
+    return res.status(400).json({ error: "appraised_value must be a positive integer" });
+  }
+  const record = getCollateral(req.params.id);
+  if (!record) return res.status(404).json({ error: "Record not found" });
+  record.appraised_value = appraised_value;
+  setAppraisal(req.params.id, appraised_value);
+  res.json(record);
+}));
+
+// DELETE /api/v1/collateral/:id — soft delete
+app.delete("/api/v1/collateral/:id", (req: Request, res: Response) => {
   const ok = softDeleteCollateral(req.params.id);
   if (!ok) return res.status(404).json({ error: "Record not found" });
   res.json({ deleted: true, id: req.params.id });
@@ -830,32 +847,66 @@ app.get(
   }),
 );
 
+// PUT /api/loans/:id/repay — record a repayment against a loan
+app.put(
+  "/api/loans/:id/repay",
+  timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
+  writeLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { amount, transactionHash } = req.body as { amount?: unknown; transactionHash?: unknown };
+
+    if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ error: "amount must be a positive number" });
+    }
+    if (typeof transactionHash !== "string" || !transactionHash) {
+      return res.status(400).json({ error: "transactionHash is required" });
+    }
+
+    const loan = getLoan(req.params.id);
+    if (!loan) return res.status(404).json({ error: "Loan not found" });
+
+    if (amount > loan.outstanding_balance) {
+      return res.status(400).json({ error: "amount exceeds outstanding balance" });
+    }
+
+    const newBalance = loan.outstanding_balance - amount;
+    const updated = updateLoan(req.params.id, { outstanding_balance: newBalance });
+
+    insertTransaction({
+      borrower: loan.borrower,
+      type: "repayment",
+      status: "completed",
+      amount,
+      loanId: loan.id,
+    });
+
+    res.json(updated);
+  }),
+);
+
 // ── error handler ─────────────────────────────────────────────────────────────
-app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
-  const reqLogger = (req as any).logger || logger;
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   if (err instanceof PoolExhaustedError) {
-    track5xx();
-    fireAlert(rules.dbError, "Connection pool exhausted", { path: req.path });
     return res
       .status(503)
       .json({ error: "Service unavailable: connection pool exhausted" });
   }
-  reqLogger.error("Unhandled error", {
-    error: err.message,
-    stack: err.stack,
-  });
   track5xx();
-  res.status(500).json({ error: err.message });
+  errorHandler(err, req, res, next);
 });
 
-const PORT = parseInt(process.env.PORT || "3001", 10);
-const httpServer = app.listen(PORT, () => {
-  logger.info(`StellarKraal API running on port ${PORT}`, {
-    port: PORT,
-    environment: process.env.NODE_ENV || "development",
-    logLevel: process.env.LOG_LEVEL || "info",
+if (process.env.NODE_ENV !== "test") {
+  const PORT = parseInt(process.env.PORT || "3001", 10);
+  app.listen(PORT, () => {
+    logger.info(`StellarKraal API running on port ${PORT}`, {
+      port: PORT,
+      environment: process.env.NODE_ENV || "development",
+      logLevel: process.env.LOG_LEVEL || "info",
+    });
   });
-});
+}
+
+const healthFactorTask = scheduleHealthFactorJob();
 
 // ── Graceful Shutdown ─────────────────────────────────────────────────────────
 
@@ -905,6 +956,9 @@ async function gracefulShutdown(signal: string): Promise<void> {
     pool.close();
     logger.info("Database connection pool closed");
 
+    healthFactorTask.stop();
+    logger.info("Health factor job stopped");
+
     clearTimeout(forceShutdownTimer);
     logger.info("Graceful shutdown complete");
     process.exit(0);
@@ -935,6 +989,19 @@ process.on("unhandledRejection", (reason: unknown) => {
     reason: reason instanceof Error ? reason.message : String(reason),
   });
   gracefulShutdown("unhandledRejection");
+});
+
+// Redirect unversioned routes to v1 with deprecation warning
+app.use("/api", (req: Request, res: Response, next: NextFunction) => {
+  // Skip if already versioned or is auth/health
+  if (req.path.startsWith("/api/v1") || req.path === "/api/health" || req.path.startsWith("/api/auth")) {
+    return next();
+  }
+
+  const newPath = req.path.replace(/^\/api/, "/api/v1");
+  res.setHeader("Deprecation", "true");
+  res.setHeader("Warning", '299 - "Unversioned API routes are deprecated. Use /api/v1/ prefix."');
+  res.redirect(301, newPath + (req.url.includes("?") ? req.url.substring(req.url.indexOf("?")) : ""));
 });
 
 export default app;

@@ -1,7 +1,8 @@
 # StellarKraal
 
 [![CI](https://img.shields.io/github/actions/workflow/status/teslims2/StellarKraal-/backend-ci.yml?branch=main&label=backend%20CI)](https://github.com/teslims2/StellarKraal-/actions/workflows/backend-ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-pending-lightgrey)](https://github.com/teslims2/StellarKraal-/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/teslims2/StellarKraal-/frontend-ci.yml?branch=main&label=frontend%20CI)](https://github.com/teslims2/StellarKraal-/actions/workflows/frontend-ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-70%25%20min-brightgreen)](https://github.com/teslims2/StellarKraal-/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ## Project Overview
@@ -100,12 +101,51 @@ cd contracts/stellarkraal
 cargo test
 ```
 
+## Staging Environment
+
+The staging environment mirrors production and is deployed automatically on every merge to `main`.
+
+| Resource | URL |
+|---|---|
+| Frontend | `https://staging.stellarkraal.example.com` |
+| Backend API | `https://api-staging.stellarkraal.example.com` |
+
+Staging uses Stellar **testnet** RPC and a separate contract deployment. The following GitHub Actions secrets must be set under the `staging` environment (Settings → Environments → staging):
+
+| Secret | Description |
+|---|---|
+| `STAGING_RPC_URL` | Soroban testnet RPC endpoint |
+| `STAGING_CONTRACT_ID` | Staging contract deployment ID |
+| `STAGING_API_URL` | Staging backend API base URL |
+| `STAGING_FRONTEND_URL` | Staging frontend URL (for CORS) |
+| `JWT_SECRET` | JWT signing key for staging |
+| `SLACK_WEBHOOK_URL` | Slack webhook for deployment notifications |
+
+To run the staging stack locally:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
+```
+
 ## Troubleshooting
 
-- `PORT already in use`: stop the process using the port or change `PORT` in `.env`.
-- `Cannot connect to RPC_URL`: verify network and RPC endpoint reachability.
-- `npm test` failures: ensure dependencies are installed and the correct Node.js version is active.
-- `Docker build` errors: rebuild after clearing caches with `docker-compose build --no-cache`.
+Common errors and their resolutions are documented in **[docs/troubleshooting.md](docs/troubleshooting.md)**, covering:
+
+- **Setup** — dependency conflicts, missing CLI tools, build failures, SQLite addon errors
+- **Runtime** — port conflicts, RPC connectivity, CORS, JWT errors, Docker health checks
+- **Contract** — invocation errors, sequence number mismatches, missing contract deployments
+- **Database** — SQLite open failures, migration conflicts
+
+Quick reference for the most frequent issues:
+
+| Symptom | Resolution |
+|---|---|
+| `PORT already in use` | Stop the process on that port or change `PORT` in `.env` |
+| `Cannot connect to RPC_URL` | Verify network and RPC endpoint reachability |
+| `npm test` failures | Ensure dependencies are installed and Node.js 20+ is active |
+| `Docker build` errors | Rebuild with `docker-compose build --no-cache` |
+
+For anything not listed here, see the [full troubleshooting guide](docs/troubleshooting.md).
 
 ## Contribution Guidelines
 
@@ -117,6 +157,20 @@ This repository uses a documented contribution workflow. See [CONTRIBUTING.md](C
 - [ ] Commit messages follow Conventional Commits
 - [ ] Tests run successfully locally
 - [ ] Documentation updated when necessary
+
+## Security & Vulnerability Management
+
+Dependencies are scanned automatically:
+
+- **Dependabot** monitors `backend/` and `frontend/` npm packages weekly. PRs are labelled `dependencies` and `security`.
+- **npm audit** runs every Monday via the [`npm-audit`](.github/workflows/npm-audit.yml) workflow. The workflow fails if any `high` or `critical` severity vulnerability is found.
+
+To run an audit locally:
+
+```bash
+cd backend && npm audit --audit-level=high
+cd frontend && npm audit --audit-level=high
+```
 
 ## Development Scripts
 
@@ -133,6 +187,7 @@ npm run test:frontend
 | Document | Description |
 |---|---|
 | [Liquidation Mechanism](docs/protocol/liquidation.md) | Health factor formula, liquidation threshold, partial liquidation examples |
+| [Smart Contract Interface](docs/contracts/stellarkraal-interface.md) | Soroban contract public API, error codes, state changes, and CLI invocation guide |
 
 ## Architecture Decision Records
 
@@ -144,6 +199,7 @@ Key design decisions are documented as ADRs in [`docs/adr/`](docs/adr/).
 | [ADR-002](docs/adr/ADR-002-jwt-auth.md) | JWT-Based Authentication Strategy | Accepted |
 | [ADR-003](docs/adr/ADR-003-sqlite.md) | SQLite as the Off-Chain Database | Accepted |
 | [ADR-004](docs/adr/ADR-004-nextjs-tailwind.md) | Next.js 14 + Tailwind CSS for the Frontend | Accepted |
+| [ADR-005](docs/adr/ADR-005-collateral-appraisal-model.md) | Off-chain collateral appraisal model | Accepted |
 
 To add a new ADR, copy [`docs/adr/template.md`](docs/adr/template.md), increment the number, fill in all sections, and add a row to the table above.
 

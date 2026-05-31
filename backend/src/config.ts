@@ -6,6 +6,8 @@ const envSchema = z.object({
   CONTRACT_ID: z.string().min(1, "CONTRACT_ID is required"),
   NEXT_PUBLIC_NETWORK: z.enum(["testnet", "mainnet"]).default("testnet"),
   // Rate limiting (optional with defaults)
+  RATE_LIMIT_AUTH: z.string().regex(/^\d+$/, "RATE_LIMIT_AUTH must be a number").default("10"),
+  RATE_LIMIT_READ: z.string().regex(/^\d+$/, "RATE_LIMIT_READ must be a number").default("100"),
   RATE_LIMIT_GLOBAL: z.string().regex(/^\d+$/, "RATE_LIMIT_GLOBAL must be a number").default("60"),
   RATE_LIMIT_WRITE: z.string().regex(/^\d+$/, "RATE_LIMIT_WRITE must be a number").default("10"),
   // Request timeouts in milliseconds
@@ -31,23 +33,21 @@ const envSchema = z.object({
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
-  const missing = parsed.error.issues.filter((i) => i.code === "invalid_type" && i.received === "undefined");
-  const invalid = parsed.error.issues.filter((i) => !(i.code === "invalid_type" && i.received === "undefined"));
-  
-  console.error("\n❌ Environment validation failed\n");
-  
+  const missing = parsed.error.issues.filter((i) => i.code === "invalid_type" && (i as { received?: string }).received === "undefined");
+  const invalid = parsed.error.issues.filter((i) => !(i.code === "invalid_type" && (i as { received?: string }).received === "undefined"));
+
+  const lines: string[] = ["\n❌ Environment validation failed\n"];
   if (missing.length > 0) {
-    console.error("Missing required variables:");
-    missing.forEach((i) => console.error(`  - ${i.path.join(".")}: ${i.message}`));
+    lines.push("Missing required variables:");
+    missing.forEach((i) => lines.push(`  - ${i.path.join(".")}: ${i.message}`));
   }
-  
   if (invalid.length > 0) {
-    console.error("\nInvalid variable values:");
-    invalid.forEach((i) => console.error(`  - ${i.path.join(".")}: ${i.message}`));
+    lines.push("\nInvalid variable values:");
+    invalid.forEach((i) => lines.push(`  - ${i.path.join(".")}: ${i.message}`));
   }
-  
-  console.error("\nPlease check your .env file or environment configuration.");
-  console.error("See env.example for reference.\n");
+  lines.push("\nPlease check your .env file or environment configuration.");
+  lines.push("See env.example for reference.\n");
+  process.stderr.write(lines.join("\n") + "\n");
   process.exit(1);
 }
 
