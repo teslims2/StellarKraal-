@@ -1,36 +1,43 @@
-"use client";
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { GlossaryTerm } from "@/components/GlossaryTerm";
-import WalletConnect from "@/components/WalletConnect";
-import CollateralCard from "@/components/CollateralCard";
-import RepayPanel from "@/components/RepayPanel";
-import HealthGauge from "@/components/HealthGauge";
-import LoanRepaymentCalculator from "@/components/LoanRepaymentCalculator";
-import TransactionHistory from "@/components/TransactionHistory";
-import SkeletonHealthDashboard from "@/components/SkeletonHealthDashboard";
-import HelpMenu from "@/components/HelpMenu";
-import OnboardingModal from "@/components/OnboardingModal";
-import Card from "@/components/Card";
-import { useHealthFactor } from "@/hooks/useHealthFactor";
-import { useOnboarding } from "@/hooks/useOnboarding";
+'use client';
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { GlossaryTerm } from '@/components/GlossaryTerm';
+import WalletConnect from '@/components/WalletConnect';
+import CollateralCard from '@/components/CollateralCard';
+import RepayPanel from '@/components/RepayPanel';
+import HealthGauge from '@/components/HealthGauge';
+import LoanRepaymentCalculator from '@/components/LoanRepaymentCalculator';
+import TransactionHistory from '@/components/TransactionHistory';
+import SkeletonHealthDashboard from '@/components/SkeletonHealthDashboard';
+import ErrorState from '@/components/ErrorState';
+import HelpMenu from '@/components/HelpMenu';
+import OnboardingModal from '@/components/OnboardingModal';
+import Card from '@/components/Card';
+import { useHealthFactor } from '@/hooks/useHealthFactor';
+import { useOnboarding } from '@/hooks/useOnboarding';
 
 export default function Dashboard() {
   const router = useRouter();
   const [wallet, setWallet] = useState<string | null>(null);
-  const [loanId, setLoanId] = useState("");
-  const [activeLoanId, setActiveLoanId] = useState("");
-  
+  const [loanId, setLoanId] = useState('');
+  const [activeLoanId, setActiveLoanId] = useState('');
+
   useEffect(() => {
-    if (typeof window !== "undefined" && window.location.search.includes("mockWallet=true")) {
-      setWallet("GBXXXXXXMOCKWALLETADDRESSXXXXXX");
+    if (typeof window !== 'undefined' && window.location.search.includes('mockWallet=true')) {
+      setWallet('GBXXXXXXMOCKWALLETADDRESSXXXXXX');
     }
   }, []);
-  
-  const { showOnboarding, openOnboarding, closeOnboarding } = useOnboarding();
-  const { healthFactor } = useHealthFactor(activeLoanId);
 
-  function handleProceedToRepay(nextLoanId: string, _nextAmount: string) {
+  const { showOnboarding, openOnboarding, closeOnboarding } = useOnboarding();
+  const {
+    healthFactor,
+    loading: isHealthLoading,
+    error: healthError,
+    refresh: refreshHealth,
+  } = useHealthFactor(activeLoanId);
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  function handleProceedToRepay(nextLoanId: string, _amount: string) {
     setLoanId(nextLoanId);
   }
 
@@ -51,7 +58,7 @@ export default function Dashboard() {
             <CollateralCard walletAddress={wallet} />
             <LoanRepaymentCalculator
               onProceed={handleProceedToRepay}
-              onApplyForLoan={() => router.push("/borrow")}
+              onApplyForLoan={() => router.push('/borrow')}
             />
           </div>
 
@@ -82,13 +89,21 @@ export default function Dashboard() {
                   onChange={(e) => setLoanId(e.target.value)}
                 />
                 <button
-                  onClick={refreshHealth}
+                  onClick={() => {
+                    setActiveLoanId(loanId);
+                    refreshHealth();
+                  }}
                   className="rounded-lg bg-gold-500 px-4 py-2 font-semibold text-cream-50 transition hover:bg-gold-600 flex items-center gap-2"
                 >
                   Check
                 </button>
               </div>
-              {healthFactor !== null && <HealthGauge value={healthFactor} />}
+              {healthError && (
+                <div className="mt-4">
+                  <ErrorState message={healthError} onRetry={refreshHealth} />
+                </div>
+              )}
+              {healthFactor !== null && !healthError && <HealthGauge value={healthFactor} />}
             </Card>
           )}
         </>

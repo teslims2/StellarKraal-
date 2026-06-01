@@ -8,6 +8,7 @@ import Card from '@/components/Card';
 import SkeletonLoanCard from '@/components/SkeletonLoanCard';
 import Pagination from '@/components/Pagination';
 import EmptyState from '@/components/EmptyState';
+import ErrorState from '@/components/ErrorState';
 import { usePagination } from '@/hooks/usePagination';
 import { usePolling } from '@/hooks/usePolling';
 import { badgeVariants } from '@/lib/animations';
@@ -31,16 +32,21 @@ function LoanListContent() {
   const reduced = useReducedMotion();
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const fetchLoans = useCallback(() => {
+    setError(null);
     fetch(`${API}/api/loans`)
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`Server error: ${r.status}`);
+        return r.json();
+      })
       .then((data) => {
-        setLoans(Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data : []));
+        setLoans(Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : []);
         setLastUpdated(new Date());
       })
-      .catch(() => {})
+      .catch((e) => setError(e.message || 'Failed to load loans'))
       .finally(() => setLoading(false));
   }, []);
 
@@ -87,6 +93,8 @@ function LoanListContent() {
             </li>
           ))}
         </ul>
+      ) : error ? (
+        <ErrorState message={error} onRetry={fetchLoans} />
       ) : filtered.length === 0 ? (
         <EmptyState
           icon="📋"
