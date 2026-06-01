@@ -64,13 +64,13 @@ function LoanListContent() {
           {filtered.map((loan) => (
             <li
               key={loan.id}
-              className="bg-white rounded-xl p-4 shadow-sm border border-brown/10 flex justify-between items-center"
+              className="bg-white rounded-xl p-4 shadow-sm border border-brown/10 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2"
             >
-              <div>
+              <div className="min-w-0">
                 <p className="font-semibold text-brown text-sm">Loan #{loan.id}</p>
-                <p className="text-xs text-brown/60 truncate max-w-xs">{loan.borrower}</p>
+                <p className="text-xs text-brown/60 truncate">{loan.borrower}</p>
               </div>
-              <div className="text-right">
+              <div className="sm:text-right flex sm:flex-col items-center sm:items-end gap-2 sm:gap-0 flex-shrink-0">
                 <p className="text-sm font-medium text-brown">{loan.amount.toLocaleString()}</p>
                 <motion.span
                   key={loan.status}
@@ -102,7 +102,7 @@ export default function LoansPage() {
   return (
     <PageTransition>
     <main className="max-w-3xl mx-auto px-4 py-10">
-      <h1 className="text-3xl font-bold text-brown mb-6">Loans</h1>
+      <h1 className="text-2xl sm:text-3xl font-bold text-brown mb-6">Loans</h1>
       <Suspense fallback={<p className="text-brown/60 text-sm">Loading…</p>}>
         <LoanListContent />
       </Suspense>

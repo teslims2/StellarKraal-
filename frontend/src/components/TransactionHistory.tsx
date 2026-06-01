@@ -49,8 +49,10 @@ export default function TransactionHistory({ walletAddress }: { walletAddress: s
       <h2 className="text-xl font-semibold text-brown mb-3">Transactions</h2>
       <ul className="space-y-2">
         {transactions.map((tx) => (
-          <li key={tx.id} className="text-sm text-brown/80 border-b border-brown/10 pb-2">
-            Loan #{tx.loan_id} — {tx.amount} stroops — {new Date(tx.created_at).toLocaleDateString()}
+          <li key={tx.id} className="flex flex-wrap justify-between gap-x-4 gap-y-0.5 text-sm text-brown/80 border-b border-brown/10 pb-2">
+            <span className="font-medium">Loan #{tx.loan_id}</span>
+            <span className="text-brown/60">{tx.amount.toLocaleString()} stroops</span>
+            <span className="text-brown/50 text-xs self-end">{new Date(tx.created_at).toLocaleDateString()}</span>
           </li>
         ))}
       </ul>

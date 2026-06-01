@@ -31,7 +31,7 @@ export default function CollateralCard({ walletAddress }: Props) {
       <h2 className={`text-xl font-semibold ${colors.text.primary} mb-3`}>Loan Lookup</h2>
       <div className="flex gap-2">
         <input
-          className={`${colors.form.input} rounded-lg px-3 py-2 flex-1 ${colors.text.primary} ${colors.form.placeholder}`}
+          className={`${colors.form.input} rounded-lg px-3 py-2 flex-1 min-w-0 ${colors.text.primary} ${colors.form.placeholder}`}
           placeholder="Loan ID"
           value={collateralId}
           onChange={(e) => setCollateralId(e.target.value)}

@@ -61,15 +61,15 @@ function CollateralListContent() {
           {filtered.map((col) => (
             <li
               key={col.id}
-              className="bg-white rounded-xl p-4 shadow-sm border border-brown/10 flex justify-between items-center"
+              className="bg-white rounded-xl p-4 shadow-sm border border-brown/10 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2"
             >
-              <div>
+              <div className="min-w-0">
                 <p className="font-semibold text-brown text-sm capitalize">
                   {col.animal_type} — {col.count} head
                 </p>
-                <p className="text-xs text-brown/60 truncate max-w-xs">{col.owner}</p>
+                <p className="text-xs text-brown/60 truncate">{col.owner}</p>
               </div>
-              <div className="text-right">
+              <div className="sm:text-right flex sm:flex-col items-center sm:items-end gap-2 sm:gap-0 flex-shrink-0">
                 <p className="text-sm font-medium text-brown">
                   {col.appraised_value.toLocaleString()}
                 </p>
@@ -87,7 +87,7 @@ export default function CollateralPage() {
   return (
     <PageTransition>
     <main className="max-w-3xl mx-auto px-4 py-10">
-      <h1 className="text-3xl font-bold text-brown mb-6">Collateral</h1>
+      <h1 className="text-2xl sm:text-3xl font-bold text-brown mb-6">Collateral</h1>
       <Suspense fallback={<p className="text-brown/60 text-sm">Loading…</p>}>
         <CollateralListContent />
       </Suspense>
