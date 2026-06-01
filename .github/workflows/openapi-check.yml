@@ -1,0 +1,28 @@
+name: OpenAPI Spec Check
+
+on:
+  pull_request:
+    paths:
+      - "backend/src/routes/**"
+      - "backend/src/index.ts"
+      - "backend/openapi.json"
+  push:
+    branches:
+      - main
+
+jobs:
+  validate-spec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate OpenAPI 3.0 spec
+        run: npx --yes @redocly/cli@1.x lint --extends=minimal backend/openapi.json
+
+      - name: Check spec is committed
+        run: |
+          if [ ! -f backend/openapi.json ]; then
+            echo "ERROR: backend/openapi.json is missing."
+            exit 1
+          fi
+          echo "openapi.json present"

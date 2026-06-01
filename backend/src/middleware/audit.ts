@@ -2,15 +2,16 @@ import { Request, Response, NextFunction } from "express";
 import winston from "winston";
 import DailyRotateFile from "winston-daily-rotate-file";
 import path from "path";
+import { config } from "../config";
 
 // ── Sensitive fields to redact ────────────────────────────────────────────────
 const REDACTED_FIELDS = new Set([
-  "password", "secret", "private_key", "privateKey", "seed",
-  "mnemonic", "token", "authorization", "api_key", "apiKey",
-  "secret_key", "secretKey", "signing_key", "signingKey",
+  "password", "secret", "private_key", "privatekey", "seed",
+  "mnemonic", "token", "authorization", "api_key", "apikey",
+  "secret_key", "secretkey", "signing_key", "signingkey",
 ]);
 
-function redact(obj: unknown, depth = 0): unknown {
+export function redact(obj: unknown, depth = 0): unknown {
   if (depth > 5 || obj === null || typeof obj !== "object") return obj;
   const result: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
@@ -20,7 +21,7 @@ function redact(obj: unknown, depth = 0): unknown {
 }
 
 // ── Audit log transport (separate file with 30-day rotation) ──────────────────
-const LOG_DIR = process.env.AUDIT_LOG_DIR || path.join(process.cwd(), "logs");
+const LOG_DIR = config.AUDIT_LOG_DIR ?? path.join(process.cwd(), "logs");
 
 const auditTransport = new DailyRotateFile({
   dirname: LOG_DIR,
@@ -38,7 +39,7 @@ const auditLogger = winston.createLogger({
   level: "info",
   transports: [auditTransport],
   // Also write to console in non-production for visibility
-  ...(process.env.NODE_ENV !== "production" && {
+  ...(config.NODE_ENV !== "production" && {
     transports: [
       auditTransport,
       new winston.transports.Console({

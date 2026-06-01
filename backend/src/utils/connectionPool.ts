@@ -1,8 +1,9 @@
 import { SorobanRpc } from "@stellar/stellar-sdk";
+import { config } from "../config";
 
 const { Server } = SorobanRpc;
 
-const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
+const RPC_URL = config.RPC_URL;
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 
@@ -89,10 +90,16 @@ class ConnectionPool {
       this.release(conn);
     }
   }
+
+  /**
+   * Close all connections in the pool.
+   * Should be called during graceful shutdown.
+   */
+  close(): void {
+    this.pool = [];
+    this.inUse.clear();
+  }
 }
 
-const POOL_MIN = parseInt(process.env.POOL_MIN || "2", 10);
-const POOL_MAX = parseInt(process.env.POOL_MAX || "10", 10);
-
-export const pool = new ConnectionPool(POOL_MIN, POOL_MAX);
+export const pool = new ConnectionPool(config.POOL_MIN, config.POOL_MAX);
 export { PoolExhaustedError };
