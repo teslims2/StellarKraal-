@@ -22,6 +22,7 @@ import { stellarPublicKeySchema } from "../validators/stellar";
 import { registerWebhook, getWebhooks, getDeliveryLogs } from "../webhooks";
 import { timeoutMiddleware } from "../middleware/timeout";
 import { writeLimiter } from "../middleware/rateLimit";
+import { getCollateral } from "../db/store";
 
 const { Server } = SorobanRpc;
 
@@ -246,6 +247,15 @@ v1Router.get("/health/:loanId", async (req: Request, res: Response, next: NextFu
   } catch (err) {
     next(err);
   }
+});
+
+// GET /collateral/:id
+v1Router.get("/collateral/:id", (req: Request, res: Response) => {
+  const record = getCollateral(req.params.id);
+  if (!record) {
+    return res.status(404).json({ error: "Collateral not found" });
+  }
+  res.json(record);
 });
 
 // POST /oracle/price-update

@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import Link from "next/link";
 
 interface Props {
   walletAddress: string;
@@ -36,6 +37,14 @@ export default function CollateralCard({ walletAddress }: Props) {
           {loading ? "…" : "Fetch"}
         </button>
       </div>
+      {collateralId && (
+        <Link
+          href={`/collateral/${collateralId}`}
+          className="mt-3 inline-block text-sm text-gold hover:underline"
+        >
+          View collateral detail →
+        </Link>
+      )}
       {data && (
         <pre className="mt-4 bg-cream rounded-lg p-3 text-xs overflow-auto">
           {JSON.stringify(data, null, 2)}

@@ -4,12 +4,22 @@
  * Migration: adds deletedAt timestamp to all records.
  */
 
+export interface AppraisalEntry {
+  date: string;
+  value: number;
+}
+
 export interface CollateralRecord {
   id: string;
   owner: string;
   animal_type: string;
+  breed?: string;
+  age_years?: number;
+  weight_kg?: number;
+  photo_url?: string;
   count: number;
   appraised_value: number;
+  appraisal_history: AppraisalEntry[];
   createdAt: string;
   deletedAt: string | null;
 }
@@ -29,10 +39,23 @@ const loanTable: Map<string, LoanRecord> = new Map();
 
 // ── Collateral ────────────────────────────────────────────────────────────────
 
-export function insertCollateral(data: Omit<CollateralRecord, "createdAt" | "deletedAt">): CollateralRecord {
-  const record: CollateralRecord = { ...data, createdAt: new Date().toISOString(), deletedAt: null };
+export function insertCollateral(data: Omit<CollateralRecord, "createdAt" | "deletedAt" | "appraisal_history">): CollateralRecord {
+  const record: CollateralRecord = {
+    ...data,
+    appraisal_history: [{ date: new Date().toISOString(), value: data.appraised_value }],
+    createdAt: new Date().toISOString(),
+    deletedAt: null,
+  };
   collateralTable.set(record.id, record);
   return record;
+}
+
+export function addAppraisal(id: string, value: number): boolean {
+  const r = collateralTable.get(id);
+  if (!r || r.deletedAt !== null) return false;
+  r.appraised_value = value;
+  r.appraisal_history.push({ date: new Date().toISOString(), value });
+  return true;
 }
 
 export function listCollateral(): CollateralRecord[] {

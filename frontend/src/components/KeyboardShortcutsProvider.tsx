@@ -15,6 +15,7 @@ export default function KeyboardShortcutsProvider({ children }: { children: Reac
     { key: "h",      hint: "H",   label: "Go to Home",               action: () => router.push("/") },
     { key: "d",      hint: "D",   label: "Go to Dashboard",          action: () => router.push("/dashboard") },
     { key: "b",      hint: "B",   label: "Borrow (get a loan)",      action: () => router.push("/borrow") },
+    { key: "c",      hint: "C",   label: "Go to Collateral",         action: () => router.push("/dashboard") },
     { key: "r",      hint: "R",   label: "Go to repay (dashboard)",  action: () => router.push("/dashboard") },
     { key: "Escape", hint: "Esc", label: "Close modal / cancel",     action: () => setHelpOpen(false) },
   ], [router, toggleHelp]);
