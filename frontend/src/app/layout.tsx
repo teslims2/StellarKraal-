@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import KeyboardShortcutsProvider from "@/components/KeyboardShortcutsProvider";
 import Link from "next/link";
 import OfflineBanner from "@/components/OfflineBanner";
 import Navbar from "@/components/Navbar";
@@ -17,6 +18,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
+    <html lang="en">
+      <body className="bg-cream text-brown min-h-screen">
+        <KeyboardShortcutsProvider>{children}</KeyboardShortcutsProvider>
     <html lang="en" suppressHydrationWarning>
       <head>
         {/* Blocking script prevents flash-of-wrong-theme before React hydrates */}
