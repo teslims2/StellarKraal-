@@ -56,7 +56,7 @@ export default function CollateralPage() {
 
   return (
     <main className="max-w-6xl mx-auto px-4 py-10">
-      <h1 className="text-3xl font-bold text-brown mb-6">My Collateral</h1>
+      <h1 className="text-2xl sm:text-3xl font-bold text-brown mb-6">My Collateral</h1>
       <WalletConnect onConnect={setWallet} />
 
       {wallet && (

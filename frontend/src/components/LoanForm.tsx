@@ -88,7 +88,7 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
   }
 
   return (
-    <div className="bg-white rounded-2xl p-6 shadow mt-6 space-y-4">
+    <div className="bg-white dark:bg-[#1C1008] rounded-2xl p-6 shadow border border-transparent dark:border-gold/20 mt-6 space-y-4">
       {step === "collateral" ? (
         <>
           <h2 className="text-xl font-semibold text-brown-700">1. Register Collateral</h2>

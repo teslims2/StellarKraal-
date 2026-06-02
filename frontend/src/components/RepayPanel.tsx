@@ -13,6 +13,9 @@ interface Props {
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
+const inputCls =
+  "w-full border border-brown/30 dark:border-gold/40 rounded-lg px-3 py-2 bg-white dark:bg-[#2A1A08] text-brown dark:text-cream placeholder:text-brown/40 dark:placeholder:text-cream/40 focus:outline-none focus:ring-2 focus:ring-gold dark:focus:ring-[#F5D060]";
+
 export default function RepayPanel({ walletAddress }: Props) {
   const [loanId, setLoanId] = useState("");
   const [amount, setAmount] = useState("");
