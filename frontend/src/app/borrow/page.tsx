@@ -18,7 +18,10 @@ export default function Borrow() {
   return (
     <PageTransition>
     <main className="max-w-lg mx-auto px-4 py-10">
-      <h1 className="text-3xl font-bold text-brown mb-6">Borrow</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-3xl font-bold text-brown dark:text-cream">Borrow</h1>
+        <ThemeToggle />
+      </div>
       <WalletConnect onConnect={setWallet} />
       {wallet && (
         <CollateralRegistrationForm 
