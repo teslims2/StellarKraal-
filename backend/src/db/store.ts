@@ -7,14 +7,23 @@
  * In production, replace with actual database queries.
  */
 
+export interface AppraisalEntry {
+  date: string;
+  value: number;
+}
 export type CollateralStatus = "available" | "pledged" | "liquidated";
 
 export interface CollateralRecord {
   id: string;
   owner: string;
   animal_type: string;
+  breed?: string;
+  age_years?: number;
+  weight_kg?: number;
+  photo_url?: string;
   count: number;
   appraised_value: number;
+  appraisal_history: AppraisalEntry[];
   species?: string;
   breed?: string;
   age?: number;
@@ -59,6 +68,13 @@ const transactionTable: Map<string, TransactionRecord> = new Map();
 
 // ── Collateral ────────────────────────────────────────────────────────────────
 
+export function insertCollateral(data: Omit<CollateralRecord, "createdAt" | "deletedAt" | "appraisal_history">): CollateralRecord {
+  const record: CollateralRecord = {
+    ...data,
+    appraisal_history: [{ date: new Date().toISOString(), value: data.appraised_value }],
+    createdAt: new Date().toISOString(),
+    deletedAt: null,
+  };
 /**
  * Insert a new collateral record into the in-memory store.
  * @param data - Collateral fields excluding auto-generated timestamps.
@@ -72,6 +88,16 @@ export function insertCollateral(data: Omit<CollateralRecord, "createdAt" | "del
   return record;
 }
 
+export function addAppraisal(id: string, value: number): boolean {
+  const r = collateralTable.get(id);
+  if (!r || r.deletedAt !== null) return false;
+  r.appraised_value = value;
+  r.appraisal_history.push({ date: new Date().toISOString(), value });
+  return true;
+}
+
+export function listCollateral(): CollateralRecord[] {
+  return [...collateralTable.values()].filter((r) => r.deletedAt === null);
 /**
  * Return non-deleted collateral records with optional filtering and pagination.
  * @param filters - Optional filter and pagination options.
@@ -113,6 +139,17 @@ export function listCollateral(filters?: {
 export function getCollateral(id: string): CollateralRecord | undefined {
   const r = collateralTable.get(id);
   return r && r.deletedAt === null ? r : undefined;
+}
+
+/**
+ * Update fields on an existing collateral record.
+ */
+export function updateCollateral(id: string, updates: Partial<Omit<CollateralRecord, "id" | "createdAt">>): CollateralRecord | undefined {
+  const record = collateralTable.get(id);
+  if (!record) return undefined;
+  const updated = { ...record, ...updates };
+  collateralTable.set(id, updated);
+  return updated;
 }
 
 /**
@@ -257,6 +294,14 @@ export function listDeletedLoans(): LoanRecord[] {
   return [...loanTable.values()].filter((r) => r.deletedAt !== null);
 }
 
+/** Returns true if the collateral is already pledged to an active (non-deleted) loan. */
+export function isCollateralPledged(collateralId: string): boolean {
+  return [...loanTable.values()].some(
+    (r) => r.collateral_id === collateralId && r.deletedAt === null,
+  );
+}
+
+// ── Migration helper (documents schema intent) ────────────────────────────────
 /**
  * Check if a collateral record is currently pledged to an active loan.
  * @param collateralId - Collateral record ID.
@@ -376,4 +421,33 @@ export function updateTransaction(id: string, updates: Partial<Omit<TransactionR
   const updated = { ...record, ...updates, updatedAt: new Date().toISOString() };
   transactionTable.set(id, updated);
   return updated;
+}
+
+// ── Liquidation Events ────────────────────────────────────────────────────────
+
+export interface LiquidationEvent {
+  id: string;
+  loan_id: string;
+  liquidator: string;
+  repay_amount: number;
+  timestamp: string;
+}
+
+const liquidationEventTable: Map<string, LiquidationEvent> = new Map();
+
+/**
+ * Record a liquidation event.
+ */
+export function insertLiquidationEvent(data: Omit<LiquidationEvent, "id" | "timestamp">): LiquidationEvent {
+  const id = `liq_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const record: LiquidationEvent = { ...data, id, timestamp: new Date().toISOString() };
+  liquidationEventTable.set(id, record);
+  return record;
+}
+
+/**
+ * List all liquidation events for a given loan.
+ */
+export function getLiquidationEvents(loan_id: string): LiquidationEvent[] {
+  return [...liquidationEventTable.values()].filter((e) => e.loan_id === loan_id);
 }
