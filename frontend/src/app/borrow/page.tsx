@@ -4,6 +4,7 @@ import WalletConnect from "@/components/WalletConnect";
 import CollateralRegistrationForm from "@/components/CollateralRegistrationForm";
 import LoanForm from "@/components/LoanForm";
 import PageTransition from "@/components/PageTransition";
+import ThemeToggle from "@/components/ThemeToggle";
 
 export default function Borrow() {
   const [wallet, setWallet] = useState<string | null>(null);
