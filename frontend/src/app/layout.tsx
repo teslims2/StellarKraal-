@@ -18,14 +18,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className="bg-cream text-brown min-h-screen">
-        <KeyboardShortcutsProvider>{children}</KeyboardShortcutsProvider>
     <html lang="en" suppressHydrationWarning>
-      <head>
-        {/* Blocking script prevents flash-of-wrong-theme before React hydrates */}
-        <ThemeScript />
-      </head>
       <body
         className="min-h-screen overflow-x-hidden px-4"
         style={{
@@ -33,9 +26,11 @@ export default function RootLayout({
           color: "var(--color-text)",
         }}
       >
+        <ThemeScript />
         <ThemeProvider>
-          <ToastProvider>
-            <OfflineBanner />
+          <KeyboardShortcutsProvider>
+            <ToastProvider>
+              <OfflineBanner />
             {/* Top utility nav */}
             <nav
               className="flex gap-4 px-6 py-3 text-sm border-b"
@@ -91,7 +86,8 @@ export default function RootLayout({
             <Navbar />
             {children}
             <ToastContainer />
-          </ToastProvider>
+            </ToastProvider>
+          </KeyboardShortcutsProvider>
         </ThemeProvider>
       </body>
     </html>

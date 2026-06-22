@@ -109,39 +109,6 @@ export default function Dashboard() {
         </>
       )}
 
-      {/* Repayment history section */}
-      <div className="bg-white rounded-2xl p-6 shadow mb-4">
-        <h2 className="text-xl font-semibold text-brown mb-1">Repayment History</h2>
-        {repayHistory.length > 0 ? (
-          <RepayPanel walletAddress={wallet} />
-        ) : (
-          <RepaymentEmptyState onViewLoans={fetchHealth} />
-        )}
-      </div>
-
-      {/* Health factor section */}
-      <div className="mt-4 bg-white rounded-2xl p-6 shadow">
-        <h2 className="text-xl font-semibold text-brown mb-3">Health Factor</h2>
-        <div className="flex gap-2 items-center">
-          <input
-            className="border border-brown/30 rounded-lg px-3 py-2 flex-1"
-            placeholder="Loan ID"
-            value={loanId}
-            onChange={(e) => setLoanId(e.target.value)}
-          />
-          <button
-            onClick={fetchHealth}
-            className="bg-gold text-brown font-semibold px-4 py-2 rounded-lg hover:bg-gold/80 transition"
-          >
-            Check
-          </button>
-        </div>
-        {healthFactor !== null ? (
-          <HealthGauge value={healthFactor} />
-        ) : (
-          <LoansEmptyState onBorrow={() => router.push("/borrow")} />
-        )}
-      </div>
     </main>
   );
 }

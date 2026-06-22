@@ -1,5 +1,7 @@
 "use client";
 import { Shortcut } from "@/hooks/useKeyboardShortcuts";
+import { useEffect, useRef } from "react";
+import FocusTrap from "focus-trap-react";
 
 interface Props {
   shortcuts: Shortcut[];
@@ -7,18 +9,34 @@ interface Props {
 }
 
 export default function ShortcutsHelpModal({ shortcuts, onClose }: Props) {
+  const triggerRef = useRef<Element | null>(null);
+
+  useEffect(() => {
+    triggerRef.current = document.activeElement;
+    return () => {
+      (triggerRef.current as HTMLElement | null)?.focus();
+    };
+  }, []);
+
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Keyboard shortcuts"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      onClick={onClose}
-    >
+    <FocusTrap active focusTrapOptions={{ allowOutsideClick: true, escapeDeactivates: false }}>
       <div
-        className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm"
-        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Keyboard shortcuts"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+        onClick={onClose}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            onClose();
+          }
+        }}
       >
+        <div
+          className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm"
+          onClick={(e) => e.stopPropagation()}
+        >
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-semibold text-brown">Keyboard Shortcuts</h2>
           <button
@@ -41,6 +59,7 @@ export default function ShortcutsHelpModal({ shortcuts, onClose }: Props) {
         </ul>
         <p className="text-xs text-brown/40 mt-4">Press <kbd className="font-mono">?</kbd> to toggle this panel</p>
       </div>
-    </div>
+      </div>
+    </FocusTrap>
   );
 }
