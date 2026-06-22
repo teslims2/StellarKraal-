@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import WalletConnect from '@/components/WalletConnect';
 import CollateralSummary from '@/components/CollateralSummary';
@@ -7,45 +7,18 @@ import CollateralGrid from '@/components/CollateralGrid';
 import ErrorState from '@/components/ErrorState';
 import Pagination from '@/components/Pagination';
 import { usePagination } from '@/hooks/usePagination';
+import { useOwnerCollateral } from '@/hooks/useCollateral';
 import { Button } from '@/components/ui';
-
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-
-interface Collateral {
-  id: string;
-  owner: string;
-  animal_type: string;
-  count: number;
-  appraised_value: number;
-  createdAt: string;
-}
 
 export default function CollateralPage() {
   const router = useRouter();
   const [wallet, setWallet] = useState<string | null>(null);
-  const [collaterals, setCollaterals] = useState<Collateral[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchCollaterals = useCallback(async () => {
-    if (!wallet) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`${API}/api/collateral/list?owner=${wallet}`);
-      if (!res.ok) throw new Error(`Server error: ${res.status}`);
-      const data = await res.json();
-      setCollaterals(data.collaterals || []);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load collateral');
-    } finally {
-      setLoading(false);
-    }
-  }, [wallet]);
-
-  useEffect(() => {
-    fetchCollaterals();
-  }, [fetchCollaterals]);
+  const {
+    collaterals,
+    isLoading: loading,
+    error,
+    refresh: fetchCollaterals,
+  } = useOwnerCollateral(wallet);
 
   function handleCardClick(collateralId: string) {
     router.push(`/dashboard/collateral/${collateralId}`);

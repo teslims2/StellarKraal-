@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { signTransaction } from "@/lib/freighterClient";
 import { submitSignedXdr } from "@/lib/stellarUtils";
+import { invalidateLoans } from "@/lib/api";
 import Tooltip from "@/components/Tooltip";
 import { colors } from "@/lib/design-tokens";
 import Card from "@/components/Card";
@@ -44,6 +45,8 @@ export default function RepayPanel({ walletAddress }: Props) {
         network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET",
       });
       await submitSignedXdr(signedTxXdr);
+      // Loan state changed — drop cached loan lists so they revalidate.
+      invalidateLoans();
       toast.success("Repayment submitted successfully!");
       setLoanId("");
       setAmount("");

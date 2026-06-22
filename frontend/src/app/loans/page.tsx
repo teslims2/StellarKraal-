@@ -1,5 +1,5 @@
 'use client';
-import { Suspense, useCallback, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { motion, useReducedMotion } from 'framer-motion';
 import SearchFilterBar from '@/components/SearchFilterBar';
@@ -10,47 +10,27 @@ import Pagination from '@/components/Pagination';
 import EmptyState from '@/components/EmptyState';
 import ErrorState from '@/components/ErrorState';
 import { usePagination } from '@/hooks/usePagination';
-import { usePolling } from '@/hooks/usePolling';
+import { useLoans } from '@/hooks/useLoans';
 import { badgeVariants } from '@/lib/animations';
-
-interface Loan {
-  id: string;
-  borrower: string;
-  amount: number;
-  status: string;
-  createdAt: string;
-}
 
 const STATUS_OPTIONS = ['active', 'repaid', 'liquidated', 'pending'];
 const TYPE_OPTIONS: string[] = [];
 const POLL_INTERVAL = 15_000;
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-
 function LoanListContent() {
   const searchParams = useSearchParams();
   const reduced = useReducedMotion();
-  const [loans, setLoans] = useState<Loan[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    loans,
+    isLoading: loading,
+    error,
+    refresh,
+  } = useLoans({ refreshInterval: POLL_INTERVAL });
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const fetchLoans = useCallback(() => {
-    setError(null);
-    fetch(`${API}/api/loans`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`Server error: ${r.status}`);
-        return r.json();
-      })
-      .then((data) => {
-        setLoans(Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : []);
-        setLastUpdated(new Date());
-      })
-      .catch((e) => setError(e.message || 'Failed to load loans'))
-      .finally(() => setLoading(false));
-  }, []);
-
-  usePolling(fetchLoans, POLL_INTERVAL);
+  useEffect(() => {
+    if (!loading && !error) setLastUpdated(new Date());
+  }, [loans, loading, error]);
 
   const q = (searchParams.get('q') ?? '').toLowerCase();
   const statuses = searchParams.getAll('status');
@@ -94,7 +74,7 @@ function LoanListContent() {
           ))}
         </ul>
       ) : error ? (
-        <ErrorState message={error} onRetry={fetchLoans} />
+        <ErrorState message={error} onRetry={refresh} />
       ) : filtered.length === 0 ? (
         <EmptyState
           icon="📋"
