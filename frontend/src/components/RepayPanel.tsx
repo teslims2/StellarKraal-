@@ -2,6 +2,8 @@
 import { useState } from "react";
 import { signTransaction } from "@/lib/freighterClient";
 import { submitSignedXdr } from "@/lib/stellarUtils";
+import { invalidateLoans } from "@/lib/api";
+import Tooltip from "@/components/Tooltip";
 import { colors } from "@/lib/design-tokens";
 import Card from "@/components/Card";
 import Spinner from "@/components/Spinner";
@@ -12,6 +14,9 @@ interface Props {
 }
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
+const inputCls =
+  "w-full border border-brown/30 dark:border-gold/40 rounded-lg px-3 py-2 bg-white dark:bg-[#2A1A08] text-brown dark:text-cream placeholder:text-brown/40 dark:placeholder:text-cream/40 focus:outline-none focus:ring-2 focus:ring-gold dark:focus:ring-[#F5D060]";
 
 export default function RepayPanel({ walletAddress }: Props) {
   const [loanId, setLoanId] = useState("");
@@ -40,6 +45,8 @@ export default function RepayPanel({ walletAddress }: Props) {
         network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET",
       });
       await submitSignedXdr(signedTxXdr);
+      // Loan state changed — drop cached loan lists so they revalidate.
+      invalidateLoans();
       toast.success("Repayment submitted successfully!");
       setLoanId("");
       setAmount("");
@@ -70,6 +77,15 @@ export default function RepayPanel({ walletAddress }: Props) {
           onChange={(e) => setAmount(e.target.value)}
           type="number"
         />
+        <Tooltip hint="R — Repay loan">
+          <button
+            onClick={repay}
+            disabled={loading}
+            className="w-full bg-gold text-brown py-2.5 rounded-xl font-semibold hover:bg-gold/80 transition disabled:opacity-50"
+          >
+            {loading ? "Processing…" : "Repay"}
+          </button>
+        </Tooltip>
         <button
           onClick={repay}
           disabled={loading}

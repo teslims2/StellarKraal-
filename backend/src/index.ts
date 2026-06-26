@@ -1,7 +1,6 @@
 import "./config"; // validate env at startup
 import { config } from "./config";
 import express, { Request, Response, NextFunction } from "express";
-import cors from "cors";
 import { runMigrations as runDbMigrations, checkDbHealth, getMigrationStatus } from "./db/migrationRunner";
 import { errorHandler } from "./middleware/errorHandler";
 import {
@@ -23,10 +22,13 @@ import {
   listTransactions,
   getTransaction,
   type TransactionType,
+  type CollateralStatus,
+  type TransactionStatus,
 } from "./db/store";
 import { corsMiddleware } from "./middleware/cors";
 import { correlationMiddleware } from "./middleware/correlation";
 import { loggingMiddleware } from "./middleware/logging";
+import { getIdempotencyEntry, setIdempotencyEntry } from "./middleware/idempotency";
 import {
   Networks,
   TransactionBuilder,
@@ -48,6 +50,7 @@ import {
   invalidateAll,
   configureCacheTTL,
 } from "./utils/appraisalCache";
+import { responseCacheMiddleware, invalidateCache } from "./utils/responseCache";
 import { randomUUID } from "crypto";
 import path from "path";
 import { mkdirSync } from "fs";
@@ -83,27 +86,6 @@ function track5xx() {
   }
 }
 
-// ── Idempotency cache (in-memory, 24h TTL) ───────────────────────────────────
-interface IdempotencyEntry {
-  status: number;
-  body: unknown;
-  createdAt: number;
-}
-const idempotencyCache = new Map<string, IdempotencyEntry>();
-const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
-function getIdempotencyEntry(key: string): IdempotencyEntry | undefined {
-  const entry = idempotencyCache.get(key);
-  if (!entry) return undefined;
-  if (Date.now() - entry.createdAt > IDEMPOTENCY_TTL_MS) {
-    idempotencyCache.delete(key);
-    return undefined;
-  }
-  return entry;
-}
-function setIdempotencyEntry(key: string, status: number, body: unknown): void {
-  idempotencyCache.set(key, { status, body, createdAt: Date.now() });
-}
-
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
 const NETWORK_PASSPHRASE =
   config.NEXT_PUBLIC_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
@@ -111,9 +93,6 @@ const APP_VERSION = process.env.npm_package_version || "1.0.0";
 const startTime = Date.now();
 
 const app = express();
-
-const isProduction = process.env.NODE_ENV === "production";
-const FRONTEND_URL = process.env.FRONTEND_URL;
 
 // Startup warning for CORS misconfiguration
 app.use(corsMiddleware);
@@ -129,7 +108,7 @@ app.get("/api/health", async (_req: Request, res: Response) => {
     await pool.run((server) => server.getHealth());
     rpcReachable = true;
   } catch (error) {
-    console.warn("RPC health check failed:", (error as Error).message);
+    logger.warn("RPC health check failed", { error: (error as Error).message });
   }
   const status = dbHealthy && rpcReachable ? "healthy" : "degraded";
   res.status(dbHealthy && rpcReachable ? 200 : 503).json({
@@ -143,22 +122,20 @@ app.get("/api/health", async (_req: Request, res: Response) => {
   });
 });
 
+app.use(correlationMiddleware);
+// Request ID middleware
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const requestId = (req.headers["x-request-id"] as string) || randomUUID();
+  (req as any).requestId = requestId;
+  res.setHeader("X-Request-ID", requestId);
+  (req as any).logger = createRequestLogger(req.requestId!);
+  next();
+});
 app.use(globalLimiter);
 app.use(timeoutMiddleware(parseInt(config.TIMEOUT_GLOBAL_MS, 10)));
-app.use(correlationMiddleware);
 app.use(loggingMiddleware);
 app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
 
-// Request ID middleware
-app.use((req: Request, res: Response, next: NextFunction) => {
-  const requestId = randomUUID();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (req as any).requestId = requestId;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (req as any).logger = createRequestLogger(requestId);
-  res.setHeader("X-Request-ID", requestId);
-  next();
-});
 
 // Shutdown middleware - reject new requests during graceful shutdown
 let isShuttingDown = false;
@@ -175,7 +152,6 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 // Request logging middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const reqLogger = (req as any).logger;
   reqLogger.info(`${req.method} ${req.path}`, {
     method: req.method,
@@ -206,7 +182,7 @@ app.use("/api/auth", authLimiter, authRouter);
 app.use(jwtMiddleware);
 
 // Configure appraisal cache TTL from env
-configureCacheTTL(config.APPRAISAL_CACHE_TTL_MS);
+configureCacheTTL(parseInt(config.APPRAISAL_CACHE_TTL_MS, 10));
 
 // Run DB migrations on startup (automatic in development, manual in production)
 (async () => {
@@ -237,6 +213,7 @@ const loanRequestSchema = z.object({
   borrower: stellarPublicKeySchema,
   collateral_id: z.number().int().nonnegative(),
   amount: z.number().int().positive(),
+  min_disbursement: z.number().int().positive().optional(),
 });
 
 const loanRepaySchema = z.object({
@@ -248,6 +225,12 @@ const loanRepaySchema = z.object({
 const loanRepaymentPreviewSchema = z.object({
   loan_id: z.number().int().nonnegative(),
   amount: z.number().int().positive(),
+});
+
+const createLoanSchema = z.object({
+  borrowerAddress: stellarPublicKeySchema,
+  collateralId: z.string().min(1),
+  requestedAmount: z.number().int().positive(),
 });
 
 type LoanPreviewShape = {
@@ -373,7 +356,7 @@ app.post(
     if (!validation.success) {
       logger.warn("Validation failed for collateral registration", {
         requestId: req.requestId,
-        errors: validation.error.errors,
+        errors: validation.error.issues,
       });
       return res.status(400).json({
         error: "Validation failed",
@@ -413,7 +396,7 @@ app.post(
     if (!validation.success) {
       logger.warn("Validation failed for loan request", {
         requestId: req.requestId,
-        errors: validation.error.errors,
+        errors: validation.error.issues,
       });
       return res.status(400).json({
         error: "Validation failed",
@@ -421,7 +404,7 @@ app.post(
       });
     }
 
-    const { borrower, collateral_id, amount } = validation.data;
+    const { borrower, collateral_id, amount, min_disbursement } = validation.data;
     const cacheKey = String(collateral_id);
     const cached = getAppraisal(cacheKey);
 
@@ -433,12 +416,17 @@ app.post(
       }
     }
 
+    const minDisbursementScVal = min_disbursement !== undefined
+      ? nativeToScVal(BigInt(min_disbursement), { type: "i128" })
+      : xdr.ScVal.scvVoid();
     const xdrTx = await buildContractTx(borrower, "request_loan", [
       new Address(borrower).toScVal(),
       nativeToScVal(BigInt(collateral_id), { type: "u64" }),
       nativeToScVal(BigInt(amount), { type: "i128" }),
+      minDisbursementScVal,
     ]);
     fireWebhooks("loan.approved", { borrower, collateral_id, amount });
+    invalidateCache("/api/loans");
     res.json({ xdr: xdrTx, ...(cached?.stale ? { stale: true } : {}) });
   }),
 );
@@ -465,7 +453,7 @@ app.post(
     if (!validation.success) {
       const body = {
         error: "Validation failed",
-        details: validation.error.errors,
+        details: validation.error.issues,
       };
       setIdempotencyEntry(idempotencyKey, 400, body);
       return res.status(400).json(body);
@@ -483,11 +471,141 @@ app.post(
   }),
 );
 
+// POST /api/loan/repayment-preview
+app.post(
+  "/api/loan/repayment-preview",
+  asyncHandler(async (req: Request, res: Response) => {
+    const validation = loanRepaymentPreviewSchema.safeParse(req.body);
+    if (!validation.success) {
+      return res.status(400).json({
+        error: "Validation failed",
+        details: validation.error.issues,
+      });
+    }
+
+    const { loan_id, amount } = validation.data;
+    const contract = new Contract(CONTRACT_ID);
+    const account = await rpcClient.getAccount(
+      "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+    );
+
+    const loanTx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        contract.call(
+          "get_loan",
+          nativeToScVal(BigInt(loan_id), { type: "u64" }),
+        ),
+      )
+      .setTimeout(30)
+      .build();
+
+    const loanResult = await rpcClient.simulateTransaction(loanTx);
+    const parsed = parseLoanFromSimulation((loanResult as any).result?.retval);
+
+    // Fetch dynamic fee config; fallback keeps preview resilient if read fails.
+    let interestFeeBps = 1000;
+    try {
+      const feeTx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: NETWORK_PASSPHRASE,
+      })
+        .addOperation(contract.call("get_fee_config"))
+        .setTimeout(30)
+        .build();
+      const feeResult = await rpcClient.simulateTransaction(feeTx);
+      const feeConfig = parseFeeConfigFromSimulation(
+        (feeResult as any).result?.retval,
+      );
+      if (feeConfig) {
+        interestFeeBps = feeConfig.interest_fee_bps;
+      }
+    } catch {
+      // Preview remains available with sane default when fee config lookup fails.
+    }
+
+    const cappedRepayment = Math.min(amount, parsed.outstanding);
+    const interestOutstanding = Math.max(
+      parsed.outstanding - parsed.principal,
+      0,
+    );
+    const interestPaid = Math.min(cappedRepayment, interestOutstanding);
+    const principalPaid = cappedRepayment - interestPaid;
+    const fees = Math.floor((interestPaid * interestFeeBps) / 10_000);
+    const remainingBalance = Math.max(parsed.outstanding - cappedRepayment, 0);
+
+    const projectedHealthFactorBps =
+      remainingBalance === 0
+        ? null
+        : Math.floor(
+            (parsed.collateral_value * 8000 * 10_000) /
+              (remainingBalance * 10_000),
+          );
+
+    res.json({
+      loan_id,
+      repayment_amount: cappedRepayment,
+      breakdown: {
+        principal: principalPaid,
+        interest: interestPaid,
+        fees,
+        remaining_balance: remainingBalance,
+      },
+      projected_health_factor_bps: projectedHealthFactorBps,
+      fully_repaid: remainingBalance === 0,
+    });
+  }),
+);
+
+// POST /api/loan/create
+app.post(
+  "/api/loan/create",
+  timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
+  asyncHandler(async (req: Request, res: Response) => {
+    const validation = createLoanSchema.safeParse(req.body);
+    if (!validation.success) {
+      return res.status(400).json({ error: "Validation failed", details: validation.error.issues });
+    }
+
+    const { borrowerAddress, collateralId, requestedAmount } = validation.data;
+
+    const collateral = getCollateral(collateralId);
+    if (!collateral) {
+      return res.status(404).json({ error: "Collateral not found" });
+    }
+
+    if (isCollateralPledged(collateralId)) {
+      return res.status(409).json({ error: "Collateral is already pledged to another loan" });
+    }
+
+    const maxLoanAmount = Math.floor(collateral.appraised_value * 0.8);
+    const loanAmount = Math.min(requestedAmount, maxLoanAmount);
+
+    const xdrTx = await buildContractTx(borrowerAddress, "request_loan", [
+      new Address(borrowerAddress).toScVal(),
+      nativeToScVal(collateralId, { type: "string" }),
+      nativeToScVal(BigInt(loanAmount), { type: "i128" }),
+    ]);
+
+    const loan = insertLoan({
+      id: randomUUID(),
+      borrower: borrowerAddress,
+      collateral_id: collateralId,
+      amount: loanAmount,
+    });
+
+    return res.status(201).json({ loan, xdr: xdrTx });
+  }),
+);
+
 // GET /api/loans — paginated loan listing
 // Deprecated: unpaginated usage will be removed in a future version.
 app.get(
   "/api/loans",
   readLimiter,
+  responseCacheMiddleware,
   asyncHandler(async (req: Request, res: Response) => {
     const pageRaw = req.query.page !== undefined ? Number(req.query.page) : 1;
     const pageSizeVal = req.query.pageSize !== undefined ? req.query.pageSize : req.query.limit;
@@ -519,6 +637,24 @@ app.get(
   }),
 );
 
+// GET /api/borrowers/:wallet — aggregate borrower profile (settings + collateral + loans)
+app.get(
+  "/api/borrowers/:wallet",
+  readLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    const wallet = req.params.wallet as string;
+
+    const collateralResult = listCollateral({ ownerId: wallet, page: 1, limit: 100 });
+    const loansResult = listLoans({ borrowerAddress: wallet, page: 1, limit: 100 });
+
+    res.json({
+      wallet,
+      collateral: collateralResult.data,
+      loans: loansResult.data,
+    });
+  }),
+);
+
 // GET /api/collateral — paginated, filterable collateral listing
 const collateralQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
@@ -529,6 +665,7 @@ const collateralQuerySchema = z.object({
 
 app.get(
   "/api/collateral",
+  responseCacheMiddleware,
   asyncHandler(async (req: Request, res: Response) => {
     const validation = collateralQuerySchema.safeParse(req.query);
     if (!validation.success) {
@@ -604,14 +741,13 @@ app.get(
         .addOperation(
           contract.call(
             "get_loan",
-            nativeToScVal(BigInt(req.params.id), { type: "u64" }),
+            nativeToScVal(BigInt(req.params.id as string), { type: "u64" }),
           ),
         )
         .setTimeout(30)
         .build();
 
       const result = await rpcClient.simulateTransaction(tx);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       res.json({ result: (result as any).result?.retval });
     } catch (error) {
       next(error);
@@ -635,14 +771,13 @@ app.get(
         .addOperation(
           contract.call(
             "health_factor",
-            nativeToScVal(BigInt(req.params.loanId), { type: "u64" }),
+            nativeToScVal(BigInt(req.params.loanId as string), { type: "u64" }),
           ),
         )
         .setTimeout(30)
         .build();
 
       const result = await rpcClient.simulateTransaction(tx);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       res.json({ health_factor: (result as any).result?.retval });
     } catch (error) {
       next(error);
@@ -660,7 +795,7 @@ app.post(
     if (!validation.success) {
       logger.warn("Validation failed for loan repayment preview", {
         requestId: req.requestId,
-        errors: validation.error.errors,
+        errors: validation.error.issues,
       });
       return res.status(400).json({
         error: "Validation failed",
@@ -803,7 +938,7 @@ app.get("/api/admin/deleted/collateral", (req: Request, res: Response) => {
 
 // POST /api/admin/restore/collateral/:id — restore a soft-deleted collateral record
 app.post("/api/admin/restore/collateral/:id", (req: Request, res: Response) => {
-  const ok = restoreCollateral(req.params.id);
+  const ok = restoreCollateral(req.params.id as string);
   if (!ok)
     return res.status(404).json({ error: "Record not found or not deleted" });
   res.json({ restored: true, id: req.params.id });
@@ -817,7 +952,7 @@ app.post("/api/admin/restore/collateral/:id", (req: Request, res: Response) => {
  * @returns A promise or value resolving to void.
  */
 const handleDeleteCollateral = (req: Request, res: Response) => {
-  const id = req.params.id;
+  const id = req.params.id as string;
   const record = getCollateral(id);
   if (!record) {
     return res.status(404).json({ error: "Record not found" });
@@ -834,7 +969,7 @@ const handleDeleteCollateral = (req: Request, res: Response) => {
   const isUserAdmin =
     (user && user.role === "admin") ||
     (config.ADMIN_API_KEY && user && user.publicKey === config.ADMIN_API_KEY) ||
-    (config.ADMIN_API_KEY && (req.headers["x-admin-key"] === config.ADMIN_API_KEY || req.headers["admin-api-key"] === config.ADMIN_API_KEY));
+    (config.ADMIN_API_KEY && ((req.headers["x-admin-key"] as string) === config.ADMIN_API_KEY || (req.headers["admin-api-key"] as string) === config.ADMIN_API_KEY));
 
   if (!isOwner && !isUserAdmin) {
     return res.status(403).json({ error: "Forbidden: Only the owner or an admin can delete this collateral" });
@@ -897,7 +1032,6 @@ app.post(
       return res.status(400).json({ error: "image file is required" });
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const owner = (req as any).user?.publicKey as string | undefined;
     if (!owner) {
       return res.status(401).json({ error: "Authenticated wallet address required" });
@@ -919,6 +1053,7 @@ app.post(
       image_url: imageUrl,
     });
 
+    invalidateCache("/api/collateral");
     res.status(201).json(record);
   }),
 );
@@ -940,6 +1075,7 @@ app.post("/api/v1/collateral", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_M
   }
   const { owner, animal_type, count, appraised_value } = validation.data;
   const record = insertCollateral({ id: randomUUID(), owner, animal_type, count, appraised_value });
+  invalidateCache("/api/collateral");
   res.status(201).json(record);
 }));
 
@@ -968,10 +1104,10 @@ app.put("/api/v1/collateral/:id/appraise", timeoutMiddleware(parseInt(config.TIM
   if (typeof appraised_value !== "number" || !Number.isInteger(appraised_value) || appraised_value <= 0) {
     return res.status(400).json({ error: "appraised_value must be a positive integer" });
   }
-  const record = getCollateral(req.params.id);
+  const record = getCollateral(req.params.id as string);
   if (!record) return res.status(404).json({ error: "Record not found" });
   record.appraised_value = appraised_value;
-  setAppraisal(req.params.id, appraised_value);
+  setAppraisal(req.params.id as string, appraised_value);
   res.json(record);
 }));
 
@@ -985,7 +1121,7 @@ app.get("/api/admin/deleted/loans", (req: Request, res: Response) => {
 
 // POST /api/admin/restore/loans/:id — restore a soft-deleted loan record
 app.post("/api/admin/restore/loans/:id", (req: Request, res: Response) => {
-  const ok = restoreLoan(req.params.id);
+  const ok = restoreLoan(req.params.id as string);
   if (!ok)
     return res.status(404).json({ error: "Record not found or not deleted" });
   res.json({ restored: true, id: req.params.id });
@@ -993,7 +1129,7 @@ app.post("/api/admin/restore/loans/:id", (req: Request, res: Response) => {
 
 // DELETE /api/loan/:id — soft delete a loan record
 app.delete("/api/loan/:id", (req: Request, res: Response) => {
-  const ok = softDeleteLoan(req.params.id);
+  const ok = softDeleteLoan(req.params.id as string);
   if (!ok) return res.status(404).json({ error: "Record not found" });
   res.json({ deleted: true, id: req.params.id });
 });
@@ -1043,7 +1179,7 @@ app.get(
 app.get(
   "/api/transactions/:id",
   asyncHandler(async (req: Request, res: Response) => {
-    const transaction = getTransaction(req.params.id);
+    const transaction = getTransaction(req.params.id as string);
     if (!transaction) {
       return res.status(404).json({ error: "Transaction not found" });
     }
@@ -1066,15 +1202,16 @@ app.put(
       return res.status(400).json({ error: "transactionHash is required" });
     }
 
-    const loan = getLoan(req.params.id);
+    const loan = getLoan(req.params.id as string);
     if (!loan) return res.status(404).json({ error: "Loan not found" });
 
-    if (amount > loan.outstanding_balance) {
+    if (amount > loan.amount) {
       return res.status(400).json({ error: "amount exceeds outstanding balance" });
     }
 
-    const newBalance = loan.outstanding_balance - amount;
-    const updated = updateLoan(req.params.id, { outstanding_balance: newBalance });
+    const newBalance = loan.amount - amount;
+    const updated = updateLoan(req.params.id as string, { amount: newBalance });
+    invalidateCache("/api/loans");
 
     insertTransaction({
       borrower: loan.borrower,
@@ -1209,3 +1346,9 @@ app.use("/api", (req: Request, res: Response, next: NextFunction) => {
 });
 
 export default app;
+
+// Create HTTP server for graceful shutdown reference
+const httpServer = app.listen(parseInt(config.PORT, 10), () => {
+  logger.info(`Server started on port ${config.PORT}`);
+});
+
