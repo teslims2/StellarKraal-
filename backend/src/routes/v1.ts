@@ -20,7 +20,7 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { stellarPublicKeySchema } from "../validators/stellar";
 import { registerWebhook, getWebhooks, getDeliveryLogs, fireWebhooks } from "../webhooks";
 import { timeoutMiddleware } from "../middleware/timeout";
-import { writeLimiter } from "../middleware/rateLimit";
+import { writeLimiter, readLimiter } from "../middleware/rateLimit";
 import {
   getCollateral,
   listLoans,
@@ -300,6 +300,40 @@ v1Router.get("/collateral/:id", (req: Request, res: Response) => {
   }
   res.json(record);
 });
+/** Annual interest rate in basis points — matches protocol default used in repayment-preview. */
+const ANNUAL_RATE_BPS = 1_000; // 10 % per year
+const MS_PER_YEAR = 365.25 * 24 * 60 * 60 * 1_000;
+
+/**
+ * GET /loans/:id/outstanding
+ * Returns the principal, accrued interest, total outstanding balance, and calculation timestamp
+ * for a given loan. Returns 404 when the loan does not exist or is not owned by the caller.
+ *
+ * @param req.params.id - Loan ID
+ * @returns { principal, interest, total, asOf }
+ */
+v1Router.get(
+  "/loans/:id/outstanding",
+  readLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    const loan = getLoan(req.params.id as string);
+    const caller = (req as Request & { user?: { publicKey: unknown } }).user?.publicKey;
+
+    if (!loan || (caller && loan.borrower !== caller)) {
+      return res.status(404).json({ error: "Not found", message: "Loan not found" });
+    }
+
+    const asOf = new Date().toISOString();
+    const principal = loan.amount;
+    const elapsedYears = (Date.now() - new Date(loan.createdAt).getTime()) / MS_PER_YEAR;
+    // Simple interest: I = P × r × t  (rate expressed as bps / 10_000)
+    const interest = Math.floor(principal * (ANNUAL_RATE_BPS / 10_000) * elapsedYears);
+    const total = principal + interest;
+
+    return res.json({ principal, interest, total, asOf });
+  }),
+);
+
 // GET /loans - List loans with filtering and pagination
 v1Router.get("/loans", asyncHandler(async (req: Request, res: Response) => {
   const pageRaw = req.query.page !== undefined ? Number(req.query.page) : 1;
