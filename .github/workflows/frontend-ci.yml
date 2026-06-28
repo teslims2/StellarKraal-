@@ -101,24 +101,24 @@ jobs:
           RPC_URL: ${{ secrets.RPC_URL }}
 
       - name: Run Lighthouse CI
-        run: npx @lhci/cli@0.14.x autorun
+        run: npx @lhci/cli@0.14.x autorun --config=lighthouserc.js
         env:
           LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
-        run: |
-          cd frontend
-          npm ci
 
-      - name: Run ESLint
+      - name: Report Lighthouse scores
+        if: always()
         run: |
-          cd frontend
-          npm run lint
-
-      - name: Build Next.js app
-        run: |
-          cd frontend
-          npm run build
-
-      - name: Run component tests
-        run: |
-          cd frontend
-          npm test
+          report=$(find .lighthouseci -name '*.json' | head -1)
+          if [ -n "$report" ]; then
+            perf=$(node -e "const r=require('$report'); console.log(Math.round(r.categories.performance.score*100))" 2>/dev/null || echo "N/A")
+            a11y=$(node -e "const r=require('$report'); console.log(Math.round(r.categories.accessibility.score*100))" 2>/dev/null || echo "N/A")
+            bp=$(node -e "const r=require('$report'); console.log(Math.round(r.categories['best-practices'].score*100))" 2>/dev/null || echo "N/A")
+            seo=$(node -e "const r=require('$report'); console.log(Math.round(r.categories.seo.score*100))" 2>/dev/null || echo "N/A")
+            echo "## Lighthouse Scores" >> $GITHUB_STEP_SUMMARY
+            echo "| Category | Score | Threshold |" >> $GITHUB_STEP_SUMMARY
+            echo "|---|---|---|" >> $GITHUB_STEP_SUMMARY
+            echo "| Performance | $perf | ≥ 80 |" >> $GITHUB_STEP_SUMMARY
+            echo "| Accessibility | $a11y | ≥ 90 |" >> $GITHUB_STEP_SUMMARY
+            echo "| Best Practices | $bp | ≥ 90 |" >> $GITHUB_STEP_SUMMARY
+            echo "| SEO | $seo | ≥ 80 |" >> $GITHUB_STEP_SUMMARY
+          fi

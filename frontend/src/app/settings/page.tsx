@@ -1,6 +1,19 @@
+import type { Metadata } from "next";
 import CurrencySettings from "@/components/CurrencySettings";
 import NotificationPreferences from "@/components/NotificationPreferences";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "Settings — StellarKraal",
+  description: "Configure your currency, notifications, and language preferences for StellarKraal.",
+  alternates: { canonical: "https://stellarkraal.io/settings" },
+  openGraph: {
+    title: "Settings — StellarKraal",
+    description: "Configure your currency, notifications, and language preferences for StellarKraal.",
+    url: "https://stellarkraal.io/settings",
+    images: [{ url: "https://stellarkraal.io/og-banner.png" }],
+  },
+};
 
 export default function SettingsPage() {
   return (

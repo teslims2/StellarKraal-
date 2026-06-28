@@ -1,11 +1,11 @@
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
+import type { Metadata } from "next";
 
-/**
- * Maintenance mode page.
- * Shown when NEXT_PUBLIC_MAINTENANCE_MODE=true is set.
- * The middleware (middleware.ts) redirects all routes here when enabled.
- */
+export const metadata: Metadata = {
+  title: "Maintenance — StellarKraal",
+  description: "StellarKraal is currently undergoing scheduled maintenance.",
+};
+
+
 export default function MaintenancePage() {
   return (
     <main className="min-h-screen bg-cream flex flex-col items-center justify-center px-4 text-center">

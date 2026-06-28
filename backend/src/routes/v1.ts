@@ -272,6 +272,34 @@ v1Router.post("/alerts/webhook", async (req: Request, res: Response) => {
   res.status(200).send("OK");
 });
 
+// ── Admin Routes ──────────────────────────────────────────────────────────────
+
+// GET /admin/users — list all registered borrowers derived from loan records
+v1Router.get("/admin/users", asyncHandler(async (_req: Request, res: Response) => {
+  const { data } = listLoans({ page: 1, pageSize: 1000 });
+  const users = [...new Set(data.map((l: any) => l.borrower))].map((borrower) => ({ borrower }));
+  res.json({ data: users, total: users.length });
+}));
+
+// GET /admin/moderation-queue — loans flagged as pending review (status: pending)
+v1Router.get("/admin/moderation-queue", asyncHandler(async (_req: Request, res: Response) => {
+  const { data } = listLoans({ page: 1, pageSize: 1000 });
+  const queue = (data as any[]).filter((l) => l.status === "pending");
+  res.json({ data: queue, total: queue.length });
+}));
+
+// GET /admin/statistics — aggregate platform stats
+v1Router.get("/admin/statistics", asyncHandler(async (_req: Request, res: Response) => {
+  const { data, total } = listLoans({ page: 1, pageSize: 1000 });
+  const totalAmount = (data as any[]).reduce((sum, l) => sum + (l.amount || 0), 0);
+  const byStatus = (data as any[]).reduce<Record<string, number>>((acc, l) => {
+    acc[l.status] = (acc[l.status] || 0) + 1;
+    return acc;
+  }, {});
+  res.json({ totalLoans: total, totalAmount, byStatus });
+}));
+
+
 v1Router.get("/settings/:wallet", (req: Request, res: Response) => {
   const wallet = req.params.wallet as string;
   const existing = settingsStore.get(wallet);

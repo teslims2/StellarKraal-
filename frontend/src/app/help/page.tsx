@@ -1,4 +1,17 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "Help & Guides — StellarKraal",
+  description: "Plain-language guides and support resources for StellarKraal livestock micro-lending.",
+  alternates: { canonical: "https://stellarkraal.io/help" },
+  openGraph: {
+    title: "Help & Guides — StellarKraal",
+    description: "Plain-language guides and support resources for StellarKraal livestock micro-lending.",
+    url: "https://stellarkraal.io/help",
+    images: [{ url: "https://stellarkraal.io/og-banner.png" }],
+  },
+};
 
 const guides = [
   {

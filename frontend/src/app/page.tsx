@@ -1,7 +1,20 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import Tooltip from "@/components/Tooltip";
 
 import PageTransition from "@/components/PageTransition";
+
+export const metadata: Metadata = {
+  title: "StellarKraal — Livestock Micro-Lending",
+  description: "Register livestock as collateral and access instant micro-loans on Stellar. Built for African emerging markets.",
+  alternates: { canonical: "https://stellarkraal.io/" },
+  openGraph: {
+    title: "StellarKraal — Livestock Micro-Lending",
+    description: "Register livestock as collateral and access instant micro-loans on Stellar. Built for African emerging markets.",
+    url: "https://stellarkraal.io/",
+    images: [{ url: "https://stellarkraal.io/og-banner.png" }],
+  },
+};
 export default function Home() {
   return (
     <PageTransition>
