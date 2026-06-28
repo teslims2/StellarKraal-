@@ -3,12 +3,23 @@ import { createContext, useContext, useState, ReactNode, useEffect } from 'react
 
 export type AnimalType = 'cattle' | 'goat' | 'sheep';
 
-export interface WizardState {
-  // Step 1 – Collateral
+export interface CollateralItem {
+  id: string; // local uuid before on-chain registration
   animalType: AnimalType;
   count: string;
   appraisedValue: string;
-  collateralId: string; // returned after register
+  collateralId: string; // returned after on-chain register
+}
+
+export interface WizardState {
+  // Step 1 – Collateral (multi-item, ordered)
+  collaterals: CollateralItem[];
+
+  // Legacy single-item fields (kept for backward compat with StepAmount/Review/Confirm)
+  animalType: AnimalType;
+  count: string;
+  appraisedValue: string;
+  collateralId: string;
 
   // Step 2 – Amount
   loanAmount: string;
@@ -22,10 +33,22 @@ export interface WizardState {
 
 interface WizardCtx extends WizardState {
   setField: <K extends keyof WizardState>(key: K, value: WizardState[K]) => void;
+  setCollaterals: (items: CollateralItem[]) => void;
   nextStep: () => void;
   prevStep: () => void;
   reset: () => void;
   canProceed: () => boolean;
+}
+
+function makeItem(overrides?: Partial<CollateralItem>): CollateralItem {
+  return {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    animalType: "cattle",
+    count: "",
+    appraisedValue: "",
+    collateralId: "",
+    ...overrides,
+  };
 }
 
 const defaults: WizardState = {

@@ -1,14 +1,15 @@
 "use client";
-import { useWizard, AnimalType } from "@/context/LoanWizardContext";
+import { useRef } from "react";
+import { useWizard, AnimalType, CollateralItem, makeItem } from "@/context/LoanWizardContext";
 import { signTransaction } from "@/lib/freighterClient";
 import { submitSignedXdr } from "@/lib/stellarUtils";
 import { invalidateCollateral } from "@/lib/api";
 import Spinner from "@/components/Spinner";
 
-const ANIMAL_TYPES: { value: AnimalType; label: string; emoji: string; desc: string }[] = [
-  { value: "cattle", label: "Cattle", emoji: "🐄", desc: "High appraisal value" },
-  { value: "goat", label: "Goat", emoji: "🐐", desc: "Medium liquidity" },
-  { value: "sheep", label: "Sheep", emoji: "🐑", desc: "Stable collateral" },
+const ANIMAL_TYPES: { value: AnimalType; label: string; emoji: string }[] = [
+  { value: "cattle", label: "Cattle", emoji: "🐄" },
+  { value: "goat", label: "Goat", emoji: "🐐" },
+  { value: "sheep", label: "Sheep", emoji: "🐑" },
 ];
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
@@ -18,11 +19,79 @@ interface Props {
 }
 
 export default function StepCollateral({ walletAddress }: Props) {
-  const { animalType, count, appraisedValue, loading, error, setField, nextStep } = useWizard();
+  const { collaterals, loading, error, setField, setCollaterals, nextStep } = useWizard();
+  const dragIndexRef = useRef<number | null>(null);
+
+  // ── Item helpers ────────────────────────────────────────────────────────────
+
+  function updateItem(index: number, patch: Partial<CollateralItem>) {
+    setCollaterals(collaterals.map((c, i) => (i === index ? { ...c, ...patch } : c)));
+  }
+
+  function addItem() {
+    setCollaterals([...collaterals, makeItem()]);
+  }
+
+  function removeItem(index: number) {
+    if (collaterals.length === 1) return;
+    setCollaterals(collaterals.filter((_, i) => i !== index));
+  }
+
+  function moveItem(from: number, to: number) {
+    if (from === to) return;
+    const next = [...collaterals];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    setCollaterals(next);
+  }
+
+  // ── Keyboard reorder ────────────────────────────────────────────────────────
+
+  function handleKeyDown(e: React.KeyboardEvent, index: number) {
+    if (e.key === "ArrowUp" && index > 0) {
+      e.preventDefault();
+      moveItem(index, index - 1);
+    } else if (e.key === "ArrowDown" && index < collaterals.length - 1) {
+      e.preventDefault();
+      moveItem(index, index + 1);
+    }
+  }
+
+  // ── Pointer drag ─────────────────────────────────────────────────────────────
+
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>, index: number) {
+    // Only drag from the handle
+    dragIndexRef.current = index;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+
+  function onDragStart(e: React.DragEvent, index: number) {
+    dragIndexRef.current = index;
+    e.dataTransfer.effectAllowed = "move";
+  }
+
+  function onDragOver(e: React.DragEvent, index: number) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragIndexRef.current !== null && dragIndexRef.current !== index) {
+      moveItem(dragIndexRef.current, index);
+      dragIndexRef.current = index;
+    }
+  }
+
+  function onDragEnd() {
+    dragIndexRef.current = null;
+  }
+
+  // ── Validation & submit ──────────────────────────────────────────────────────
 
   function validate(): string | null {
-    if (!count || parseInt(count) < 1) return "Please enter at least 1 animal.";
-    if (!appraisedValue || parseInt(appraisedValue) < 1) return "Please enter a valid appraised value.";
+    for (let i = 0; i < collaterals.length; i++) {
+      const c = collaterals[i];
+      if (!c.count || parseInt(c.count) < 1) return `Item ${i + 1}: enter at least 1 animal.`;
+      if (!c.appraisedValue || parseInt(c.appraisedValue) < 1)
+        return `Item ${i + 1}: enter a valid appraised value.`;
+    }
     return null;
   }
 
@@ -60,33 +129,44 @@ export default function StepCollateral({ walletAddress }: Props) {
     }
   }
 
+  // ── Render ───────────────────────────────────────────────────────────────────
+
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-brown">Select Your Collateral</h2>
         <p className="text-brown/60 mt-1 text-sm">
-          Choose the livestock type you want to register as on-chain collateral.
+          Add one or more livestock items. Drag to prioritise which is pledged first.
         </p>
       </div>
 
-      {/* Animal type picker */}
-      <div className="grid grid-cols-3 gap-3">
-        {ANIMAL_TYPES.map(({ value, label, emoji, desc }) => (
-          <button
-            key={value}
-            onClick={() => setField("animalType", value)}
-            className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all duration-200 ${
-              animalType === value
-                ? "border-gold bg-gold/10 shadow-md"
-                : "border-brown/20 hover:border-brown/40 bg-white"
-            }`}
+      <ul aria-label="Collateral items" className="space-y-3">
+        {collaterals.map((item, index) => (
+          <li
+            key={item.id}
+            draggable
+            onDragStart={(e) => onDragStart(e, index)}
+            onDragOver={(e) => onDragOver(e, index)}
+            onDragEnd={onDragEnd}
+            className="border border-brown/20 rounded-xl p-4 bg-white flex gap-3 items-start"
           >
-            <span className="text-3xl">{emoji}</span>
-            <span className="font-semibold text-brown text-sm">{label}</span>
-            <span className="text-brown/50 text-xs text-center">{desc}</span>
-          </button>
-        ))}
-      </div>
+            {/* Drag handle */}
+            <div
+              role="button"
+              aria-label="Drag to reorder"
+              tabIndex={0}
+              onPointerDown={(e) => onPointerDown(e, index)}
+              onKeyDown={(e) => handleKeyDown(e, index)}
+              className="cursor-grab active:cursor-grabbing mt-1 text-brown/30 hover:text-brown/60 select-none focus:outline-none focus:ring-2 focus:ring-gold rounded"
+              title="Drag to reorder or use arrow keys"
+            >
+              {/* Grip icon */}
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="4" r="1.5" /><circle cx="11" cy="4" r="1.5" />
+                <circle cx="5" cy="8" r="1.5" /><circle cx="11" cy="8" r="1.5" />
+                <circle cx="5" cy="12" r="1.5" /><circle cx="11" cy="12" r="1.5" />
+              </svg>
+            </div>
 
       <Input
         label="Number of Animals"
