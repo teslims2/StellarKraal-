@@ -1,8 +1,10 @@
 import { SorobanRpc } from "@stellar/stellar-sdk";
+import { config } from "../config";
+import { dbPoolAcquiredTotal, dbPoolAvailable, dbPoolWaitMs } from "../metrics";
 
 const { Server } = SorobanRpc;
 
-const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
+const RPC_URL = config.RPC_URL;
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 
@@ -51,14 +53,21 @@ class ConnectionPool {
   }
 
   acquire(): SorobanRpc.Server {
+    const waitStart = Date.now();
     if (this.pool.length > 0) {
       const conn = this.pool.pop()!;
       this.inUse.add(conn);
+      dbPoolAcquiredTotal.inc();
+      dbPoolAvailable.set(this.pool.length);
+      dbPoolWaitMs.observe(Date.now() - waitStart);
       return conn;
     }
     if (this.inUse.size < this.max) {
       const conn = new Server(RPC_URL);
       this.inUse.add(conn);
+      dbPoolAcquiredTotal.inc();
+      dbPoolAvailable.set(this.pool.length);
+      dbPoolWaitMs.observe(Date.now() - waitStart);
       return conn;
     }
     throw new PoolExhaustedError();
@@ -69,6 +78,7 @@ class ConnectionPool {
     if (this.pool.length + this.inUse.size < this.max) {
       this.pool.push(conn);
     }
+    dbPoolAvailable.set(this.pool.length);
   }
 
   stats(): PoolStats {
@@ -100,8 +110,5 @@ class ConnectionPool {
   }
 }
 
-const POOL_MIN = parseInt(process.env.POOL_MIN || "2", 10);
-const POOL_MAX = parseInt(process.env.POOL_MAX || "10", 10);
-
-export const pool = new ConnectionPool(POOL_MIN, POOL_MAX);
+export const pool = new ConnectionPool(config.POOL_MIN, config.POOL_MAX);
 export { PoolExhaustedError };

@@ -22,3 +22,4 @@ Describe how this was tested locally.
 - [ ] Commit messages follow Conventional Commits
 - [ ] Tests were run locally
 - [ ] Documentation updated if needed
+- [ ] CHANGELOG updated or release notes covered by release-please

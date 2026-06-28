@@ -1,44 +1,24 @@
 import { Request, Response, NextFunction } from "express";
-import logger from "../config/logger";
+import logger, { createRequestLogger } from "../utils/logger";
 
 /**
- * Middleware to log incoming HTTP requests and responses.
+ * Logs each completed HTTP request with method, path, status code, and duration.
+ * @param req - Express request object.
+ * @param res - Express response object.
+ * @param next - Express next function.
  */
-export const loggingMiddleware = (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+export function loggingMiddleware(req: Request, res: Response, next: NextFunction): void {
   const startTime = Date.now();
-  
-  // Log incoming request
-  logger.info("Incoming request", {
-    requestId: req.requestId,
-    method: req.method,
-    path: req.path,
-    query: req.query,
-    ip: req.ip,
-    userAgent: req.get("user-agent"),
-  });
+  const reqLogger = req.requestId ? createRequestLogger(req.requestId) : logger;
 
-  // Capture the original end function
-  const originalEnd = res.end;
-
-  // Override res.end to log response
-  res.end = function (chunk?: any, encoding?: any, callback?: any): Response {
-    const duration = Date.now() - startTime;
-    
-    logger.info("Request completed", {
-      requestId: req.requestId,
+  res.on("finish", () => {
+    reqLogger.info("request completed", {
       method: req.method,
       path: req.path,
       statusCode: res.statusCode,
-      duration: `${duration}ms`,
+      durationMs: Date.now() - startTime,
     });
-
-    // Call the original end function
-    return originalEnd.call(this, chunk, encoding, callback);
-  };
+  });
 
   next();
-};
+}

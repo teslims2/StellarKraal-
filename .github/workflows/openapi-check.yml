@@ -4,7 +4,11 @@ on:
   pull_request:
     paths:
       - "backend/src/routes/**"
+      - "backend/src/services/**"
+      - "backend/src/middleware/deprecation.ts"
+      - "backend/src/index.ts"
       - "backend/openapi.json"
+      - "backend/package.json"
   push:
     branches:
       - main
@@ -15,21 +19,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate openapi.json is well-formed
-        run: |
-          node -e "
-            const fs = require('fs');
-            const spec = JSON.parse(fs.readFileSync('backend/openapi.json', 'utf8'));
-            if (spec.openapi !== '3.0.3') { process.exit(1); }
-            const paths = Object.keys(spec.paths);
-            if (paths.length === 0) { console.error('No paths defined'); process.exit(1); }
-            console.log('OpenAPI spec valid. Paths:', paths.length);
-          "
+      - name: Validate OpenAPI 3.0 spec
+        run: npx --yes @redocly/cli@1.x lint --extends=minimal backend/openapi.json
 
       - name: Check spec is committed
         run: |
           if [ ! -f backend/openapi.json ]; then
-            echo "ERROR: backend/openapi.json is missing. Run spec generation and commit it."
+            echo "ERROR: backend/openapi.json is missing."
             exit 1
           fi
           echo "openapi.json present"
+
+      - name: Verify info.version matches package.json
+        run: |
+          PKG_VERSION=$(node -p "require('./backend/package.json').version")
+          SPEC_VERSION=$(node -p "require('./backend/openapi.json').info.version")
+          if [ "$PKG_VERSION" != "$SPEC_VERSION" ]; then
+            echo "ERROR: openapi.json info.version ($SPEC_VERSION) does not match backend/package.json ($PKG_VERSION)."
+            echo "Run: cd backend && npm run openapi:sync"
+            exit 1
+          fi
+          echo "info.version matches package.json ($PKG_VERSION)"

@@ -58,6 +58,7 @@ export async function runMigrations(): Promise<void> {
 /**
  * Get migration status
  * Shows which migrations have been applied and which are pending
+ * @returns A string describing the current migration status.
  */
 export async function getMigrationStatus(): Promise<string> {
   try {
@@ -69,6 +70,21 @@ export async function getMigrationStatus(): Promise<string> {
     return stdout.trim();
   } catch (error) {
     throw new Error(`Failed to get migration status: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Check database connectivity by running a trivial query against the SQLite file.
+ * Returns true if the DB is reachable, false otherwise.
+ * @returns A promise that resolves to true if the database is healthy, false otherwise.
+ */
+export async function checkDbHealth(): Promise<boolean> {
+  try {
+    const dbFile = process.env.DB_FILE ?? path.join(__dirname, "../../dev.sqlite3");
+    await execAsync(`sqlite3 "${dbFile}" "SELECT 1;"`, { timeout: 3000 });
+    return true;
+  } catch {
+    return false;
   }
 }
 

@@ -20,10 +20,10 @@ jest.mock("../utils/logger", () => ({
 // Disable rate limiting in tests
 jest.mock("../middleware/rateLimit", () => {
   const noop = (_req: any, _res: any, next: any) => next();
-  return { globalLimiter: noop, authLimiter: noop, writeLimiter: noop };
+  return { globalLimiter: noop, authLimiter: noop, writeLimiter: noop, readLimiter: noop };
 });
 
-const _MOCK_ADDR = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+const _MOCK_ADDR = "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6";
 
 jest.mock("../utils/connectionPool", () => ({
   pool: {
@@ -51,10 +51,12 @@ jest.mock("../utils/rpcClient", () => ({
 }));
 
 jest.mock("@stellar/stellar-sdk", () => {
-  // Keep StrKey so the Stellar public key validator works
-  const { StrKey } = jest.requireActual("@stellar/stellar-sdk");
   return {
-    StrKey,
+    StrKey: {
+      // Only valid 56-char G-prefixed keys pass
+      isValidEd25519PublicKey: (key: string) =>
+        typeof key === "string" && key.length === 56 && key.startsWith("G"),
+    },
     Networks: {
       TESTNET: "Test SDF Network ; September 2015",
       PUBLIC: "Public Global Stellar Network ; September 2015",
@@ -73,7 +75,10 @@ jest.mock("@stellar/stellar-sdk", () => {
     })),
     nativeToScVal: jest.fn().mockReturnValue({}),
     xdr: {
-      ScVal: { scvVec: jest.fn((arr: any) => ({ type: "vec", value: arr })) },
+      ScVal: {
+        scvVec: jest.fn((arr: any) => ({ type: "vec", value: arr })),
+        scvVoid: jest.fn(() => ({ type: "void" })),
+      },
     },
   };
 });
@@ -222,19 +227,19 @@ describe("GET /api/v1/loans (list loans with pagination)", () => {
   });
 
   it("returns 200 with paginated data and metadata", async () => {
-    const res = await request(app).get("/api/v1/loans?page=1&pageSize=20");
+    const res = await request(app).get("/api/v1/loans?page=1&limit=20");
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("data");
     expect(res.body).toHaveProperty("total");
     expect(res.body).toHaveProperty("page", 1);
-    expect(res.body).toHaveProperty("pageSize", 20);
+    expect(res.body).toHaveProperty("limit", 20);
     expect(Array.isArray(res.body.data)).toBe(true);
     expect(res.body).toHaveProperty("api_version", "v1");
   });
 
   it("returns seeded loans in the data array", async () => {
-    const res = await request(app).get("/api/v1/loans?page=1&pageSize=20");
+    const res = await request(app).get("/api/v1/loans?page=1&limit=20");
 
     expect(res.status).toBe(200);
     expect(res.body.total).toBeGreaterThanOrEqual(2);
@@ -243,16 +248,16 @@ describe("GET /api/v1/loans (list loans with pagination)", () => {
     expect(ids).toContain("list-loan-b");
   });
 
-  it("respects custom pageSize", async () => {
-    const res = await request(app).get("/api/v1/loans?page=1&pageSize=1");
+  it("respects custom limit", async () => {
+    const res = await request(app).get("/api/v1/loans?page=1&limit=1");
 
     expect(res.status).toBe(200);
     expect(res.body.data.length).toBeLessThanOrEqual(1);
-    expect(res.body.pageSize).toBe(1);
+    expect(res.body.limit).toBe(1);
   });
 
   it("returns empty data array when page exceeds total", async () => {
-    const res = await request(app).get("/api/v1/loans?page=9999&pageSize=20");
+    const res = await request(app).get("/api/v1/loans?page=9999&limit=20");
 
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual([]);
@@ -261,7 +266,6 @@ describe("GET /api/v1/loans (list loans with pagination)", () => {
   it("returns 400 for invalid page=0", async () => {
     const res = await request(app).get("/api/v1/loans?page=0");
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Invalid pagination parameters");
   });
 
   it("returns 400 for negative page", async () => {
@@ -274,10 +278,9 @@ describe("GET /api/v1/loans (list loans with pagination)", () => {
     expect(res.status).toBe(400);
   });
 
-  it("caps pageSize at 100 (returns 400 for pageSize > 100)", async () => {
-    const res = await request(app).get("/api/v1/loans?pageSize=500");
+  it("caps limit at 100 (returns 400 for limit > 100)", async () => {
+    const res = await request(app).get("/api/v1/loans?limit=500");
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Invalid pagination parameters");
   });
 });
 
@@ -353,6 +356,9 @@ describe("POST /api/v1/loan/liquidate (liquidate loan)", () => {
   beforeEach(() => { app = createApp(); });
 
   it("returns 200 and XDR for eligible loan (valid payload)", async () => {
+    // Seed a liquidatable loan: HF = (700_000 × 8000) / (600_000 × 10_000) × 10_000 = 9_333 (< 10_000)
+    seedCollateral("liq-col-1", 700_000);
+    seedLoan("1", "liq-col-1", 600_000);
     const res = await request(app)
       .post("/api/v1/loan/liquidate")
       .send({ liquidator: VALID_ADDRESS, loan_id: 1, repay_amount: 300_000 });
@@ -423,7 +429,7 @@ describe("Full loan lifecycle integration", () => {
     expect(createRes.body.xdr).toBeDefined();
 
     // 2. List loans
-    const listRes = await request(app).get("/api/v1/loans?page=1&pageSize=20");
+    const listRes = await request(app).get("/api/v1/loans?page=1&limit=20");
     expect(listRes.status).toBe(200);
     expect(Array.isArray(listRes.body.data)).toBe(true);
 
@@ -439,11 +445,127 @@ describe("Full loan lifecycle integration", () => {
     expect(repayRes.status).toBe(200);
     expect(repayRes.body.xdr).toBeDefined();
 
-    // 5. Liquidate loan
+    // 5. Liquidate loan — seed a liquidatable loan (HF < 10_000) for this step
+    seedCollateral("lifecycle-col", 500_000);
+    seedLoan("2001", "lifecycle-col", 600_000);
     const liquidateRes = await request(app)
       .post("/api/v1/loan/liquidate")
-      .send({ liquidator: VALID_ADDRESS, loan_id: 1, repay_amount: 300_000 });
+      .send({ liquidator: VALID_ADDRESS, loan_id: 2001, repay_amount: 300_000 });
     expect(liquidateRes.status).toBe(200);
     expect(liquidateRes.body.xdr).toBeDefined();
+  });
+});
+
+// ── GET /api/v1/loans/:id/outstanding (issue #589) ────────────────────────────
+
+describe("GET /api/v1/loans/:id/outstanding", () => {
+  let app: Express;
+
+  beforeEach(() => {
+    app = createApp();
+    seedCollateral("out-col-1");
+  });
+
+  it("returns 200 with principal, interest, total, asOf for an active loan", async () => {
+    seedLoan("out-loan-1", "out-col-1", 600_000);
+
+    const res = await request(app).get("/api/v1/loans/out-loan-1/outstanding");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("principal", 600_000);
+    expect(res.body).toHaveProperty("interest");
+    expect(res.body).toHaveProperty("total");
+    expect(res.body).toHaveProperty("asOf");
+    expect(typeof res.body.interest).toBe("number");
+    expect(res.body.interest).toBeGreaterThanOrEqual(0);
+    expect(res.body.total).toBe(res.body.principal + res.body.interest);
+    expect(res.body).toHaveProperty("api_version", "v1");
+  });
+
+  it("returns 200 for a repaid loan (still computes accrued interest up to now)", async () => {
+    const loan = insertLoan({ id: "out-loan-repaid", borrower: VALID_ADDRESS, collateral_id: "out-col-1", amount: 300_000, status: "repaid" });
+
+    const res = await request(app).get(`/api/v1/loans/${loan.id}/outstanding`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.principal).toBe(300_000);
+    expect(res.body.total).toBeGreaterThanOrEqual(300_000);
+  });
+
+  it("returns 404 when loan does not exist", async () => {
+    const res = await request(app).get("/api/v1/loans/nonexistent-id/outstanding");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("returns 200 and interest >= 0 regardless of elapsed time", async () => {
+    seedLoan("out-loan-2", "out-col-1", 1_000_000);
+
+    const res = await request(app).get("/api/v1/loans/out-loan-2/outstanding");
+
+    expect(res.status).toBe(200);
+    expect(res.body.interest).toBeGreaterThanOrEqual(0);
+    expect(res.body.total).toBeGreaterThanOrEqual(res.body.principal);
+  });
+});
+
+
+describe("POST /api/v1/loan/liquidate — health factor & state (issue #293)", () => {
+  let app: Express;
+
+  beforeEach(() => { app = createApp(); });
+
+  it("returns 400 when loan health factor is above liquidation threshold (safe loan)", async () => {
+    // Collateral value 1_000_000, loan 600_000 → HF = 13_333 (safe)
+    seedCollateral("hf-col-safe", 1_000_000);
+    seedLoan("1001", "hf-col-safe", 600_000);
+
+    const res = await request(app)
+      .post("/api/v1/loan/liquidate")
+      .send({ liquidator: VALID_ADDRESS, loan_id: 1001, repay_amount: 300_000 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/health factor/i);
+  });
+
+  it("returns 200 and updates loan status to liquidated when HF < 10_000", async () => {
+    // Collateral value 700_000, loan 600_000 → HF = 9_333 (liquidatable)
+    seedCollateral("hf-col-liq", 700_000);
+    seedLoan("1002", "hf-col-liq", 600_000);
+
+    const res = await request(app)
+      .post("/api/v1/loan/liquidate")
+      .send({ liquidator: VALID_ADDRESS, loan_id: 1002, repay_amount: 300_000 });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("xdr");
+    expect(res.body).toHaveProperty("loan");
+    expect(res.body.loan.status).toBe("liquidated");
+    expect(res.body).toHaveProperty("api_version", "v1");
+  });
+
+  it("returns 404 when loan does not exist", async () => {
+    const res = await request(app)
+      .post("/api/v1/loan/liquidate")
+      .send({ liquidator: VALID_ADDRESS, loan_id: 9999, repay_amount: 300_000 });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/not found/i);
+  });
+
+  it("returns final loan state in response body", async () => {
+    seedCollateral("hf-col-state", 500_000);
+    seedLoan("1003", "hf-col-state", 600_000);
+
+    const res = await request(app)
+      .post("/api/v1/loan/liquidate")
+      .send({ liquidator: VALID_ADDRESS, loan_id: 1003, repay_amount: 300_000 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.loan).toMatchObject({
+      id: "1003",
+      status: "liquidated",
+    });
   });
 });

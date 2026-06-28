@@ -5,6 +5,7 @@
  */
 import request from "supertest";
 import app from "./index";
+import { insertLoan } from "./db/store";
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
@@ -17,9 +18,11 @@ jest.mock("./utils/logger", () => ({
 }));
 
 jest.mock("@stellar/stellar-sdk", () => {
-  const actual = jest.requireActual("@stellar/stellar-sdk");
+  const isValidEd25519PublicKey = (value: string) =>
+    typeof value === "string" && value.length === 56 && value.startsWith("G");
+
   return {
-    ...actual,
+    StrKey: { isValidEd25519PublicKey },
     Networks: {
       TESTNET: "Test SDF Network ; September 2015",
       PUBLIC: "Public Global Stellar Network ; September 2015",
@@ -43,13 +46,28 @@ jest.mock("@stellar/stellar-sdk", () => {
         getHealth: jest.fn().mockResolvedValue({ status: "healthy" }),
       })),
     },
+    rpc: {
+      Server: jest.fn().mockImplementation(() => ({
+        getAccount: jest.fn().mockResolvedValue({ id: "GABC", sequence: "1" }),
+        prepareTransaction: jest.fn().mockResolvedValue({ toXDR: () => "prepared_xdr" }),
+        simulateTransaction: jest.fn().mockResolvedValue({ result: { retval: {} } }),
+        getHealth: jest.fn().mockResolvedValue({ status: "healthy" }),
+      })),
+    },
   };
 });
 
-// Bypass JWT auth for all tests
+// Bypass JWT auth for all tests, but inject user context
+let testUser: any = { publicKey: "GBGBE57DSWNBO73HMKLGPCNUR7V4T3WYCXU34AHVZAR3FFFOSVZLEABQ" };
+
 jest.mock("./middleware/auth", () => ({
   authRouter: require("express").Router(),
-  jwtMiddleware: (_req: any, _res: any, next: any) => next(),
+  jwtMiddleware: (req: any, res: any, next: any) => {
+    if (testUser) {
+      req.user = testUser;
+    }
+    next();
+  },
 }));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -57,11 +75,12 @@ jest.mock("./middleware/auth", () => ({
 const VALID_OWNER = "GBGBE57DSWNBO73HMKLGPCNUR7V4T3WYCXU34AHVZAR3FFFOSVZLEABQ";
 
 function validPayload(overrides = {}) {
-  return { owner: VALID_OWNER, animal_type: "cattle", count: 5, appraised_value: 1_000_000, ...overrides };
+  return { animal_type: "cattle", count: 5, appraised_value: 1_000_000, ...overrides };
 }
 
 async function createCollateral(overrides = {}) {
   const res = await request(app).post("/api/v1/collateral").send(validPayload(overrides));
+  if (res.status !== 201) console.log("CREATE COLLATERAL ERROR STATUS:", res.status, "BODY:", res.body);
   return res;
 }
 
@@ -92,30 +111,67 @@ describe("POST /api/v1/collateral", () => {
 
   it("returns 400 for missing required fields", async () => {
     const res = await request(app).post("/api/v1/collateral").send({});
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(422);
     expect(res.body.error).toBe("Validation failed");
-    expect(Array.isArray(res.body.details)).toBe(true);
+    expect(res.body.code).toBe("VALIDATION_ERROR");
+    expect(res.body.details).toHaveProperty("animal_type");
+    expect(res.body.details).toHaveProperty("count");
+    expect(res.body.details).toHaveProperty("appraised_value");
   });
 
-  it("returns 400 for invalid Stellar public key", async () => {
-    const res = await createCollateral({ owner: "INVALID_KEY" });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Validation failed");
-  });
-
-  it("returns 400 for non-positive count", async () => {
+  it("returns 422 for non-positive count", async () => {
     const res = await createCollateral({ count: 0 });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(422);
+    expect(res.body.details).toHaveProperty("count");
   });
 
-  it("returns 400 for non-positive appraised_value", async () => {
+  it("returns 422 for non-positive appraised_value", async () => {
     const res = await createCollateral({ appraised_value: -1 });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(422);
+    expect(res.body.details).toHaveProperty("appraised_value");
   });
 
-  it("returns 400 for empty animal_type", async () => {
+  it("returns 422 for empty animal_type", async () => {
     const res = await createCollateral({ animal_type: "" });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(422);
+    expect(res.body.details).toHaveProperty("animal_type");
+  });
+});
+
+// ── PATCH /api/v1/collateral/:id ─────────────────────────────────────────────
+
+describe("PATCH /api/v1/collateral/:id", () => {
+  it("updates provided fields only", async () => {
+    const { body: created } = await createCollateral();
+    const res = await request(app)
+      .patch(`/api/v1/collateral/${created.id}`)
+      .send({ count: 9, appraised_value: 1_500_000 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(9);
+    expect(res.body.appraised_value).toBe(1_500_000);
+    expect(res.body.animal_type).toBe("cattle");
+  });
+
+  it("returns 422 with field dictionary for malformed payload", async () => {
+    const { body: created } = await createCollateral();
+    const res = await request(app)
+      .patch(`/api/v1/collateral/${created.id}`)
+      .send({ count: 0 });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toBe("Validation failed");
+    expect(res.body.details).toHaveProperty("count");
+  });
+
+  it("returns 422 when payload is empty", async () => {
+    const { body: created } = await createCollateral();
+    const res = await request(app)
+      .patch(`/api/v1/collateral/${created.id}`)
+      .send({});
+
+    expect(res.status).toBe(422);
+    expect(res.body.details).toHaveProperty("_root");
   });
 });
 
@@ -132,7 +188,6 @@ describe("GET /api/v1/collateral", () => {
   });
 
   it("filters by owner", async () => {
-    const other = "GBVZQ4YWKGZQHKJQKJQKJQKJQKJQKJQKJQKJQKJQKJQKJQKJQKJQKJQ";
     // Create one with a different owner — use VALID_OWNER since other may be invalid
     await createCollateral({ animal_type: "goats" });
     const res = await request(app).get(`/api/v1/collateral?owner=${VALID_OWNER}`);
@@ -258,5 +313,80 @@ describe("DELETE /api/v1/collateral/:id", () => {
     const listRes = await request(app).get(`/api/v1/collateral?owner=${VALID_OWNER}`);
     const ids = listRes.body.data.map((r: any) => r.id);
     expect(ids).not.toContain(created.id);
+  });
+
+  it("returns 409 when the collateral is pledged to an active loan", async () => {
+    const { body: created } = await createCollateral();
+    insertLoan({
+      id: "test-loan-pledged-" + created.id,
+      borrower: VALID_OWNER,
+      collateral_id: created.id,
+      amount: 500_000,
+      status: "active",
+    });
+    const res = await request(app).delete(`/api/v1/collateral/${created.id}`);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("pledged to an active loan");
+  });
+
+  it("returns 403 when user is not the owner or admin", async () => {
+    const { body: created } = await createCollateral();
+    testUser = { publicKey: "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6" };
+    try {
+      const res = await request(app).delete(`/api/v1/collateral/${created.id}`);
+      expect(res.status).toBe(403);
+    } finally {
+      testUser = { publicKey: VALID_OWNER };
+    }
+  });
+
+  it("allows deletion if user is an admin", async () => {
+    const { body: created } = await createCollateral();
+    testUser = { publicKey: "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6", role: "admin" };
+    try {
+      const res = await request(app).delete(`/api/v1/collateral/${created.id}`);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ deleted: true, id: created.id });
+    } finally {
+      testUser = { publicKey: VALID_OWNER };
+    }
+  });
+});
+
+// ── PATCH /api/v1/collateral/:id/restore ─────────────────────────────────────
+
+describe("PATCH /api/v1/collateral/:id/restore", () => {
+  it("restores a soft-deleted collateral record", async () => {
+    const { body: created } = await createCollateral();
+    await request(app).delete(`/api/v1/collateral/${created.id}`);
+
+    const res = await request(app).patch(`/api/v1/collateral/${created.id}/restore`).send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ restored: true, id: created.id });
+  });
+
+  it("returns 404 if collateral is not deleted", async () => {
+    const { body: created } = await createCollateral();
+    const res = await request(app).patch(`/api/v1/collateral/${created.id}/restore`).send({});
+
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 409 if collateral is pledged to an active loan", async () => {
+    const { body: created } = await createCollateral();
+    await request(app).delete(`/api/v1/collateral/${created.id}`);
+    insertLoan({
+      id: `restore-loan-${created.id}`,
+      borrower: VALID_OWNER,
+      collateral_id: created.id,
+      amount: 200_000,
+      status: "active",
+    });
+
+    const res = await request(app).patch(`/api/v1/collateral/${created.id}/restore`).send({});
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("pledged");
   });
 });

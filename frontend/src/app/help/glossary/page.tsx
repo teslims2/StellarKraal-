@@ -1,10 +1,18 @@
+import type { Metadata } from "next";
 import React from "react";
 import { glossaryArray } from "@/lib/glossary";
 import Navbar from "@/components/Navbar";
 
-export const metadata = {
-  title: "Glossary - StellarKraal",
-  description: "Definitions of financial terms used in the StellarKraal application.",
+export const metadata: Metadata = {
+  title: "Glossary — StellarKraal",
+  description: "Definitions of financial and protocol terms used throughout StellarKraal.",
+  alternates: { canonical: "https://stellarkraal.io/help/glossary" },
+  openGraph: {
+    title: "Glossary — StellarKraal",
+    description: "Definitions of financial and protocol terms used throughout StellarKraal.",
+    url: "https://stellarkraal.io/help/glossary",
+    images: [{ url: "https://stellarkraal.io/og-banner.png" }],
+  },
 };
 
 export default function GlossaryPage() {

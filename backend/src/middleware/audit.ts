@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import winston from "winston";
 import DailyRotateFile from "winston-daily-rotate-file";
 import path from "path";
+import { config } from "../config";
 
 // ── Sensitive fields to redact ────────────────────────────────────────────────
 const REDACTED_FIELDS = new Set([
@@ -10,6 +11,12 @@ const REDACTED_FIELDS = new Set([
   "secret_key", "secretkey", "signing_key", "signingkey",
 ]);
 
+/**
+ * Recursively redact sensitive fields from a plain object.
+ * @param obj - The value to redact.
+ * @param depth - Current recursion depth (stops at 5).
+ * @returns A new object with sensitive field values replaced by `"[REDACTED]"`.
+ */
 export function redact(obj: unknown, depth = 0): unknown {
   if (depth > 5 || obj === null || typeof obj !== "object") return obj;
   const result: Record<string, unknown> = {};
@@ -20,7 +27,7 @@ export function redact(obj: unknown, depth = 0): unknown {
 }
 
 // ── Audit log transport (separate file with 30-day rotation) ──────────────────
-const LOG_DIR = process.env.AUDIT_LOG_DIR || path.join(process.cwd(), "logs");
+const LOG_DIR = config.AUDIT_LOG_DIR ?? path.join(process.cwd(), "logs");
 
 const auditTransport = new DailyRotateFile({
   dirname: LOG_DIR,
@@ -38,7 +45,7 @@ const auditLogger = winston.createLogger({
   level: "info",
   transports: [auditTransport],
   // Also write to console in non-production for visibility
-  ...(process.env.NODE_ENV !== "production" && {
+  ...(config.NODE_ENV !== "production" && {
     transports: [
       auditTransport,
       new winston.transports.Console({
@@ -55,6 +62,12 @@ const auditLogger = winston.createLogger({
 });
 
 // ── Middleware ────────────────────────────────────────────────────────────────
+/**
+ * Express middleware that logs each request to the audit log.
+ * @param req - Express request object.
+ * @param res - Express response object.
+ * @param next - Next middleware callback.
+ */
 export function auditMiddleware(req: Request, res: Response, next: NextFunction): void {
   const start = process.hrtime.bigint();
 

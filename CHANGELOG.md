@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release-please workflow for automated changelog and GitHub Releases (#104)
 - `CONTRIBUTING.md` documenting the Conventional Commits and release process (#104)
 
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
 ---
 
 ## [1.0.0] - 2026-04-28

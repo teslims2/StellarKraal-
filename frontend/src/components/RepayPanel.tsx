@@ -2,9 +2,13 @@
 import { useState } from "react";
 import { signTransaction } from "@/lib/freighterClient";
 import { submitSignedXdr } from "@/lib/stellarUtils";
+import { invalidateLoans } from "@/lib/api";
+import Tooltip from "@/components/Tooltip";
 import { colors } from "@/lib/design-tokens";
 import Card from "@/components/Card";
 import Spinner from "@/components/Spinner";
+import { useToast } from "@/components/toast";
+import { useNetworkMismatch } from "@/hooks/useNetworkMismatch";
 
 interface Props {
   walletAddress: string;
@@ -12,11 +16,15 @@ interface Props {
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
+const inputCls =
+  "w-full border border-brown/30 dark:border-gold/40 rounded-lg px-3 py-2 bg-white dark:bg-[#2A1A08] text-brown dark:text-cream placeholder:text-brown/40 dark:placeholder:text-cream/40 focus:outline-none focus:ring-2 focus:ring-gold dark:focus:ring-[#F5D060]";
+
 export default function RepayPanel({ walletAddress }: Props) {
   const [loanId, setLoanId] = useState("");
   const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
   const toast = useToast();
+  const networkMismatch = useNetworkMismatch(walletAddress);
 
   async function repay() {
     setLoading(true);
@@ -39,6 +47,8 @@ export default function RepayPanel({ walletAddress }: Props) {
         network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET",
       });
       await submitSignedXdr(signedTxXdr);
+      // Loan state changed — drop cached loan lists so they revalidate.
+      invalidateLoans();
       toast.success("Repayment submitted successfully!");
       setLoanId("");
       setAmount("");
@@ -69,9 +79,18 @@ export default function RepayPanel({ walletAddress }: Props) {
           onChange={(e) => setAmount(e.target.value)}
           type="number"
         />
+        <Tooltip hint="R — Repay loan">
+          <button
+            onClick={repay}
+            disabled={loading || networkMismatch}
+            className="w-full bg-gold text-brown py-2.5 rounded-xl font-semibold hover:bg-gold/80 transition disabled:opacity-50"
+          >
+            {loading ? "Processing…" : "Repay"}
+          </button>
+        </Tooltip>
         <button
           onClick={repay}
-          disabled={loading}
+          disabled={loading || networkMismatch}
           className={`w-full ${colors.secondary.bg} ${colors.secondary.text} py-2.5 rounded-xl font-semibold ${colors.secondary.hover} transition ${colors.interactive.disabled} ${colors.interactive.focus} flex items-center justify-center gap-2`}
         >
           {loading ? (
@@ -82,11 +101,6 @@ export default function RepayPanel({ walletAddress }: Props) {
           ) : "Repay"}
         </button>
       </div>
-      {status && (
-        <p className={`text-sm mt-2 ${status.includes("❌") ? colors.status.error.text : colors.status.success.text}`}>
-          {status}
-        </p>
-      )}
     </Card>
   );
 }
