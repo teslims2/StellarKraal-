@@ -6,11 +6,14 @@ import { errorHandler } from "./middleware/errorHandler";
 import {
   insertCollateral,
   getCollateral,
+  getCollateralIncludingDeleted,
   listCollateral,
+  updateCollateral,
   softDeleteCollateral,
   restoreCollateral,
   listDeletedCollateral,
   isCollateralPledged,
+  getLoanSummaryForBorrower,
   insertLoan,
   getLoan,
   listLoans,
@@ -50,7 +53,11 @@ import {
   invalidateAll,
   configureCacheTTL,
 } from "./utils/appraisalCache";
-import { responseCacheMiddleware, invalidateCache } from "./utils/responseCache";
+import {
+  responseCacheMiddleware,
+  invalidateCache,
+  createResponseCacheMiddleware,
+} from "./utils/responseCache";
 import { randomUUID } from "crypto";
 import path from "path";
 import { mkdirSync } from "fs";
@@ -58,7 +65,14 @@ import multer from "multer";
 import { z } from "zod";
 import { globalLimiter, authLimiter, readLimiter, writeLimiter } from "./middleware/rateLimit";
 import { asyncHandler } from "./utils/asyncHandler";
+import { validate } from "./middleware/validate";
 import { stellarPublicKeySchema } from "./validators/stellar";
+import {
+  createCollateralSchema,
+  updateCollateralSchema,
+  type CreateCollateralInput,
+  type UpdateCollateralInput,
+} from "./validators/collateral";
 import rpcClient from "./utils/rpcClient";
 import { registerWebhook, getWebhooks, getDeliveryLogs, fireWebhooks } from "./webhooks";
 import { scheduleHealthFactorJob } from "./jobs/healthFactorJob";
@@ -1069,24 +1083,46 @@ app.post(
 
 // ── v1 collateral CRUD ────────────────────────────────────────────────────────
 
-const v1CollateralSchema = z.object({
-  owner: stellarPublicKeySchema,
-  animal_type: z.string().min(1),
-  count: z.number().int().positive(),
-  appraised_value: z.number().int().positive(),
-});
-
 // POST /api/v1/collateral — register collateral (DB record)
-app.post("/api/v1/collateral", timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)), asyncHandler(async (req: Request, res: Response) => {
-  const validation = v1CollateralSchema.safeParse(req.body);
-  if (!validation.success) {
-    return res.status(400).json({ error: "Validation failed", details: validation.error.issues });
-  }
-  const { owner, animal_type, count, appraised_value } = validation.data;
-  const record = insertCollateral({ id: randomUUID(), owner, animal_type, count, appraised_value });
-  invalidateCache("/api/collateral");
-  res.status(201).json(record);
-}));
+app.post(
+  "/api/v1/collateral",
+  timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
+  validate(createCollateralSchema, { statusCode: 422, errorShape: "dictionary" }),
+  asyncHandler(async (req: Request, res: Response) => {
+    const owner = (req as Request & { user?: { publicKey?: string } }).user?.publicKey;
+    if (!owner) {
+      return res.status(401).json({ error: "Authenticated wallet address required" });
+    }
+
+    const { animal_type, count, appraised_value } = req.body as CreateCollateralInput;
+    const record = insertCollateral({ id: randomUUID(), owner, animal_type, count, appraised_value });
+    invalidateCache("/api/collateral");
+    res.status(201).json(record);
+  }),
+);
+
+// PATCH /api/v1/collateral/:id — partially update collateral fields
+app.patch(
+  "/api/v1/collateral/:id",
+  timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
+  validate(updateCollateralSchema, { statusCode: 422, errorShape: "dictionary" }),
+  asyncHandler(async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const record = getCollateral(id);
+    if (!record) {
+      return res.status(404).json({ error: "Record not found" });
+    }
+
+    const updates = req.body as UpdateCollateralInput;
+    const updated = updateCollateral(id, updates);
+    if (!updated) {
+      return res.status(404).json({ error: "Record not found" });
+    }
+
+    invalidateCache("/api/collateral");
+    res.json(updated);
+  }),
+);
 
 // GET /api/v1/collateral — list collateral with optional filters and pagination
 app.get("/api/v1/collateral", asyncHandler(async (req: Request, res: Response) => {
@@ -1122,6 +1158,48 @@ app.put("/api/v1/collateral/:id/appraise", timeoutMiddleware(parseInt(config.TIM
 
 // DELETE /api/v1/collateral/:id — soft delete
 app.delete("/api/v1/collateral/:id", handleDeleteCollateral);
+
+// PATCH /api/v1/collateral/:id/restore — restore soft-deleted collateral
+app.patch(
+  "/api/v1/collateral/:id/restore",
+  timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
+  asyncHandler(async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const collateral = getCollateralIncludingDeleted(id);
+
+    if (!collateral || collateral.deletedAt === null) {
+      return res.status(404).json({ error: "Record not found or not deleted" });
+    }
+
+    if (isCollateralPledged(id)) {
+      return res.status(409).json({ error: "Collateral is currently pledged to an active loan" });
+    }
+
+    const restored = restoreCollateral(id);
+    if (!restored) {
+      return res.status(404).json({ error: "Record not found or not deleted" });
+    }
+
+    invalidateCache("/api/collateral");
+    res.json({ restored: true, id });
+  }),
+);
+
+// GET /api/v1/loans/summary — borrower-scoped portfolio summary
+app.get(
+  "/api/v1/loans/summary",
+  readLimiter,
+  createResponseCacheMiddleware(30_000),
+  asyncHandler(async (req: Request, res: Response) => {
+    const user = (req as Request & { user?: { publicKey?: string } }).user;
+    if (!user?.publicKey) {
+      return res.status(401).json({ error: "Authenticated wallet address required" });
+    }
+
+    const summary = getLoanSummaryForBorrower(user.publicKey);
+    res.json(summary);
+  }),
+);
 
 // GET /api/admin/deleted/loans — list soft-deleted loan records
 app.get("/api/admin/deleted/loans", (req: Request, res: Response) => {

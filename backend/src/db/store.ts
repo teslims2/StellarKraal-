@@ -46,6 +46,13 @@ export interface LoanRecord {
   deletedAt: string | null;
 }
 
+export interface LoanSummary {
+  activeLoans: number;
+  totalCollateralValue: number;
+  averageHealthFactor: number;
+  atRiskCount: number;
+}
+
 export type TransactionType = "loan" | "repayment" | "liquidation";
 export type TransactionStatus = "pending" | "completed" | "failed";
 
@@ -144,6 +151,15 @@ export function listCollateral(filters?: {
 export function getCollateral(id: string): CollateralRecord | undefined {
   const r = collateralTable.get(id);
   return r && r.deletedAt === null ? r : undefined;
+}
+
+/**
+ * Fetch a collateral record by ID including soft-deleted rows.
+ * @param id - Collateral record ID.
+ * @returns The {@link CollateralRecord} or `undefined` if not found.
+ */
+export function getCollateralIncludingDeleted(id: string): CollateralRecord | undefined {
+  return collateralTable.get(id);
 }
 
 /**
@@ -264,6 +280,62 @@ export function listActiveLoans(): LoanRecord[] {
   return [...loanTable.values()].filter(
     (r) => r.deletedAt === null && (r.status === "active" || r.status === "at_risk"),
   );
+}
+
+function normalizeHealthFactor(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  // Normalize store values that may be persisted either as ratio (e.g. 1.15)
+  // or bps (e.g. 11500).
+  return value > 100 ? value / 10_000 : value;
+}
+
+/**
+ * Aggregate dashboard metrics for loans belonging to a borrower.
+ * Only active/at_risk non-deleted loans are included.
+ * @param borrower - Borrower wallet/public key.
+ * @returns Aggregated loan summary metrics.
+ */
+export function getLoanSummaryForBorrower(borrower: string): LoanSummary {
+  const activeLoans = [...loanTable.values()].filter(
+    (r) =>
+      r.deletedAt === null &&
+      r.borrower === borrower &&
+      (r.status === "active" || r.status === "at_risk"),
+  );
+
+  const totalCollateralValue = activeLoans.reduce((sum, loan) => {
+    const collateral = collateralTable.get(loan.collateral_id);
+    if (!collateral || collateral.deletedAt !== null) return sum;
+    return sum + collateral.appraised_value;
+  }, 0);
+
+  const normalizedHealthFactors = activeLoans
+    .map((loan) => normalizeHealthFactor(loan.health_factor))
+    .filter((value): value is number => value !== null);
+
+  const averageHealthFactor =
+    normalizedHealthFactors.length > 0
+      ? Number(
+          (
+            normalizedHealthFactors.reduce((sum, value) => sum + value, 0) /
+            normalizedHealthFactors.length
+          ).toFixed(4),
+        )
+      : 0;
+
+  const atRiskCount = activeLoans.filter((loan) => {
+    const hf = normalizeHealthFactor(loan.health_factor);
+    return hf !== null && hf < 1.2;
+  }).length;
+
+  return {
+    activeLoans: activeLoans.length,
+    totalCollateralValue,
+    averageHealthFactor,
+    atRiskCount,
+  };
 }
 
 /**

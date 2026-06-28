@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import logger from "./logger";
 
-const CACHE_TTL_MS = 30_000; // 30 seconds
+const DEFAULT_CACHE_TTL_MS = 30_000; // 30 seconds
 
 interface CacheEntry {
   body: unknown;
@@ -11,11 +11,12 @@ interface CacheEntry {
 const store = new Map<string, CacheEntry>();
 
 function cacheKey(req: Request): string {
-  return `${req.path}?${new URLSearchParams(req.query as Record<string, string>).toString()}`;
+  const userKey = (req as Request & { user?: { publicKey?: string } }).user?.publicKey ?? "anonymous";
+  return `${req.path}?${new URLSearchParams(req.query as Record<string, string>).toString()}::${userKey}`;
 }
 
-function isExpired(entry: CacheEntry): boolean {
-  return Date.now() - entry.cachedAt > CACHE_TTL_MS;
+function isExpired(entry: CacheEntry, ttlMs: number): boolean {
+  return Date.now() - entry.cachedAt > ttlMs;
 }
 
 /** Middleware that caches GET responses for 30 s and respects Cache-Control: no-cache.
@@ -23,36 +24,45 @@ function isExpired(entry: CacheEntry): boolean {
  * @param res - Express response object.
  * @param next - Next middleware callback.
  */
-export function responseCacheMiddleware(req: Request, res: Response, next: NextFunction): void {
-  const noCache =
-    req.headers["cache-control"] === "no-cache" ||
-    req.headers["pragma"] === "no-cache";
+/**
+ * Create a response-cache middleware with a configurable TTL.
+ * @param ttlMs - Cache time-to-live in milliseconds.
+ * @returns Express middleware that caches successful JSON responses.
+ */
+export function createResponseCacheMiddleware(ttlMs: number = DEFAULT_CACHE_TTL_MS) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const noCache =
+      req.headers["cache-control"] === "no-cache" ||
+      req.headers["pragma"] === "no-cache";
 
-  const key = cacheKey(req);
+    const key = cacheKey(req);
 
-  if (!noCache) {
-    const entry = store.get(key);
-    if (entry && !isExpired(entry)) {
-      logger.debug("response_cache_hit", { path: req.path, key });
-      res.setHeader("X-Cache", "HIT");
-      res.json(entry.body);
-      return;
+    if (!noCache) {
+      const entry = store.get(key);
+      if (entry && !isExpired(entry, ttlMs)) {
+        logger.debug("response_cache_hit", { path: req.path, key, ttlMs });
+        res.setHeader("X-Cache", "HIT");
+        res.json(entry.body);
+        return;
+      }
+      logger.debug("response_cache_miss", { path: req.path, key, ttlMs });
     }
-    logger.debug("response_cache_miss", { path: req.path, key });
-  }
 
-  // Intercept res.json to capture the response body for caching
-  const originalJson = res.json.bind(res);
-  res.json = (body: unknown) => {
-    if (res.statusCode === 200 && !noCache) {
-      store.set(key, { body, cachedAt: Date.now() });
-    }
-    res.setHeader("X-Cache", "MISS");
-    return originalJson(body);
+    // Intercept res.json to capture the response body for caching
+    const originalJson = res.json.bind(res);
+    res.json = (body: unknown) => {
+      if (res.statusCode === 200 && !noCache) {
+        store.set(key, { body, cachedAt: Date.now() });
+      }
+      res.setHeader("X-Cache", "MISS");
+      return originalJson(body);
+    };
+
+    next();
   };
-
-  next();
 }
+
+export const responseCacheMiddleware = createResponseCacheMiddleware();
 
 /** Invalidate all cache entries whose path matches the given prefix.
  * @param pathPrefix - The URL path prefix to match for invalidation.

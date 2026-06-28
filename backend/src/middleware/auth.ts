@@ -134,7 +134,11 @@ authRouter.post('/refresh', (req: Request, res: Response) => {
 // ── JWT middleware ────────────────────────────────────────────────────────────
 
 // Protected GET routes (in addition to all mutating methods)
-const PROTECTED_GET_PATTERNS = [/^\/api\/loans\/[^/]+$/, /^\/api\/collateral$/];
+const PROTECTED_GET_PATTERNS = [
+  /^\/api\/loans\/[^/]+$/,
+  /^\/api\/collateral$/,
+  /^\/api\/v1\/loans\/summary$/,
+];
 
 /**
  * Protects all POST/PUT/DELETE/PATCH routes and specific GET routes.
