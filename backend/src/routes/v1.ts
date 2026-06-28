@@ -14,25 +14,13 @@ import { writeLimiter } from "../middleware/rateLimit";
 import { deprecationHeadersWhen } from "../middleware/deprecation";
 import { fireAlert } from "../utils/alerting";
 import { rules } from "../utils/alertRules";
-import {
-  registerCollateral,
-  registerCollateralSchema,
-  getCollateralById,
-} from "../services/collateralService";
-import {
-  requestLoan,
-  repayLoan,
-  liquidateLoan,
-  getLoanOnChain,
-  getHealthFactor,
-  listLoansPaginated,
-  loanRequestSchema,
-  loanRepaySchema,
-  loanLiquidateSchema,
-  LoanNotFoundError,
-  LoanNotLiquidatableError,
-  InvalidPaginationError,
-} from "../services/loanService";
+import rpcClient from "../utils/rpcClient";
+import { healthRouter } from "./health";
+const CONTRACT_ID = process.env.CONTRACT_ID || "";
+const NETWORK_PASSPHRASE =
+  config.NEXT_PUBLIC_NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
+
+const SCALE = 10_000;
 
 const APP_VERSION = process.env["npm_package_version"] || "1.0.0";
 const startTime = Date.now();
@@ -69,6 +57,10 @@ v1Router.use((_req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+// GET /health/deep — deep infrastructure health check (no auth, no rate limit)
+v1Router.use("/health", healthRouter);
+
+// GET /health — shallow liveness check
 v1Router.get("/health", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const uptime = Math.floor((Date.now() - startTime) / 1000);
