@@ -483,6 +483,7 @@ describe("API v1 Integration Tests", () => {
       const res = await request(app).get("/api/v1/loans");
       expect(res.status).toBe(200);
       expect(res.headers).toHaveProperty("deprecation", "true");
+      expect(res.headers).toHaveProperty("sunset");
       expect(res.headers).toHaveProperty("warning");
       expect(res.headers.warning).toContain("Unpaginated loan listing is deprecated");
     });

@@ -45,6 +45,7 @@ jest.mock("./db/migrationRunner", () => ({
 
 jest.mock("./utils/responseCache", () => ({
   responseCacheMiddleware: (_req: any, _res: any, next: any) => next(),
+  createResponseCacheMiddleware: () => (_req: any, _res: any, next: any) => next(),
   invalidateCache: jest.fn(),
 }));
 
