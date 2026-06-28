@@ -408,6 +408,24 @@
         }
       }
     },
+    "headers": {
+      "RateLimit-Limit": {
+        "description": "Maximum number of requests allowed in the current window",
+        "schema": { "type": "integer", "example": 60 }
+      },
+      "RateLimit-Remaining": {
+        "description": "Number of requests remaining in the current window",
+        "schema": { "type": "integer", "example": 59 }
+      },
+      "RateLimit-Reset": {
+        "description": "Unix timestamp (seconds) when the rate limit window resets",
+        "schema": { "type": "integer", "example": 1751000000 }
+      },
+      "Retry-After": {
+        "description": "Seconds to wait before retrying (present on 429 responses only)",
+        "schema": { "type": "integer", "example": 60 }
+      }
+    },
     "responses": {
       "ValidationError": {
         "description": "Request validation failed",
@@ -426,7 +444,13 @@
         }
       },
       "RateLimited": {
-        "description": "Too many requests",
+        "description": "Too many requests — standard rate limit headers are included on all responses; Retry-After is added on 429",
+        "headers": {
+          "RateLimit-Limit":     { "$ref": "#/components/headers/RateLimit-Limit" },
+          "RateLimit-Remaining": { "$ref": "#/components/headers/RateLimit-Remaining" },
+          "RateLimit-Reset":     { "$ref": "#/components/headers/RateLimit-Reset" },
+          "Retry-After":         { "$ref": "#/components/headers/Retry-After" }
+        },
         "content": {
           "application/json": {
             "schema": { "$ref": "#/components/schemas/ErrorResponse" }
