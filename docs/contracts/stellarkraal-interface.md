@@ -202,6 +202,50 @@ The contract manages livestock-backed loans with the following responsibilities:
 
 > **Oracle design:** The protocol supports multiple registered oracles with on-chain median aggregation and a configurable quorum (`add_oracle`, `remove_oracle`, `get_oracles`, `submit_oracle_prices`), in addition to the single-oracle `submit_price` + TWAP path documented below. For the trust model, dispute handling, the relationship to the off-chain appraisal cache (`backend/src/utils/appraisalCache.ts`), and rationale, see [ADR-006: Oracle design](../adr/ADR-006-oracle-design.md).
 
+### `get_oracles(env)`
+- Description: Return the current list of registered oracle addresses. If the multi-oracle `ORACLES` store has not been written yet (i.e. only the legacy single `ORACLE` key exists), it falls back to returning a one-element Vec containing that address.
+- Parameters: none.
+- Returns: `Vec<Address>` — ordered list of registered oracle addresses (0–5 entries).
+- State changes: none.
+- Example:
+  ```bash
+  stellar contract invoke \
+    --id "$CONTRACT_ID" \
+    --fn get_oracles \
+    --network "$NETWORK" \
+    --rpc-url "$RPC_URL"
+  ```
+
+### `add_oracle(env, admin, oracle)`
+- Description: Register an additional oracle address. Maximum of 5 oracles allowed.
+- Parameters:
+  - `admin` — must match the stored admin address.
+  - `oracle` — oracle address to add.
+- Returns: `Result<(), Error>`.
+- State changes: appends address to `ORACLES`, emits no event.
+- Errors: `Unauthorized` (non-admin), `OracleAlreadyRegistered` (#16), `OracleLimitReached` (#17 when count ≥ 5).
+
+### `remove_oracle(env, admin, oracle)`
+- Description: Deregister an existing oracle address.
+- Parameters:
+  - `admin` — must match the stored admin address.
+  - `oracle` — oracle address to remove.
+- Returns: `Result<(), Error>`.
+- State changes: removes address from `ORACLES`.
+- Errors: `Unauthorized` (non-admin), `OracleNotFound` (#16 when address not present).
+
+### `submit_oracle_prices(env, submitter, prices)`
+- Description: Submit a price vector (one price per registered oracle) and compute the on-chain median. Prices equal to zero are treated as non-responses. A minimum quorum of 3 responses is required when 3 or more oracles are registered; otherwise the quorum equals the oracle count.
+- Parameters:
+  - `submitter` — any authenticated address.
+  - `prices` — `Vec<i128>` whose length must equal the number of registered oracles. A zero entry indicates that oracle did not respond.
+- Returns: `Result<OracleReport, Error>` where `OracleReport` contains:
+  - `median: i128` — median of non-zero prices after sorting.
+  - `responses: u32` — count of non-zero prices.
+  - `flagged_count: u32` — count of prices deviating >50% from the median.
+- State changes: none (read-only aggregation; the caller decides how to use the result).
+- Errors: `InvalidPrice` (#18) if `prices.len() != oracles.len()`, `InsufficientOracleQuorum` (#17) if non-zero responses < quorum.
+
 ### `set_oracle_config(env, admin, price_min, price_max, staleness_threshold, max_deviation_bps)`
 - Description: Configure price bounds and freshness validation.
 - Parameters:

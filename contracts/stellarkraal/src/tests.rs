@@ -655,6 +655,45 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
     }
 
     #[test]
+    fn test_get_oracles_after_init() {
+        // After init, get_oracles returns the single seed oracle
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let oracles = client.get_oracles();
+        assert_eq!(oracles.len(), 1);
+        assert_eq!(oracles.get(0).unwrap(), oracle);
+    }
+
+    #[test]
+    fn test_get_oracles_after_add() {
+        // get_oracles returns correct addresses after add_oracle
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let second = Address::generate(&env);
+        client.add_oracle(&admin, &second);
+        let oracles = client.get_oracles();
+        assert_eq!(oracles.len(), 2);
+        assert!(oracles.contains(&oracle));
+        assert!(oracles.contains(&second));
+    }
+
+    #[test]
+    fn test_get_oracles_after_remove() {
+        // get_oracles reflects removal via remove_oracle
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let second = Address::generate(&env);
+        client.add_oracle(&admin, &second);
+        client.remove_oracle(&admin, &oracle);
+        let oracles = client.get_oracles();
+        assert_eq!(oracles.len(), 1);
+        assert_eq!(oracles.get(0).unwrap(), second);
+    }
+
+    #[test]
     fn test_submit_oracle_prices_single_oracle() {
         // quorum=1: single oracle submission uses that price as median
         let (env, cid, admin, oracle, token, treasury) = setup();
