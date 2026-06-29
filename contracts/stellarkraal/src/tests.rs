@@ -2,7 +2,7 @@ use super::*;
 use soroban_sdk::{
     symbol_short, vec,
     testutils::{Address as _, Ledger},
-    Address, Env,
+    Address, Env, FromVal,
 };
 use proptest::prelude::*;
 
@@ -652,6 +652,25 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
             e.0 == (symbol_short!("loan"), symbol_short!("repaid"))
         });
         assert!(repay_event.is_some());
+    }
+
+    #[test]
+    fn test_update_fee_config_emits_event() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        // Initial fees set by init: origination=50, interest=1000
+        client.update_fee_config(&admin, &100u32, &200u32);
+
+        let events = env.events().all();
+        let fee_event = events.iter().find(|e| {
+            e.0 == (symbol_short!("Admin"), symbol_short!("FeeUpd"))
+        });
+        assert!(fee_event.is_some(), "FeeUpd event not emitted");
+        // Verify data: (old_orig, new_orig, old_int, new_int)
+        let data = <(u32, u32, u32, u32)>::from_val(&env, &fee_event.unwrap().1);
+        assert_eq!(data, (50u32, 100u32, 1000u32, 200u32));
     }
 
     // ── proptests ─────────────────────────────────────────────────────────

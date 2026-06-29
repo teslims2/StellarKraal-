@@ -862,8 +862,14 @@ impl StellarKraal {
             return Err(Error::InvalidFeeRate);
         }
 
+        let old_orig: u32 = env.storage().instance().get(&ORIG_FEE).unwrap();
+        let old_int: u32 = env.storage().instance().get(&INT_FEE).unwrap();
         env.storage().instance().set(&ORIG_FEE, &origination_fee_bps);
         env.storage().instance().set(&INT_FEE, &interest_fee_bps);
+        env.events().publish(
+            (symbol_short!("Admin"), symbol_short!("FeeUpd")),
+            (old_orig, origination_fee_bps, old_int, interest_fee_bps),
+        );
         Ok(())
     }
 
