@@ -13,6 +13,10 @@ const envSchema = z.object({
   // Request timeouts in milliseconds
   TIMEOUT_GLOBAL_MS: z.string().regex(/^\d+$/, "TIMEOUT_GLOBAL_MS must be a number").default("10000"),
   TIMEOUT_WRITE_MS: z.string().regex(/^\d+$/, "TIMEOUT_WRITE_MS must be a number").default("15000"),
+  /** Timeout for contract submission routes (e.g. loan request, repay, liquidate). @default 30000 */
+  TIMEOUT_CONTRACT_MS: z.string().regex(/^\d+$/, "TIMEOUT_CONTRACT_MS must be a number").default("30000"),
+  /** Origination fee in basis points. @default 50 (0.5%) */
+  ORIG_FEE_BPS: z.string().regex(/^\d+$/, "ORIG_FEE_BPS must be a number").default("50"),
   // Webhook secret
   WEBHOOK_SECRET: z.string().min(16, "WEBHOOK_SECRET must be at least 16 characters").optional(),
   // Admin key for webhook admin endpoints
@@ -28,6 +32,24 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   // Frontend URL for CORS
   FRONTEND_URL: z.string().url("FRONTEND_URL must be a valid URL").optional(),
+  // Comma-separated list of allowed CORS origins.
+  // Wildcard "*" is rejected in production.
+  ALLOWED_ORIGINS: z
+    .string()
+    .optional()
+    .refine(
+      (val) => {
+        if (!val) return true;
+        const isProduction = process.env.NODE_ENV === "production";
+        const origins = val.split(",").map((o) => o.trim()).filter(Boolean);
+        if (isProduction && origins.includes("*")) return false;
+        return origins.every((o) => o === "*" || /^https?:\/\/.+/.test(o));
+      },
+      {
+        message:
+          'ALLOWED_ORIGINS must be comma-separated HTTP(S) URLs; wildcard "*" is not allowed in production',
+      },
+    ),
   /**
    * Graceful shutdown drain timeout in milliseconds.
    * The server waits up to this duration for in-flight requests to complete
