@@ -2,41 +2,87 @@ import cors from "cors";
 import { RequestHandler, Request, Response, NextFunction } from "express";
 import logger from "../utils/logger";
 
-// Warn at startup if FRONTEND_URL is missing in production
-if (process.env.NODE_ENV === "production" && !process.env.FRONTEND_URL) {
+const isProduction = process.env.NODE_ENV === "production";
+
+/**
+ * Parse ALLOWED_ORIGINS env var into a set of allowed origins.
+ * Throws at startup if a wildcard is present in production or a pattern is invalid.
+ */
+export function parseAllowedOrigins(raw: string | undefined): string[] | null {
+  if (!raw) return null;
+  const origins = raw
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+
+  const prod = process.env.NODE_ENV === "production";
+
+  for (const o of origins) {
+    if (o === "*") {
+      if (prod) {
+        throw new Error(
+          'ALLOWED_ORIGINS: wildcard "*" is not permitted in production (NODE_ENV=production)',
+        );
+      }
+      continue;
+    }
+    if (!/^https?:\/\/.+/.test(o)) {
+      throw new Error(`ALLOWED_ORIGINS: invalid origin pattern "${o}" — must be an HTTP(S) URL or "*"`);
+    }
+  }
+
+  return origins;
+}
+
+// Parse and validate at module load time (startup validation).
+const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
+
+if (!allowedOrigins && isProduction && !process.env.FRONTEND_URL) {
   logger.warn(
-    "CORS misconfiguration: FRONTEND_URL is not set in production. Requests from the frontend will be blocked.",
+    "CORS misconfiguration: neither ALLOWED_ORIGINS nor FRONTEND_URL is set in production. " +
+      "Requests from the frontend will be blocked.",
   );
 }
 
-// Authenticated routes require credentials; wildcard origin is incompatible with credentials.
 function isAuthRoute(path: string): boolean {
   return path.startsWith("/api") && path !== "/api/health";
 }
 
+function resolveOrigin(
+  req: Request,
+): cors.CorsOptions["origin"] {
+  const authRoute = isAuthRoute(req.path);
+
+  // ALLOWED_ORIGINS takes precedence over FRONTEND_URL
+  if (allowedOrigins) {
+    if (allowedOrigins.includes("*")) {
+      return authRoute ? true : "*";
+    }
+    return (origin, cb) => {
+      if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+      cb(null, false);
+    };
+  }
+
+  const frontendUrl = process.env.FRONTEND_URL;
+  return isProduction
+    ? frontendUrl || false
+    : frontendUrl || (authRoute ? true : "*");
+}
+
 /**
- * Express middleware that applies CORS policy for frontend and authenticated API routes.
- * In production, only the configured `FRONTEND_URL` is allowed.
- *
- * @param req - Incoming Express request.
- * @param res - Express response object.
- * @param next - Next middleware callback.
+ * Express middleware that applies CORS policy.
+ * Reads allowed origins from ALLOWED_ORIGINS (comma-separated) or falls back to FRONTEND_URL.
+ * Wildcard "*" is rejected in production.
  */
 export const corsMiddleware: RequestHandler = (
   req: Request,
   res: Response,
   next: NextFunction,
 ) => {
-  const isProduction = process.env.NODE_ENV === "production";
-  const frontendUrl = process.env.FRONTEND_URL;
   const authRoute = isAuthRoute(req.path);
-
-  const origin: cors.CorsOptions["origin"] = isProduction
-    ? frontendUrl || false
-    : frontendUrl || (authRoute ? true : "*");
-
   cors({
-    origin,
+    origin: resolveOrigin(req),
     credentials: authRoute,
     maxAge: 86400,
   })(req, res, next);
