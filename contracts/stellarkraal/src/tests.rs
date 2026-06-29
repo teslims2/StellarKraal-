@@ -824,3 +824,48 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
             assert_eq!(loan.outstanding, loan.principal);
         }
     }
+
+    // ── fee_config_updated event (#666) ───────────────────────────────────
+
+    #[test]
+    fn test_update_fee_config_emits_event() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        // defaults after init: orig=50, int=1000
+        client.update_fee_config(&admin, &100u32, &200u32);
+
+        let events = env.events().all();
+        let fee_event = events.iter().find(|e| {
+            e.0 == (symbol_short!("fee"), symbol_short!("cfgUpd"))
+        });
+        assert!(fee_event.is_some(), "fee_config_updated event must be emitted");
+
+        // Verify old and new values are encoded in the event data
+        let (old_orig, old_int, new_orig, new_int): (u32, u32, u32, u32) =
+            fee_event.unwrap().1.into_val(&env);
+        assert_eq!(old_orig, 50u32);
+        assert_eq!(old_int, 1000u32);
+        assert_eq!(new_orig, 100u32);
+        assert_eq!(new_int, 200u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "#3")]
+    fn test_update_fee_config_non_admin_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let attacker = Address::generate(&env);
+        client.update_fee_config(&attacker, &10u32, &10u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "#10")]
+    fn test_update_fee_config_exceeds_cap_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.update_fee_config(&admin, &501u32, &0u32);
+    }
