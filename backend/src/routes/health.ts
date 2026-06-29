@@ -89,4 +89,21 @@ healthRouter.get("/deep", async (_req: Request, res: Response) => {
   res.status(allHealthy ? 200 : 503).json(body);
 });
 
+/**
+ * GET /health/live
+ * Kubernetes-style liveness probe. Returns 200 if the process is alive.
+ */
+healthRouter.get("/live", (_req: Request, res: Response) => {
+  res.status(200).json({ status: "alive" });
+});
+
+/**
+ * GET /health/ready
+ * Kubernetes-style readiness probe. Returns 200 only when the DB is reachable.
+ */
+healthRouter.get("/ready", async (_req: Request, res: Response) => {
+  const dbHealthy = await checkDbHealth();
+  res.status(dbHealthy ? 200 : 503).json({ status: dbHealthy ? "ready" : "not_ready" });
+});
+
 export { healthRouter, checkDiskHealth };

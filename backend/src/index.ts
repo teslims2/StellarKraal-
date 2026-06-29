@@ -33,6 +33,7 @@ import {
   type TransactionStatus,
 } from "./db/store";
 import { corsMiddleware } from "./middleware/cors";
+import { helmetMiddleware } from "./middleware/helmet";
 import { correlationMiddleware } from "./middleware/correlation";
 import { loggingMiddleware } from "./middleware/logging";
 import { getIdempotencyEntry, setIdempotencyEntry } from "./middleware/idempotency";
@@ -114,6 +115,7 @@ const startTime = Date.now();
 const app = express();
 
 // Startup warning for CORS misconfiguration
+app.use(helmetMiddleware);
 app.use(corsMiddleware);
 app.use(express.json());
 

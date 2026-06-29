@@ -27,7 +27,7 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
 
     fn init(env: &Env, contract_id: &Address, admin: &Address, oracle: &Address, token: &Address, treasury: &Address) {
         let client = StellarKraalClient::new(env, contract_id);
-        client.initialize(admin, oracle, token, treasury, &6000u32, &8000u32);
+        client.initialize(admin, oracle, token, treasury, &6000u32, &8000u32, &1u32);
     }
 
     // ── initialize ────────────────────────────────────────────────────────
@@ -752,4 +752,111 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
             // Invariant 11: Initial outstanding == principal
             assert_eq!(loan.outstanding, loan.principal);
         }
+    }
+
+    // ── oracle quorum tests ────────────────────────────────────────────────
+
+    fn init_with_quorum(env: &Env, contract_id: &Address, admin: &Address, oracle: &Address, token: &Address, treasury: &Address, min_quorum: u32) {
+        let client = StellarKraalClient::new(env, contract_id);
+        client.initialize(admin, oracle, token, treasury, &6000u32, &8000u32, &min_quorum);
+    }
+
+    #[test]
+    fn test_quorum_1_oracle_succeeds() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init_with_quorum(&env, &cid, &admin, &oracle, &token, &treasury, 1);
+        let client = StellarKraalClient::new(&env, &cid);
+        // 1 oracle registered (initial oracle), quorum = 1
+        let report = client.submit_oracle_prices(&admin, &soroban_sdk::vec![&env, 1_000i128]);
+        assert_eq!(report.responses, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "#17")]
+    fn test_quorum_1_not_met_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init_with_quorum(&env, &cid, &admin, &oracle, &token, &treasury, 1);
+        let client = StellarKraalClient::new(&env, &cid);
+        // Provide 0 non-zero prices — quorum not met
+        client.submit_oracle_prices(&admin, &soroban_sdk::vec![&env, 0i128]);
+    }
+
+    #[test]
+    fn test_quorum_2_two_oracles_succeed() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init_with_quorum(&env, &cid, &admin, &oracle, &token, &treasury, 2);
+        let client = StellarKraalClient::new(&env, &cid);
+        let oracle2 = Address::generate(&env);
+        client.add_oracle(&admin, &oracle2);
+        // 2 non-zero prices → quorum 2 met
+        let report = client.submit_oracle_prices(&admin, &soroban_sdk::vec![&env, 1_000i128, 1_100i128]);
+        assert_eq!(report.responses, 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "#17")]
+    fn test_quorum_2_only_one_price_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init_with_quorum(&env, &cid, &admin, &oracle, &token, &treasury, 2);
+        let client = StellarKraalClient::new(&env, &cid);
+        let oracle2 = Address::generate(&env);
+        client.add_oracle(&admin, &oracle2);
+        // Only 1 non-zero price → quorum 2 not met
+        client.submit_oracle_prices(&admin, &soroban_sdk::vec![&env, 1_000i128, 0i128]);
+    }
+
+    #[test]
+    fn test_quorum_3_three_oracles_succeed() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init_with_quorum(&env, &cid, &admin, &oracle, &token, &treasury, 3);
+        let client = StellarKraalClient::new(&env, &cid);
+        let oracle2 = Address::generate(&env);
+        let oracle3 = Address::generate(&env);
+        client.add_oracle(&admin, &oracle2);
+        client.add_oracle(&admin, &oracle3);
+        let report = client.submit_oracle_prices(&admin, &soroban_sdk::vec![&env, 900i128, 1_000i128, 1_100i128]);
+        assert_eq!(report.responses, 3);
+        assert_eq!(report.median, 1_000i128);
+    }
+
+    #[test]
+    #[should_panic(expected = "#17")]
+    fn test_quorum_3_only_two_prices_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init_with_quorum(&env, &cid, &admin, &oracle, &token, &treasury, 3);
+        let client = StellarKraalClient::new(&env, &cid);
+        let oracle2 = Address::generate(&env);
+        let oracle3 = Address::generate(&env);
+        client.add_oracle(&admin, &oracle2);
+        client.add_oracle(&admin, &oracle3);
+        // Only 2 non-zero prices → quorum 3 not met
+        client.submit_oracle_prices(&admin, &soroban_sdk::vec![&env, 1_000i128, 1_100i128, 0i128]);
+    }
+
+    #[test]
+    fn test_admin_updates_quorum_via_update_oracle() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init_with_quorum(&env, &cid, &admin, &oracle, &token, &treasury, 1);
+        let client = StellarKraalClient::new(&env, &cid);
+        let new_oracle = Address::generate(&env);
+        // Update oracle address and raise quorum to 1 (pass 0 to keep unchanged)
+        client.update_oracle(&admin, &new_oracle, &0u32);
+        // Quorum still 1 — single non-zero price succeeds
+        let report = client.submit_oracle_prices(&admin, &soroban_sdk::vec![&env, 1_000i128]);
+        assert_eq!(report.responses, 1);
+    }
+
+    #[test]
+    fn test_admin_raises_quorum_via_update_oracle() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init_with_quorum(&env, &cid, &admin, &oracle, &token, &treasury, 1);
+        let client = StellarKraalClient::new(&env, &cid);
+        let oracle2 = Address::generate(&env);
+        client.add_oracle(&admin, &oracle2);
+        let new_oracle = Address::generate(&env);
+        // Update quorum to 2 via update_oracle
+        client.update_oracle(&admin, &new_oracle, &2u32);
+        // Now 2 non-zero prices needed
+        let report = client.submit_oracle_prices(&admin, &soroban_sdk::vec![&env, 1_000i128, 1_100i128]);
+        assert_eq!(report.responses, 2);
     }
