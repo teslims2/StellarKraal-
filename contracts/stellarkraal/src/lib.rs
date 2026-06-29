@@ -32,6 +32,7 @@ const CLOSE_FACTOR: Symbol = symbol_short!("CLSFACT"); // close factor bps e.g. 
 const PAUSED: Symbol = symbol_short!("PAUSED");   // pause state flag
 const PAUSE_EXP: Symbol = symbol_short!("PAUSEXP"); // pause expiry timestamp
 const ORACLES: Symbol = symbol_short!("ORACLES");
+const WL_COUNT: Symbol = symbol_short!("WLCOUNT");  // number of whitelisted liquidators
 
 // ── Errors ───────────────────────────────────────────────────────────────────
 
@@ -71,6 +72,8 @@ pub enum Error {
     InsufficientOracleQuorum = 17,
     InvalidPrice = 18,
     NotPaused = 19,
+    /// Caller is not on the approved liquidator whitelist.
+    LiquidatorNotWhitelisted = 20,
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -156,6 +159,8 @@ pub enum DataKey {
     CollateralCounter,
     /// Reentrancy guard lock.
     Guard,
+    /// Liquidator whitelist entry keyed by address.
+    WhitelistEntry(Address),
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -669,6 +674,13 @@ impl StellarKraal {
         }
         liquidator.require_auth();
 
+        // Enforce liquidator whitelist: if the whitelist is non-empty, only
+        // approved addresses may liquidate.
+        let wl_count: u32 = env.storage().instance().get(&WL_COUNT).unwrap_or(0);
+        if wl_count > 0 && !env.storage().persistent().has(&DataKey::WhitelistEntry(liquidator.clone())) {
+            return Err(Error::LiquidatorNotWhitelisted);
+        }
+
         let mut loan: LoanRecord = env
             .storage()
             .persistent()
@@ -750,6 +762,96 @@ impl StellarKraal {
     pub fn get_close_factor(env: Env) -> Result<u32, Error> {
         Self::assert_initialized(&env)?;
         Ok(env.storage().instance().get(&CLOSE_FACTOR).unwrap())
+    }
+
+    // ── add_liquidator ────────────────────────────────────────────────────
+    /// Add an address to the approved liquidator whitelist.
+    ///
+    /// Once at least one address is on the whitelist, only whitelisted
+    /// addresses can call `liquidate`. When the whitelist is empty any
+    /// address may liquidate (backward-compatible default).
+    ///
+    /// # Parameters
+    /// - `admin`: Must match the stored admin address.
+    /// - `liquidator`: Address to approve as a liquidator.
+    ///
+    /// # Errors
+    /// - [`Error::NotInitialized`] / [`Error::Unauthorized`]
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn add_liquidator(env: Env, admin: Address, liquidator: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+
+        // Idempotent: skip if already present
+        if env.storage().persistent().has(&DataKey::WhitelistEntry(liquidator.clone())) {
+            return Ok(());
+        }
+
+        env.storage().persistent().set(&DataKey::WhitelistEntry(liquidator.clone()), &());
+
+        // Increment count
+        let count: u32 = env.storage().instance().get(&WL_COUNT).unwrap_or(0);
+        env.storage().instance().set(&WL_COUNT, &(count + 1));
+
+        env.events().publish(
+            (symbol_short!("whitelist"), symbol_short!("added")),
+            liquidator,
+        );
+        Ok(())
+    }
+
+    // ── remove_liquidator ─────────────────────────────────────────────────
+    /// Remove an address from the approved liquidator whitelist.
+    ///
+    /// If the address is not currently whitelisted this is a no-op.
+    ///
+    /// # Parameters
+    /// - `admin`: Must match the stored admin address.
+    /// - `liquidator`: Address to remove from the whitelist.
+    ///
+    /// # Errors
+    /// - [`Error::NotInitialized`] / [`Error::Unauthorized`]
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn remove_liquidator(env: Env, admin: Address, liquidator: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+
+        if !env.storage().persistent().has(&DataKey::WhitelistEntry(liquidator.clone())) {
+            return Ok(()); // Idempotent no-op
+        }
+
+        env.storage().persistent().remove(&DataKey::WhitelistEntry(liquidator.clone()));
+
+        // Decrement count (saturating to prevent underflow)
+        let count: u32 = env.storage().instance().get(&WL_COUNT).unwrap_or(0);
+        env.storage().instance().set(&WL_COUNT, &count.saturating_sub(1));
+
+        env.events().publish(
+            (symbol_short!("whitelist"), symbol_short!("removed")),
+            liquidator,
+        );
+        Ok(())
+    }
+
+    // ── is_whitelisted ────────────────────────────────────────────────────
+    /// Returns `true` if the given address is on the approved liquidator
+    /// whitelist, or if the whitelist is empty (open liquidation mode).
+    ///
+    /// # Parameters
+    /// - `liquidator`: Address to check.
+    pub fn is_whitelisted(env: Env, liquidator: Address) -> bool {
+        let wl_count: u32 = env.storage().instance().get(&WL_COUNT).unwrap_or(0);
+        // Empty whitelist → open mode → every address is "whitelisted"
+        if wl_count == 0 {
+            return true;
+        }
+        env.storage().persistent().has(&DataKey::WhitelistEntry(liquidator))
     }
 
     // ── health_factor ─────────────────────────────────────────────────────
