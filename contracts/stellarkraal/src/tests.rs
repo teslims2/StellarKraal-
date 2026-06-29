@@ -654,6 +654,191 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
         assert!(repay_event.is_some());
     }
 
+    // ── transfer_collateral ───────────────────────────────────────────────
+
+    /// Success: owner transfers an unlocked collateral to a new owner.
+    #[test]
+    fn test_transfer_collateral_ok() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        let original_owner = Address::generate(&env);
+        let new_owner = Address::generate(&env);
+
+        let col_id = client.register_livestock(
+            &original_owner,
+            &symbol_short!("cattle"),
+            &3u32,
+            &900_000i128,
+        );
+
+        client.transfer_collateral(&original_owner, &col_id, &new_owner);
+
+        let col = client.get_collateral(&col_id);
+        assert_eq!(col.owner, new_owner, "owner should be updated to new_owner");
+    }
+
+    /// Success: event emitted with correct topics and data.
+    #[test]
+    fn test_transfer_collateral_emits_event() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        let original_owner = Address::generate(&env);
+        let new_owner = Address::generate(&env);
+
+        let col_id = client.register_livestock(
+            &original_owner,
+            &symbol_short!("goat"),
+            &5u32,
+            &500_000i128,
+        );
+
+        client.transfer_collateral(&original_owner, &col_id, &new_owner);
+
+        let events = env.events().all();
+        let transfer_event = events.iter().find(|e| {
+            e.0 == (symbol_short!("collateral"), symbol_short!("transferd"))
+        });
+        assert!(transfer_event.is_some(), "collateral/transferd event must be emitted");
+    }
+
+    /// Error: collateral pledged to an active loan cannot be transferred (#20).
+    #[test]
+    #[should_panic(expected = "#20")]
+    fn test_transfer_collateral_pledged_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        let borrower = Address::generate(&env);
+        let new_owner = Address::generate(&env);
+
+        let col_id = client.register_livestock(
+            &borrower,
+            &symbol_short!("cattle"),
+            &2u32,
+            &1_000_000i128,
+        );
+        // Lock the collateral to a loan
+        client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+
+        // Transfer while pledged → CollateralPledged (#20)
+        client.transfer_collateral(&borrower, &col_id, &new_owner);
+    }
+
+    /// Error: caller is not the current owner (#3).
+    #[test]
+    #[should_panic(expected = "#3")]
+    fn test_transfer_collateral_unauthorized_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        let owner = Address::generate(&env);
+        let attacker = Address::generate(&env);
+        let new_owner = Address::generate(&env);
+
+        let col_id = client.register_livestock(
+            &owner,
+            &symbol_short!("sheep"),
+            &4u32,
+            &400_000i128,
+        );
+
+        // Attacker tries to transfer collateral they don't own → Unauthorized (#3)
+        client.transfer_collateral(&attacker, &col_id, &new_owner);
+    }
+
+    /// Error: collateral ID does not exist (#6).
+    #[test]
+    #[should_panic(expected = "#6")]
+    fn test_transfer_collateral_not_found_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        let owner = Address::generate(&env);
+        let new_owner = Address::generate(&env);
+
+        // ID 999 was never registered → CollateralNotFound (#6)
+        client.transfer_collateral(&owner, &999u64, &new_owner);
+    }
+
+    /// After transfer, the new owner can use the collateral to request a loan.
+    #[test]
+    fn test_transfer_collateral_new_owner_can_borrow() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        let original_owner = Address::generate(&env);
+        let new_owner = Address::generate(&env);
+
+        let col_id = client.register_livestock(
+            &original_owner,
+            &symbol_short!("cattle"),
+            &2u32,
+            &1_000_000i128,
+        );
+
+        client.transfer_collateral(&original_owner, &col_id, &new_owner);
+
+        // New owner borrows against the transferred collateral
+        let loan_id = client.request_loan(&new_owner, &vec![&env, col_id], &600_000i128);
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.borrower, new_owner);
+    }
+
+    /// After transfer, the original owner cannot borrow against the collateral (#3).
+    #[test]
+    #[should_panic(expected = "#3")]
+    fn test_transfer_collateral_old_owner_cannot_borrow() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        let original_owner = Address::generate(&env);
+        let new_owner = Address::generate(&env);
+
+        let col_id = client.register_livestock(
+            &original_owner,
+            &symbol_short!("cattle"),
+            &2u32,
+            &1_000_000i128,
+        );
+
+        client.transfer_collateral(&original_owner, &col_id, &new_owner);
+
+        // Old owner tries to borrow → Unauthorized (#3)
+        client.request_loan(&original_owner, &vec![&env, col_id], &600_000i128);
+    }
+
+    /// Transfer is blocked while the contract is paused (#13).
+    #[test]
+    #[should_panic(expected = "#13")]
+    fn test_transfer_collateral_blocked_when_paused() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        let owner = Address::generate(&env);
+        let new_owner = Address::generate(&env);
+
+        let col_id = client.register_livestock(
+            &owner,
+            &symbol_short!("cattle"),
+            &1u32,
+            &500_000i128,
+        );
+
+        client.pause(&admin);
+        // Transfer while paused → ContractPaused (#13)
+        client.transfer_collateral(&owner, &col_id, &new_owner);
+    }
+
     // ── proptests ─────────────────────────────────────────────────────────
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]

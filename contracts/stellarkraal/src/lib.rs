@@ -71,6 +71,8 @@ pub enum Error {
     InsufficientOracleQuorum = 17,
     InvalidPrice = 18,
     NotPaused = 19,
+    /// Transfer attempted on collateral that is locked to an active loan.
+    CollateralPledged = 20,
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -827,6 +829,80 @@ impl StellarKraal {
             records.push_back(col);
         }
         Ok(records)
+    }
+
+    // ── transfer_collateral ───────────────────────────────────────────────
+    /// Transfer ownership of a livestock collateral record to a new owner.
+    ///
+    /// Livestock ownership can change through sale, inheritance, or other
+    /// off-chain arrangements. This function updates the on-chain
+    /// [`CollateralRecord`] atomically so the new owner can use the
+    /// collateral to back future loans.
+    ///
+    /// # Parameters
+    /// - `owner`: Current owner of the collateral (must match stored owner).
+    /// - `collateral_id`: ID of the collateral record to transfer.
+    /// - `new_owner`: Stellar address that will become the new owner.
+    ///
+    /// # Returns
+    /// `Ok(())` on success.
+    ///
+    /// # Errors
+    /// - [`Error::NotInitialized`] if the contract has not been initialised.
+    /// - [`Error::ContractPaused`] if the contract is currently paused.
+    /// - [`Error::CollateralNotFound`] if `collateral_id` does not exist.
+    /// - [`Error::Unauthorized`] if `owner` does not match the stored owner.
+    /// - [`Error::CollateralPledged`] if the collateral is locked to an active
+    ///   loan (`loan_id != 0`). The loan must be repaid or liquidated first.
+    ///
+    /// # Events
+    /// Emits `(collateral, transferd)` with payload
+    /// `(collateral_id, old_owner, new_owner)`.
+    ///
+    /// # Security
+    /// Requires `require_auth()` from `owner`. The new owner does **not**
+    /// need to co-sign — the current owner bears responsibility for the
+    /// transfer target. Collateral locked to an active loan cannot be moved,
+    /// preventing removal of backing from an outstanding debt position.
+    pub fn transfer_collateral(
+        env: Env,
+        owner: Address,
+        collateral_id: u64,
+        new_owner: Address,
+    ) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_not_paused(&env)?;
+        owner.require_auth();
+
+        let mut collateral: CollateralRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Collateral(collateral_id))
+            .ok_or(Error::CollateralNotFound)?;
+
+        // Only the current owner may initiate the transfer.
+        if collateral.owner != owner {
+            return Err(Error::Unauthorized);
+        }
+
+        // Collateral pledged to an active loan cannot be transferred.
+        if collateral.loan_id != 0 {
+            return Err(Error::CollateralPledged);
+        }
+
+        let old_owner = collateral.owner.clone();
+        collateral.owner = new_owner.clone();
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(collateral_id), &collateral);
+
+        // Emit collateral_transferred event with old and new owner.
+        env.events().publish(
+            (symbol_short!("collateral"), symbol_short!("transferd")),
+            (collateral_id, old_owner, new_owner),
+        );
+
+        Ok(())
     }
 
     // ── update_fee_config ─────────────────────────────────────────────────

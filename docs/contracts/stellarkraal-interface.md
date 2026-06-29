@@ -162,6 +162,20 @@ The contract manages livestock-backed loans with the following responsibilities:
 - Returns: `Result<Vec<CollateralRecord>, Error>`.
 - State changes: none.
 
+### `transfer_collateral(env, owner, collateral_id, new_owner)`
+- Description: Transfer ownership of a livestock collateral record to a new address. Supports sale, inheritance, and other off-chain ownership changes.
+- Parameters:
+  - `owner` — current owner address; must match the stored collateral owner.
+  - `collateral_id` — ID of the collateral record to transfer.
+  - `new_owner` — Stellar address that will become the new owner.
+- Returns: `Result<(), Error>`.
+- State changes: updates the `owner` field of the `CollateralRecord` in persistent storage, emits a `collateral/transferd` event with `(collateral_id, old_owner, new_owner)`.
+- Error cases:
+  - `CollateralNotFound` — `collateral_id` does not exist.
+  - `Unauthorized` — `owner` does not match the stored collateral owner.
+  - `CollateralPledged` — collateral is locked to an active loan (`loan_id != 0`).
+  - `ContractPaused` — contract is paused.
+
 ### `update_fee_config(env, admin, origination_fee_bps, interest_fee_bps)`
 - Description: Update origination and interest fee rates.
 - Parameters:
@@ -266,6 +280,7 @@ The contract manages livestock-backed loans with the following responsibilities:
 | 18 | `PriceAboveMax` | Oracle price above configured maximum. |
 | 19 | `PriceStale` | Submitted price is too old. |
 | 20 | `PriceDeviationExceeded` | Price change exceeds allowed deviation. |
+| 20 | `CollateralPledged` | Transfer attempted on collateral locked to an active loan. |
 
 ## On-Chain State
 
@@ -361,6 +376,20 @@ stellar contract invoke \
   --arg u64:$LOAN_ID \
   --network "$NETWORK" \
   --rpc-url "$RPC_URL"
+```
+
+### Transfer collateral ownership
+
+```bash
+stellar contract invoke \
+  --id "$CONTRACT_ID" \
+  --fn transfer_collateral \
+  --arg address:$CURRENT_OWNER \
+  --arg u64:$COLLATERAL_ID \
+  --arg address:$NEW_OWNER \
+  --network "$NETWORK" \
+  --rpc-url "$RPC_URL" \
+  --source "$CURRENT_OWNER"
 ```
 
 ## Notes
