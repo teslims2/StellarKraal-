@@ -59,6 +59,21 @@ Emitted by `liquidate` after a partial or full liquidation.
 | `outstanding` | `i128` | Remaining outstanding balance after liquidation |
 | `status` | `LoanStatus` | New loan status (`Active` or `Liquidated`) |
 
+### `Admin / FeeUpd`
+
+Emitted by `update_fee_config` after the fee parameters are successfully changed.
+
+| Field | Type | Description |
+|---|---|---|
+| `old_origination_fee_bps` | `u32` | Previous origination fee in basis points |
+| `new_origination_fee_bps` | `u32` | Updated origination fee in basis points |
+| `old_interest_fee_bps` | `u32` | Previous interest fee in basis points |
+| `new_interest_fee_bps` | `u32` | Updated interest fee in basis points |
+
+Topics: `(symbol_short!("Admin"), symbol_short!("FeeUpd"))`
+
+Data: `(old_origination_fee_bps, new_origination_fee_bps, old_interest_fee_bps, new_interest_fee_bps)`
+
 ### `FeeCollect / <loan_id>` (internal)
 
 Emitted when origination or interest fees are transferred to the treasury.
