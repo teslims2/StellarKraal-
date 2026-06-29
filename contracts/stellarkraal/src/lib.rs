@@ -32,6 +32,24 @@ const CLOSE_FACTOR: Symbol = symbol_short!("CLSFACT"); // close factor bps e.g. 
 const PAUSED: Symbol = symbol_short!("PAUSED");   // pause state flag
 const PAUSE_EXP: Symbol = symbol_short!("PAUSEXP"); // pause expiry timestamp
 const ORACLES: Symbol = symbol_short!("ORACLES");
+const PENDING_ADMIN: Symbol = symbol_short!("PENDADM");
+const PAUSE_DUR: Symbol = symbol_short!("PAUSEDUR");
+const BASE_RATE: Symbol = symbol_short!("BASERATE");
+const SLOPE1: Symbol = symbol_short!("SLOPE1");
+const SLOPE2: Symbol = symbol_short!("SLOPE2");
+const KINK: Symbol = symbol_short!("KINK");
+const TOTAL_BORROWED: Symbol = symbol_short!("TOTBOR");
+const TOTAL_LIQUIDITY: Symbol = symbol_short!("TOTLIQ");
+const TWAP_WINDOW: Symbol = symbol_short!("TWAPWIN");
+const LAST_PRICE: Symbol = symbol_short!("LASTPRC");
+const LAST_PRICE_TIME: Symbol = symbol_short!("LSTPRCTM");
+const TWAP_PRICE: Symbol = symbol_short!("TWAPPRC");
+const TWAP_SUM: Symbol = symbol_short!("TWAPSUM");
+const TWAP_COUNT: Symbol = symbol_short!("TWAPCNT");
+const PRICE_MIN: Symbol = symbol_short!("PRICEMIN");
+const PRICE_MAX: Symbol = symbol_short!("PRICEMAX");
+const STALE_THR: Symbol = symbol_short!("STALETHR");
+const DEV_BPS: Symbol = symbol_short!("DEVBPS");
 
 // ── Errors ───────────────────────────────────────────────────────────────────
 
@@ -71,6 +89,12 @@ pub enum Error {
     InsufficientOracleQuorum = 17,
     InvalidPrice = 18,
     NotPaused = 19,
+    /// Reentrancy guard: another call is already in progress.
+    AlreadyInProgress = 20,
+    /// Contract is already paused.
+    AlreadyPaused = 21,
+    /// Arithmetic overflow detected.
+    ArithmeticOverflow = 22,
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -419,7 +443,7 @@ impl StellarKraal {
         }
         owner.require_auth();
 
-        let id = Self::next_id(&env, DataKey::CollateralCounter);
+        let id = Self::next_id(&env, DataKey::CollateralCounter)?;
         let record = CollateralRecord {
             owner,
             animal_type,
@@ -431,7 +455,7 @@ impl StellarKraal {
 
         // Emit livestock_registered event
         env.events().publish(
-            (symbol_short!("livestock"), symbol_short!("registered")),
+            (symbol_short!("livestock"), symbol_short!("registrd")),
             (id, record.owner.clone(), record.animal_type.clone(), record.count, record.appraised_value),
         );
 
@@ -510,7 +534,7 @@ impl StellarKraal {
         let fee = amount.checked_mul(orig_fee_bps as i128).ok_or(Error::InvalidAmount)? / 10_000;
         let disbursement = amount.checked_sub(fee).ok_or(Error::InvalidAmount)?;
 
-        let loan_id = Self::next_id(&env, DataKey::LoanCounter);
+        let loan_id = Self::next_id(&env, DataKey::LoanCounter)?;
         let loan = LoanRecord {
             id: loan_id,
             borrower: borrower.clone(),
@@ -710,7 +734,7 @@ impl StellarKraal {
 
         // Emit loan_liquidated event
         env.events().publish(
-            (symbol_short!("loan"), symbol_short!("liquidated")),
+            (symbol_short!("loan"), symbol_short!("liqidatd")),
             (loan_id, liquidator.clone(), repay_amount, loan.outstanding, loan.status.clone()),
         );
 
@@ -882,51 +906,77 @@ impl StellarKraal {
         })
     }
 
-    // ── set_pause_duration ────────────────────────────────────────────────
-    pub fn set_pause_duration(env: Env, admin: Address, duration: u64) -> Result<(), Error> {
+    // ── emergency_withdraw ─────────────────────────────────────────────
+    /// Emergency withdrawal of all token reserves.
+    ///
+    /// Transfers the entire token balance held by the contract to the
+    /// specified `recipient`. Only callable by admin when contract is paused.
+    ///
+    /// # Parameters
+    /// - `admin`: Must match the stored admin address.
+    /// - `recipient`: Address to receive the withdrawn tokens.
+    ///
+    /// # Errors
+    /// - [`Error::NotInitialized`] / [`Error::Unauthorized`]
+    /// - [`Error::NotPaused`] if the contract is not currently paused.
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`. Contract must be paused.
+    pub fn emergency_withdraw(env: Env, admin: Address, recipient: Address) -> Result<(), Error> {
         Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
         admin.require_auth();
-        let stored_admin: Address = env.storage().instance().get(&ADMIN).ok_or(Error::NotInitialized)?;
-        if admin != stored_admin {
-            return Err(Error::Unauthorized);
-        }
-        env.storage().instance().set(&symbol_short!("PAUSEDUR"), &duration);
-        Ok(())
-    }
 
-    // ── pause ─────────────────────────────────────────────────────────────
-    pub fn pause(env: Env, admin: Address) -> Result<(), Error> {
-        Self::assert_initialized(&env)?;
-        admin.require_auth();
-        let stored_admin: Address = env.storage().instance().get(&ADMIN).ok_or(Error::NotInitialized)?;
-        if admin != stored_admin {
-            return Err(Error::Unauthorized);
-        }
-        env.storage().instance().set(&PAUSED, &true);
-        let duration: u64 = env.storage().instance().get(&symbol_short!("PAUSEDUR")).unwrap_or(0);
-        if duration > 0 {
-            let expires_at = env.ledger().timestamp().checked_add(duration).ok_or(Error::InvalidAmount)?;
-            env.storage().instance().set(&PAUSE_EXP, &expires_at);
-        } else {
-            env.storage().instance().set(&PAUSE_EXP, &0u64);
-        }
-        Ok(())
-    }
-
-    // ── unpause ───────────────────────────────────────────────────────────
-    pub fn unpause(env: Env, admin: Address) -> Result<(), Error> {
-        Self::assert_initialized(&env)?;
-        admin.require_auth();
-        let stored_admin: Address = env.storage().instance().get(&ADMIN).ok_or(Error::NotInitialized)?;
-        if admin != stored_admin {
-            return Err(Error::Unauthorized);
-        }
-        let paused: bool = env.storage().instance().get(&PAUSED).unwrap_or(false);
-        if !paused {
+        if !Self::is_paused_raw(&env) {
             return Err(Error::NotPaused);
         }
-        env.storage().instance().set(&PAUSED, &false);
-        env.storage().instance().set(&PAUSE_EXP, &0u64);
+
+        let token_addr: Address = env.storage().instance().get(&TOKEN).unwrap();
+        let token_client = token::Client::new(&env, &token_addr);
+        let balance = token_client.balance(&env.current_contract_address());
+
+        if balance > 0 {
+            token_client.transfer(&env.current_contract_address(), &recipient, &balance);
+        }
+
+        env.events().publish(
+            (symbol_short!("emergency"),),
+            (recipient, balance),
+        );
+
+        Ok(())
+    }
+
+    // ── set_ltv ──────────────────────────────────────────────────────────
+    /// Update the loan-to-value ratio.
+    ///
+    /// # Parameters
+    /// - `admin`: Must match the stored admin address.
+    /// - `ltv_bps`: New LTV in basis points. Must be between 1000 (10%) and 9000 (90%).
+    ///
+    /// # Errors
+    /// - [`Error::NotInitialized`] / [`Error::Unauthorized`]
+    /// - [`Error::InvalidAmount`] if `ltv_bps` is outside 1000–9000.
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn set_ltv(env: Env, admin: Address, ltv_bps: u32) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+
+        if ltv_bps < 1000 || ltv_bps > 9000 {
+            return Err(Error::InvalidAmount);
+        }
+
+        let old_ltv: u32 = env.storage().instance().get(&LTV).unwrap();
+        env.storage().instance().set(&LTV, &ltv_bps);
+
+        env.events().publish(
+            (symbol_short!("Admin"), symbol_short!("LtvUpd")),
+            (old_ltv, ltv_bps),
+        );
+
         Ok(())
     }
 

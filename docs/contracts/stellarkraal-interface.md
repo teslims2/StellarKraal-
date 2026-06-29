@@ -172,10 +172,38 @@ The contract manages livestock-backed loans with the following responsibilities:
 - State changes: updates `ORIG_FEE` and `INT_FEE`.
 
 ### `get_fee_config(env)`
-- Description: Read the current fee configuration.
+- Description: Read the current fee configuration. This is a read-only query that does not modify contract state.
 - Parameters: none.
 - Returns: `Result<FeeConfig, Error>`.
+- Return type fields:
+  - `origination_fee_bps: u32` — origination fee in basis points (e.g. 50 = 0.5%). Deducted from loan disbursement at origination and sent to the treasury.
+  - `interest_fee_bps: u32` — interest fee in basis points (e.g. 1000 = 10%). Applied to the interest portion of repayments and sent to the treasury.
 - State changes: none.
+- Errors: `NotInitialized` if the contract has not been initialized.
+
+### `emergency_withdraw(env, admin, recipient)`
+- Description: Emergency withdrawal of all token reserves held by the contract. Only callable by admin when the contract is paused.
+- Parameters:
+  - `admin` — must match the stored admin address.
+  - `recipient` — address to receive the withdrawn tokens.
+- Returns: `Result<(), Error>`.
+- State changes: transfers entire token balance to `recipient`, emits an `emergency` event with the recipient address and withdrawn amount.
+- Errors:
+  - `NotInitialized` if the contract has not been initialized.
+  - `Unauthorized` if the caller is not admin.
+  - `NotPaused` if the contract is not currently paused.
+
+### `set_ltv(env, admin, ltv_bps)`
+- Description: Update the loan-to-value ratio used for new loan requests.
+- Parameters:
+  - `admin` — must match the stored admin address.
+  - `ltv_bps` — new LTV in basis points. Must be between 1000 (10%) and 9000 (90%).
+- Returns: `Result<(), Error>`.
+- State changes: updates `LTV`, emits an `(Admin, LtvUpd)` event with old and new values.
+- Errors:
+  - `NotInitialized` if the contract has not been initialized.
+  - `Unauthorized` if the caller is not admin.
+  - `InvalidAmount` if `ltv_bps` is outside the 1000–9000 range.
 
 ### `set_interest_rate_model(env, admin, base_rate_bps, slope1_bps, slope2_bps, kink_bps)`
 - Description: Update the jump-rate interest model.
@@ -265,7 +293,9 @@ The contract manages livestock-backed loans with the following responsibilities:
 | 17 | `PriceBelowMin` | Oracle price below configured minimum. |
 | 18 | `PriceAboveMax` | Oracle price above configured maximum. |
 | 19 | `PriceStale` | Submitted price is too old. |
-| 20 | `PriceDeviationExceeded` | Price change exceeds allowed deviation. |
+| 20 | `AlreadyInProgress` | Reentrancy guard prevented nested execution. |
+| 21 | `AlreadyPaused` | Contract is already paused. |
+| 22 | `ArithmeticOverflow` | Arithmetic overflow detected. |
 
 ## On-Chain State
 
