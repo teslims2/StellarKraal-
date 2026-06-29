@@ -28,6 +28,24 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   // Frontend URL for CORS
   FRONTEND_URL: z.string().url("FRONTEND_URL must be a valid URL").optional(),
+  // Comma-separated list of allowed CORS origins.
+  // Wildcard "*" is rejected in production.
+  ALLOWED_ORIGINS: z
+    .string()
+    .optional()
+    .refine(
+      (val) => {
+        if (!val) return true;
+        const isProduction = process.env.NODE_ENV === "production";
+        const origins = val.split(",").map((o) => o.trim()).filter(Boolean);
+        if (isProduction && origins.includes("*")) return false;
+        return origins.every((o) => o === "*" || /^https?:\/\/.+/.test(o));
+      },
+      {
+        message:
+          'ALLOWED_ORIGINS must be comma-separated HTTP(S) URLs; wildcard "*" is not allowed in production',
+      },
+    ),
   /**
    * Graceful shutdown drain timeout in milliseconds.
    * The server waits up to this duration for in-flight requests to complete
