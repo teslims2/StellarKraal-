@@ -154,6 +154,8 @@ pub enum DataKey {
     LoanCounter,
     /// Monotonically increasing counter for collateral IDs.
     CollateralCounter,
+    /// Maximum allowed appraised value for an animal type.
+    AnimalCap(Symbol),
     /// Reentrancy guard lock.
     Guard,
 }
@@ -336,6 +338,34 @@ impl StellarKraal {
         Ok(())
     }
 
+    // ── set_animal_cap ───────────────────────────────────────────────────
+    /// Set the maximum appraised value accepted for an animal type.
+    ///
+    /// Animal types without a configured cap remain unrestricted for backward
+    /// compatibility.
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn set_animal_cap(
+        env: Env,
+        admin: Address,
+        animal_type: Symbol,
+        max_value: i128,
+    ) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+        if max_value <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::AnimalCap(animal_type.clone()), &max_value);
+        env.events()
+            .publish((symbol_short!("Admin"), symbol_short!("AnimalCap")), (animal_type, max_value));
+        Ok(())
+    }
+
     // ── set_liquidation_threshold ─────────────────────────────────────────
     /// Update the liquidation threshold in basis points.
     ///
@@ -416,6 +446,15 @@ impl StellarKraal {
         Self::assert_not_paused(&env)?;
         if appraised_value <= 0 || count == 0 {
             return Err(Error::InvalidAmount);
+        }
+        if let Some(max_value) = env
+            .storage()
+            .persistent()
+            .get::<_, i128>(&DataKey::AnimalCap(animal_type.clone()))
+        {
+            if appraised_value > max_value {
+                return Err(Error::InvalidAmount);
+            }
         }
         owner.require_auth();
 
