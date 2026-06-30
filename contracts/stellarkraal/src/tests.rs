@@ -516,6 +516,134 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
         assert!(client.is_paused());
     }
 
+    // ── comprehensive pause coverage (Issue 1) ────────────────────────────
+
+    /// update_fee_config must be blocked when paused.
+    #[test]
+    #[should_panic(expected = "#13")]
+    fn test_update_fee_config_blocked_when_paused() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.pause(&admin);
+        client.update_fee_config(&admin, &50u32, &100u32);
+    }
+
+    /// add_oracle must be blocked when paused.
+    #[test]
+    #[should_panic(expected = "#13")]
+    fn test_add_oracle_blocked_when_paused() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.pause(&admin);
+        let oracle2 = Address::generate(&env);
+        client.add_oracle(&admin, &oracle2);
+    }
+
+    /// All state-mutating functions succeed after unpause; meaningful state
+    /// changes are verified for each one.
+    #[test]
+    fn test_all_blocked_functions_succeed_after_unpause() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        let owner = Address::generate(&env);
+        let borrower = Address::generate(&env);
+
+        // Register collateral BEFORE pausing (so loan can be requested after unpause)
+        let col_id = client.register_livestock(&owner, &symbol_short!("cattle"), &3u32, &1_000_000i128);
+
+        client.pause(&admin);
+        assert!(client.is_paused(), "contract must be paused");
+
+        // Verify every state-mutating function is blocked (#13)
+        assert_eq!(
+            client.try_register_livestock(&borrower, &symbol_short!("goat"), &1u32, &500_000i128),
+            Err(Ok(Error::ContractPaused)),
+            "register_livestock must be blocked (#13)"
+        );
+        let col_ids = vec![&env, col_id];
+        assert_eq!(
+            client.try_request_loan(&owner, &col_ids, &600_000i128),
+            Err(Ok(Error::ContractPaused)),
+            "request_loan must be blocked (#13)"
+        );
+        assert_eq!(
+            client.try_update_fee_config(&admin, &50u32, &100u32),
+            Err(Ok(Error::ContractPaused)),
+            "update_fee_config must be blocked (#13)"
+        );
+        let new_oracle = Address::generate(&env);
+        assert_eq!(
+            client.try_add_oracle(&admin, &new_oracle),
+            Err(Ok(Error::ContractPaused)),
+            "add_oracle must be blocked (#13)"
+        );
+
+        // Unpause and verify each function succeeds
+        client.unpause(&admin);
+        assert!(!client.is_paused(), "contract must be unpaused");
+
+        // register_livestock succeeds: new collateral ID is assigned
+        let new_col_id = client.register_livestock(&borrower, &symbol_short!("goat"), &2u32, &800_000i128);
+        assert!(new_col_id > col_id, "new collateral ID must be greater than previous");
+        let new_col = client.get_collateral(&new_col_id);
+        assert_eq!(new_col.count, 2, "collateral count must match");
+
+        // request_loan succeeds: loan record is created
+        let col_ids2 = vec![&env, col_id];
+        let loan_id = client.request_loan(&owner, &col_ids2, &600_000i128);
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.status, LoanStatus::Active, "loan must be Active after unpause");
+        assert_eq!(loan.principal, 600_000, "loan principal must match requested amount");
+
+        // update_fee_config succeeds: fee config reflects new values
+        client.update_fee_config(&admin, &100u32, &200u32);
+        let fee_cfg = client.get_fee_config();
+        assert_eq!(fee_cfg.origination_fee_bps, 100, "origination fee must be updated");
+        assert_eq!(fee_cfg.interest_fee_bps, 200, "interest fee must be updated");
+
+        // add_oracle succeeds: oracle list grows
+        let oracles_before = client.get_oracles().len();
+        client.add_oracle(&admin, &new_oracle);
+        let oracles_after = client.get_oracles().len();
+        assert_eq!(oracles_after, oracles_before + 1, "oracle list must grow by 1");
+    }
+
+    /// repay_loan is explicitly allowed when paused and correctly reduces the outstanding balance.
+    #[test]
+    fn test_repay_allowed_when_paused_state_correct() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        token::StellarAssetClient::new(&env, &token).mint(&borrower, &10_000_000i128);
+
+        client.pause(&admin);
+        assert!(client.is_paused());
+
+        // First partial repayment while paused
+        client.repay_loan(&borrower, &loan_id, &100_000i128);
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.outstanding, 500_000, "outstanding must drop by 100_000");
+        assert_eq!(loan.status, LoanStatus::Active, "loan must remain Active after partial repay");
+
+        // Second partial repayment while still paused
+        client.repay_loan(&borrower, &loan_id, &200_000i128);
+        let loan2 = client.get_loan(&loan_id);
+        assert_eq!(loan2.outstanding, 300_000, "outstanding must drop by another 200_000");
+
+        // Full repayment while still paused closes the loan
+        client.repay_loan(&borrower, &loan_id, &300_000i128);
+        let loan3 = client.get_loan(&loan_id);
+        assert_eq!(loan3.outstanding, 0, "outstanding must be zero after full repay");
+        assert_eq!(loan3.status, LoanStatus::Repaid, "status must be Repaid after full repay");
+    }
+
     /*
     // ── multi-oracle ──────────────────────────────────────────────────────
     ...
@@ -652,6 +780,226 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
             e.0 == (symbol_short!("loan"), symbol_short!("repaid"))
         });
         assert!(repay_event.is_some());
+    }
+
+    // ── TWAP integration tests (Issue 2) ──────────────────────────────────
+
+    /// After a single price submission the spot price and TWAP are identical.
+    #[test]
+    fn test_twap_single_submission() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        env.ledger().with_mut(|li| { li.timestamp = 1000; });
+        client.submit_price(&oracle, &100i128);
+
+        let data = client.get_twap_data();
+        assert_eq!(data.current_price, 100, "current_price must equal submitted price");
+        assert_eq!(data.twap_price, 100, "twap_price must equal single submission");
+        assert_eq!(data.last_update, 1000, "last_update must match ledger timestamp");
+    }
+
+    /// Prices submitted at T=0, T=1, T=2 within the window produce the correct average.
+    #[test]
+    fn test_twap_multiple_submissions_average() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        // T=0: price 100
+        env.ledger().with_mut(|li| { li.timestamp = 0; });
+        client.submit_price(&oracle, &100i128);
+
+        // T=1: price 102  (within 3600s window)
+        env.ledger().with_mut(|li| { li.timestamp = 1; });
+        client.submit_price(&oracle, &102i128);
+
+        // T=2: price 101
+        env.ledger().with_mut(|li| { li.timestamp = 2; });
+        client.submit_price(&oracle, &101i128);
+
+        let data = client.get_twap_data();
+        // TWAP = (100 + 102 + 101) / 3 = 101
+        assert_eq!(data.twap_price, 101, "TWAP must be the simple average of all submissions");
+        assert_eq!(data.current_price, 101, "current_price must be most recent submission");
+        assert_eq!(data.last_update, 2, "last_update must be T=2");
+    }
+
+    /// TWAP is updated correctly after each new submission within the window.
+    #[test]
+    fn test_twap_updates_after_each_submission() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        env.ledger().with_mut(|li| { li.timestamp = 100; });
+        client.submit_price(&oracle, &200i128);
+        let d1 = client.get_twap_data();
+        assert_eq!(d1.twap_price, 200, "after 1st submission TWAP = 200");
+
+        env.ledger().with_mut(|li| { li.timestamp = 200; });
+        client.submit_price(&oracle, &400i128);
+        let d2 = client.get_twap_data();
+        // TWAP = (200 + 400) / 2 = 300
+        assert_eq!(d2.twap_price, 300, "after 2nd submission TWAP = 300");
+
+        env.ledger().with_mut(|li| { li.timestamp = 300; });
+        client.submit_price(&oracle, &300i128);
+        let d3 = client.get_twap_data();
+        // TWAP = (200 + 400 + 300) / 3 = 300
+        assert_eq!(d3.twap_price, 300, "after 3rd submission TWAP = 300");
+        assert_eq!(d3.current_price, 300, "current_price tracks last submission");
+    }
+
+    /// A price submitted after the TWAP window expires resets the accumulator.
+    /// The new TWAP should equal only the latest price.
+    #[test]
+    fn test_twap_resets_after_window_expires() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        // Submit a price at T=0 — TWAP = 100
+        env.ledger().with_mut(|li| { li.timestamp = 0; });
+        client.submit_price(&oracle, &100i128);
+        let d1 = client.get_twap_data();
+        assert_eq!(d1.twap_price, 100, "initial TWAP = 100");
+
+        // Advance past the default 3600s window
+        env.ledger().with_mut(|li| { li.timestamp = 3601; });
+        client.submit_price(&oracle, &500i128);
+
+        // Accumulator must have reset: only the new price counts
+        let d2 = client.get_twap_data();
+        assert_eq!(d2.twap_price, 500, "TWAP must reset to new price after window expires");
+        assert_eq!(d2.current_price, 500, "current_price must be 500");
+    }
+
+    /// submit_price must reject a price <= 0.
+    #[test]
+    #[should_panic(expected = "#18")]
+    fn test_twap_invalid_price_rejected() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.submit_price(&oracle, &0i128);
+    }
+
+    /// Only the registered oracle address may call submit_price.
+    #[test]
+    #[should_panic(expected = "#3")]
+    fn test_twap_non_oracle_rejected() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let impostor = Address::generate(&env);
+        client.submit_price(&impostor, &100i128);
+    }
+
+    // ── on-chain interest accrual tests (Issue 3) ──────────────────────────
+
+    /// With no time elapsed, repay does not accrue any interest.
+    /// outstanding decreases by exactly the repaid amount.
+    #[test]
+    fn test_interest_no_time_elapsed() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        token::StellarAssetClient::new(&env, &token).mint(&borrower, &10_000_000i128);
+
+        // No time has elapsed — repay 100_000
+        client.repay_loan(&borrower, &loan_id, &100_000i128);
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.outstanding, 500_000, "outstanding must drop by 100_000");
+        assert_eq!(loan.interest_accrued, 0, "no interest should accrue with zero elapsed time");
+        assert_eq!(loan.status, LoanStatus::Active);
+    }
+
+    /// After 30 days, accrued interest is positive and reflected in the loan record.
+    #[test]
+    fn test_interest_thirty_days_elapsed() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+
+        // Timestamp at loan origination
+        env.ledger().with_mut(|li| { li.timestamp = 0; });
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        token::StellarAssetClient::new(&env, &token).mint(&borrower, &10_000_000i128);
+
+        // Advance 30 days = 30 * 86400 = 2_592_000 seconds
+        env.ledger().with_mut(|li| { li.timestamp = 2_592_000; });
+
+        // Repay 1 token to trigger interest accrual update
+        client.repay_loan(&borrower, &loan_id, &1i128);
+        let loan = client.get_loan(&loan_id);
+
+        // Expected accrued = 600_000 * 1000 * 2_592_000 / (10_000 * 31_536_000)
+        //                   = 600_000 * 1000 * 2_592_000 / 315_360_000_000
+        //                   ≈ 4931 tokens
+        // We just verify it's positive and within a reasonable range
+        assert!(loan.interest_accrued > 0, "interest must be positive after 30 days");
+        // 30 days is ~8.2% of a year; at 10% annual rate: ~4931 tokens
+        assert!(loan.interest_accrued > 4_000, "interest after 30d must exceed 4000");
+        assert!(loan.interest_accrued < 10_000, "interest after 30d must be less than 10000");
+        assert_eq!(loan.last_interest_time, 2_592_000, "last_interest_time must update");
+    }
+
+    /// Full repayment clears both outstanding and interest_accrued, marking the loan Repaid.
+    #[test]
+    fn test_interest_full_repayment_clears_interest() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+
+        env.ledger().with_mut(|li| { li.timestamp = 0; });
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        // Mint plenty of tokens to cover principal + interest
+        token::StellarAssetClient::new(&env, &token).mint(&borrower, &10_000_000i128);
+
+        // Advance 30 days so interest accrues
+        env.ledger().with_mut(|li| { li.timestamp = 2_592_000; });
+
+        // Repay the entire principal + more to cover interest
+        client.repay_loan(&borrower, &loan_id, &700_000i128);
+        let loan = client.get_loan(&loan_id);
+
+        assert_eq!(loan.outstanding, 0, "outstanding must be zero after full repay");
+        assert_eq!(loan.interest_accrued, 0, "interest_accrued must be zero after full repay");
+        assert_eq!(loan.status, LoanStatus::Repaid, "status must be Repaid");
+    }
+
+    /// get_loan returns the updated interest_accrued without needing a repay call.
+    /// (Interest is accrued on each repay; before a repay, the stored value reflects
+    ///  what was recorded at the last repay.)
+    #[test]
+    fn test_interest_get_loan_reflects_accrued() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+
+        env.ledger().with_mut(|li| { li.timestamp = 0; });
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        token::StellarAssetClient::new(&env, &token).mint(&borrower, &10_000_000i128);
+
+        // Advance 1 year
+        env.ledger().with_mut(|li| { li.timestamp = 31_536_000; });
+        client.repay_loan(&borrower, &loan_id, &1i128);
+
+        let loan = client.get_loan(&loan_id);
+        // At 10% annual rate on 600_000 principal, 1 year ≈ 60_000 interest
+        assert!(loan.interest_accrued > 50_000, "accrued interest after 1y must exceed 50k");
+        assert!(loan.interest_accrued < 80_000, "accrued interest after 1y must be less than 80k");
     }
 
     // ── proptests ─────────────────────────────────────────────────────────
