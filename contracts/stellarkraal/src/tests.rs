@@ -45,6 +45,48 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
         init(&env, &cid, &admin, &oracle, &token, &treasury);
     }
 
+    #[test]
+    #[should_panic(expected = "#3")]
+    fn test_initialize_zero_admin_fails() {
+        let (env, cid, _admin, oracle, token, treasury) = setup();
+        let client = StellarKraalClient::new(&env, &cid);
+        let zero = Address::from_string(&String::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"));
+        client.initialize(&zero, &oracle, &token, &treasury, &6000u32, &8000u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "#8")]
+    fn test_initialize_zero_ltv_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        let client = StellarKraalClient::new(&env, &cid);
+        client.initialize(&admin, &oracle, &token, &treasury, &0u32, &8000u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "#8")]
+    fn test_initialize_ltv_above_max_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        let client = StellarKraalClient::new(&env, &cid);
+        client.initialize(&admin, &oracle, &token, &treasury, &9001u32, &9500u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "#8")]
+    fn test_initialize_liq_below_ltv_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        let client = StellarKraalClient::new(&env, &cid);
+        // liq_threshold (5000) < ltv (6000) → InvalidAmount
+        client.initialize(&admin, &oracle, &token, &treasury, &6000u32, &5000u32);
+    }
+
+    #[test]
+    fn test_initialize_valid_params_succeed() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        let client = StellarKraalClient::new(&env, &cid);
+        // liq_threshold == ltv is the boundary case (allowed)
+        client.initialize(&admin, &oracle, &token, &treasury, &6000u32, &6000u32);
+    }
+
     // ── register_livestock ────────────────────────────────────────────────
     #[test]
     fn test_register_livestock_ok() {
@@ -74,6 +116,36 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
         let client = StellarKraalClient::new(&env, &cid);
         let owner = Address::generate(&env);
         client.register_livestock(&owner, &symbol_short!("sheep"), &3u32, &0i128);
+    }
+
+    // ── TTL management ────────────────────────────────────────────────────
+    #[test]
+    fn test_collateral_ttl_set_on_register() {
+        use crate::{DataKey, PERSISTENT_TTL_LEDGERS};
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let owner = Address::generate(&env);
+        let col_id = client.register_livestock(&owner, &symbol_short!("cattle"), &1u32, &1_000_000i128);
+        env.as_contract(&cid, || {
+            let ttl = env.storage().persistent().get_ttl(&DataKey::Collateral(col_id));
+            assert_eq!(ttl, PERSISTENT_TTL_LEDGERS);
+        });
+    }
+
+    #[test]
+    fn test_loan_ttl_set_on_create() {
+        use crate::{DataKey, PERSISTENT_TTL_LEDGERS};
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        env.as_contract(&cid, || {
+            let ttl = env.storage().persistent().get_ttl(&DataKey::Loan(loan_id));
+            assert_eq!(ttl, PERSISTENT_TTL_LEDGERS);
+        });
     }
 
     // ── request_loan ──────────────────────────────────────────────────────
