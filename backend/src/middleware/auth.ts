@@ -209,6 +209,21 @@ export function jwtMiddleware(req: Request, res: Response, next: NextFunction): 
     return;
   }
 
+  // API key path: Bearer sk_...
+  if (authHeader.startsWith('Bearer sk_')) {
+    // Lazy import to avoid circular deps; apiKey module is not loaded until first use
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { authenticateApiKey } = require('./apiKey') as { authenticateApiKey: (h: string) => string | null };
+    const publicKey = authenticateApiKey(authHeader);
+    if (!publicKey) {
+      res.status(401).json({ error: 'Invalid or revoked API key' });
+      return;
+    }
+    (req as Request & { user: { publicKey: string } }).user = { publicKey };
+    next();
+    return;
+  }
+
   try {
     const payload = verifyJwt(authHeader.slice(7));
     (req as Request & { user: { publicKey: unknown } }).user = { publicKey: payload.sub };
