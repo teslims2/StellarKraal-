@@ -654,6 +654,72 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
         assert!(repay_event.is_some());
     }
 
+    // ── interest-rate model ──────────────────────────────────────────────
+    // These boundary assertions mirror docs/protocol/interest-rate-model.md:
+    // base rate at 0%, kinked rate at 80%, and maximum default rate at 100%.
+    #[test]
+    fn test_interest_rate_zero_utilization_returns_base_rate() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+
+        env.storage().instance().set(&TOTAL_BORROWED, &0i128);
+        env.storage().instance().set(&TOTAL_LIQUIDITY, &1_000_000i128);
+
+        let utilization = StellarKraal::calculate_utilization(&env).unwrap();
+        let rate = StellarKraal::calculate_interest_rate(&env, utilization).unwrap();
+
+        assert_eq!(utilization, 0);
+        assert_eq!(rate, 200);
+    }
+
+    #[test]
+    fn test_interest_rate_full_utilization_returns_max_default_rate() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+
+        env.storage().instance().set(&TOTAL_BORROWED, &1_000_000i128);
+        env.storage().instance().set(&TOTAL_LIQUIDITY, &1_000_000i128);
+
+        let utilization = StellarKraal::calculate_utilization(&env).unwrap();
+        let rate = StellarKraal::calculate_interest_rate(&env, utilization).unwrap();
+
+        assert_eq!(utilization, 10_000);
+        assert_eq!(rate, 1_500);
+    }
+
+    #[test]
+    fn test_interest_rate_at_kink_returns_kinked_rate() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+
+        env.storage().instance().set(&TOTAL_BORROWED, &800_000i128);
+        env.storage().instance().set(&TOTAL_LIQUIDITY, &1_000_000i128);
+
+        let utilization = StellarKraal::calculate_utilization(&env).unwrap();
+        let rate = StellarKraal::calculate_interest_rate(&env, utilization).unwrap();
+
+        assert_eq!(utilization, 8_000);
+        assert_eq!(rate, 600);
+    }
+
+    #[test]
+    fn test_interest_rate_model_overflow_protection_at_max_values() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+
+        env.storage().instance().set(&TOTAL_BORROWED, &i128::MAX);
+        env.storage().instance().set(&TOTAL_LIQUIDITY, &1i128);
+        assert_eq!(StellarKraal::calculate_utilization(&env), Err(Error::InvalidAmount));
+
+        env.storage().instance().set(&BASE_RATE, &u32::MAX);
+        env.storage().instance().set(&SLOPE1, &u32::MAX);
+        env.storage().instance().set(&SLOPE2, &u32::MAX);
+        env.storage().instance().set(&KINK, &10_000u32);
+
+        let rate = StellarKraal::calculate_interest_rate(&env, u32::MAX).unwrap();
+        assert_eq!(rate, u32::MAX);
+    }
+
     // ── proptests ─────────────────────────────────────────────────────────
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
