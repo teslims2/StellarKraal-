@@ -753,3 +753,154 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
             assert_eq!(loan.outstanding, loan.principal);
         }
     }
+
+    // ── Error variant negative tests ──────────────────────────────────────
+    // One test per Error variant to verify errors are returned correctly.
+
+    // Error::NotInitialized = 1
+    #[test]
+    #[should_panic(expected = "#1")]
+    fn test_not_initialized_register_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, StellarKraal);
+        let client = StellarKraalClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        client.register_livestock(&owner, &symbol_short!("goat"), &1u32, &1_000i128);
+    }
+
+    // Error::LoanNotFound = 5
+    #[test]
+    #[should_panic(expected = "#5")]
+    fn test_loan_not_found_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.get_loan(&9999u64);
+    }
+
+    // Error::CollateralNotFound = 6
+    #[test]
+    #[should_panic(expected = "#6")]
+    fn test_collateral_not_found_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.get_collateral(&9999u64);
+    }
+
+    // Error::HealthFactorSafe = 7
+    #[test]
+    #[should_panic(expected = "#7")]
+    fn test_liquidate_healthy_loan_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let liquidator = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &1u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &500_000i128);
+        client.liquidate(&liquidator, &loan_id, &100_000i128);
+    }
+
+    // Error::LoanAlreadyClosed = 9
+    #[test]
+    #[should_panic(expected = "#9")]
+    fn test_repay_closed_loan_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &1u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        client.repay_loan(&borrower, &loan_id, &600_000i128);
+        client.repay_loan(&borrower, &loan_id, &1i128);
+    }
+
+    // Error::InvalidFeeRate = 10
+    #[test]
+    #[should_panic(expected = "#10")]
+    fn test_invalid_fee_rate_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.update_fee_config(&admin, &501u32, &0u32);
+    }
+
+    // Error::ExceedsCloseFactor = 11
+    #[test]
+    #[should_panic(expected = "#11")]
+    fn test_exceeds_close_factor_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.set_close_factor(&admin, &5000u32);
+        let borrower = Address::generate(&env);
+        let liquidator = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &1u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        // Lower collateral value so loan becomes liquidatable
+        client.update_appraisal(&borrower, &col_id, &500_000i128);
+        // outstanding=600_000, close_factor=50% → max_repay=300_000; request 400_000
+        client.liquidate(&liquidator, &loan_id, &400_000i128);
+    }
+
+    // Error::InvalidCloseFactor = 12
+    #[test]
+    #[should_panic(expected = "#12")]
+    fn test_invalid_close_factor_zero_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.set_close_factor(&admin, &0u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "#12")]
+    fn test_invalid_close_factor_over_max_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.set_close_factor(&admin, &10_001u32);
+    }
+
+    // Error::ContractPaused = 13
+    #[test]
+    #[should_panic(expected = "#13")]
+    fn test_register_when_paused_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.pause(&admin);
+        let owner = Address::generate(&env);
+        client.register_livestock(&owner, &symbol_short!("goat"), &1u32, &500_000i128);
+    }
+
+    // Error::OracleAlreadyRegistered = 14
+    #[test]
+    #[should_panic(expected = "#14")]
+    fn test_add_duplicate_oracle_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let new_oracle = Address::generate(&env);
+        client.add_oracle(&admin, &new_oracle);
+        client.add_oracle(&admin, &new_oracle);
+    }
+
+    // Error::NotPaused = 19
+    #[test]
+    #[should_panic(expected = "#19")]
+    fn test_unpause_when_not_paused_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.unpause(&admin);
+    }
+
+    // Error::ArithmeticOverflow = 20  (not testable in unit context:
+    //   would require the loan/collateral counter to exceed u64::MAX)
+
+    // Error::AlreadyInProgress = 21  (not testable in unit context:
+    //   requires a reentrant cross-contract call that the single-contract
+    //   test harness cannot model)
