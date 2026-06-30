@@ -133,6 +133,28 @@ pub struct FeeConfig {
     pub interest_fee_bps: u32,
 }
 
+/// Admin-readable summary of key contract state.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractState {
+    /// Current admin address.
+    pub admin: Address,
+    /// SAC token address used by the protocol.
+    pub token: Address,
+    /// Loan-to-value ratio in basis points.
+    pub ltv_bps: u32,
+    /// Liquidation threshold in basis points.
+    pub liq_threshold_bps: u32,
+    /// Current pause status after applying any pause expiry.
+    pub is_paused: bool,
+    /// Number of registered oracle addresses.
+    pub oracle_count: u32,
+    /// Number of loan records created.
+    pub total_loans: u64,
+    /// Number of collateral records created.
+    pub total_collaterals: u64,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleReport {
@@ -879,6 +901,44 @@ impl StellarKraal {
         Ok(FeeConfig {
             origination_fee_bps: orig,
             interest_fee_bps: int,
+        })
+    }
+
+    // ── get_state ────────────────────────────────────────────────────────
+    /// Return a summary of key contract state for operational debugging.
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn get_state(env: Env, admin: Address) -> Result<ContractState, Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+
+        let stored_admin: Address = env.storage().instance().get(&ADMIN).unwrap();
+        let token: Address = env.storage().instance().get(&TOKEN).unwrap();
+        let ltv_bps: u32 = env.storage().instance().get(&LTV).unwrap();
+        let liq_threshold_bps: u32 = env.storage().instance().get(&LIQ_THR).unwrap();
+        let oracles = Self::get_oracles(env.clone());
+        let total_loans: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::LoanCounter)
+            .unwrap_or(0u64);
+        let total_collaterals: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::CollateralCounter)
+            .unwrap_or(0u64);
+
+        Ok(ContractState {
+            admin: stored_admin,
+            token,
+            ltv_bps,
+            liq_threshold_bps,
+            is_paused: Self::is_paused_raw(&env),
+            oracle_count: oracles.len(),
+            total_loans,
+            total_collaterals,
         })
     }
 

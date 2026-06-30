@@ -177,6 +177,28 @@ The contract manages livestock-backed loans with the following responsibilities:
 - Returns: `Result<FeeConfig, Error>`.
 - State changes: none.
 
+### `get_state(env, admin)`
+- Description: Return an admin-only operational summary of key contract state.
+- Parameters:
+  - `admin` — admin address.
+- Returns: `Result<ContractState, Error>`.
+- State changes: none.
+- Security: requires authorization from the stored admin address.
+- Return type:
+
+```rust
+pub struct ContractState {
+    pub admin: Address,
+    pub token: Address,
+    pub ltv_bps: u32,
+    pub liq_threshold_bps: u32,
+    pub is_paused: bool,
+    pub oracle_count: u32,
+    pub total_loans: u64,
+    pub total_collaterals: u64,
+}
+```
+
 ### `set_interest_rate_model(env, admin, base_rate_bps, slope1_bps, slope2_bps, kink_bps)`
 - Description: Update the jump-rate interest model.
 - Parameters:
