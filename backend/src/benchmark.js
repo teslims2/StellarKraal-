@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 /**
- * Performance benchmarks — Issue #369
+ * Performance benchmarks — Issue #369 / #643
  *
  * Simulates 50 concurrent users × 30 seconds against:
  *   GET  /api/v1/loans
  *   GET  /api/v1/collateral
  *   POST /api/v1/loans
  *
- * Documented p95 baselines (ms):
+ * Documented p99 baselines (ms):
  *   GET  /api/v1/loans       50
  *   GET  /api/v1/collateral  50
  *   POST /api/v1/loans      100
  *
- * CI fails if any p95 > 2× baseline.
+ * CI fails if any p99 > baseline + 20%.
  * Results written to benchmark-results.json for artifact upload.
  */
 
@@ -43,12 +43,15 @@ const logger = winston.createLogger({
 });
 
 
-// ── Baselines (p95 ms) ────────────────────────────────────────────────────────
+// ── Baselines (p99 ms) — kept in sync with performance/BASELINES.md ───────────
 const BASELINES = {
   "GET /api/v1/loans": 50,
   "GET /api/v1/collateral": 50,
   "POST /api/v1/loans": 100,
 };
+
+// Regression threshold: build fails if p99 exceeds baseline by more than 20%
+const REGRESSION_PERCENT = 0.20;
 
 // ── Minimal stub server (no DB / RPC needed for load testing) ─────────────────
 function createServer() {
@@ -116,14 +119,14 @@ async function main() {
   for (const ep of endpoints) {
     process.stdout.write(`Running ${ep.label} ... `);
     const r = await runBench(ep.url, ep.method, ep.body);
-    const p95 = r.latency.p97_5;          // autocannon calls it p97_5 internally
+    const p99 = r.latency.p99;
     const baseline = BASELINES[ep.label];
-    const limit = baseline * 2;
-    const passed = p95 <= limit;
+    const limit = Math.round(baseline * (1 + REGRESSION_PERCENT));
+    const passed = p99 <= limit;
     if (!passed) allPassed = false;
 
-    logger.info(`p95=${p95}ms  baseline=${baseline}ms  limit=${limit}ms  ${passed ? "✓" : "✗ FAIL"}`, { label: ep.label, p95, baseline, limit, passed });
-    results.push({ label: ep.label, p95, baseline, limit, passed,
+    logger.info(`p99=${p99}ms  baseline=${baseline}ms  limit=${limit}ms  ${passed ? "✓" : "✗ FAIL"}`, { label: ep.label, p99, baseline, limit, passed });
+    results.push({ label: ep.label, p99, p95: r.latency.p97_5, baseline, limit, passed,
       rps: Math.round(r.requests.average), errors: r.errors });
   }
 
@@ -135,10 +138,10 @@ async function main() {
   logger.info(`\nResults → ${out}`);
 
   if (!allPassed) {
-    logger.error("❌ p95 exceeded 2× baseline");
+    logger.error("❌ p99 exceeded baseline by more than 20%");
     process.exit(1);
   }
-  logger.info("✓ All benchmarks within 2× baseline");
+  logger.info("✓ All benchmarks within 20% of baseline");
 }
 
 main().catch((e) => { logger.error(e instanceof Error ? e.message : String(e), { stack: e.stack }); process.exit(1); });
