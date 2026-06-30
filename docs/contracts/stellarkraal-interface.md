@@ -123,6 +123,30 @@ The contract manages livestock-backed loans with the following responsibilities:
   - `repay_amount` — amount to repay subject to close-factor cap.
 - Returns: `Result<(), Error>`.
 - State changes: transfers repayment into contract, reduces outstanding balance, updates loan status to `Liquidated` if fully repaid, emits loan liquidated event.
+- Whitelist behaviour: when the liquidator whitelist is **empty** any address may call this function (backward-compatible open mode). When at least one address has been added via `add_liquidator`, only whitelisted addresses are permitted; others receive `LiquidatorNotWhitelisted`.
+
+### `add_liquidator(env, admin, liquidator)`
+- Description: Add an address to the approved liquidator whitelist. Idempotent — adding the same address twice has no effect.
+- Parameters:
+  - `admin` — must match the stored admin address.
+  - `liquidator` — address to approve as a liquidator.
+- Returns: `Result<(), Error>`.
+- State changes: stores a `WhitelistEntry` in persistent storage, increments the whitelist count, emits a `whitelist/added` event.
+
+### `remove_liquidator(env, admin, liquidator)`
+- Description: Remove an address from the approved liquidator whitelist. Idempotent — removing an address that is not on the list is a no-op.
+- Parameters:
+  - `admin` — must match the stored admin address.
+  - `liquidator` — address to remove from the whitelist.
+- Returns: `Result<(), Error>`.
+- State changes: removes the `WhitelistEntry` from persistent storage, decrements the whitelist count, emits a `whitelist/removed` event.
+
+### `is_whitelisted(env, liquidator)`
+- Description: Query whether an address is permitted to liquidate. Returns `true` when the whitelist is empty (open mode) or when the address has been added via `add_liquidator`.
+- Parameters:
+  - `liquidator` — address to check.
+- Returns: `bool`.
+- State changes: none.
 
 ### `set_close_factor(env, admin, close_factor_bps)`
 - Description: Update the maximum liquidation repayment percentage.
@@ -321,6 +345,7 @@ The contract manages livestock-backed loans with the following responsibilities:
 | 18 | `PriceAboveMax` | Oracle price above configured maximum. |
 | 19 | `PriceStale` | Submitted price is too old. |
 | 20 | `PriceDeviationExceeded` | Price change exceeds allowed deviation. |
+| 20 | `LiquidatorNotWhitelisted` | Caller is not on the approved liquidator whitelist. |
 
 ## On-Chain State
 
@@ -336,6 +361,8 @@ Key contract storage state used by the interface:
 - `TOTAL_BORROWED`, `TOTAL_LIQUIDITY` — liquidity tracking state.
 - `LAST_PRICE`, `LAST_PRICE_TIME`, `TWAP_PRICE`, `TWAP_SUM`, `TWAP_COUNT`, `TWAP_WINDOW` — oracle price and TWAP state.
 - `PRICE_MIN`, `PRICE_MAX`, `STALE_THR`, `DEV_BPS` — oracle validation configuration.
+- `WL_COUNT` — instance storage count of whitelisted liquidators (0 = open mode).
+- `WhitelistEntry(Address)` — persistent storage flag per approved liquidator address.
 
 ## Invoking the Contract with `stellar-cli`
 
