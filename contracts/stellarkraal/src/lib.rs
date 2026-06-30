@@ -32,7 +32,24 @@ const CLOSE_FACTOR: Symbol = symbol_short!("CLSFACT"); // close factor bps e.g. 
 const PAUSED: Symbol = symbol_short!("PAUSED");   // pause state flag
 const PAUSE_EXP: Symbol = symbol_short!("PAUSEXP"); // pause expiry timestamp
 const ORACLES: Symbol = symbol_short!("ORACLES");
-
+const PAUSE_DUR: Symbol = symbol_short!("PAUSEDUR");
+const PENDING_ADMIN: Symbol = symbol_short!("PEND_ADM");
+const TOTAL_BORROWED: Symbol = symbol_short!("TOT_BORR");
+const TOTAL_LIQUIDITY: Symbol = symbol_short!("TOT_LIQ");
+const BASE_RATE: Symbol = symbol_short!("BASERATE");
+const SLOPE1: Symbol = symbol_short!("SLOPE1");
+const SLOPE2: Symbol = symbol_short!("SLOPE2");
+const KINK: Symbol = symbol_short!("KINK");
+const PRICE_MIN: Symbol = symbol_short!("PRC_MIN");
+const PRICE_MAX: Symbol = symbol_short!("PRC_MAX");
+const STALE_THR: Symbol = symbol_short!("STALE_THR");
+const DEV_BPS: Symbol = symbol_short!("DEV_BPS");
+const LAST_PRICE: Symbol = symbol_short!("LST_PRC");
+const LAST_PRICE_TIME: Symbol = symbol_short!("LST_TIME");
+const TWAP_PRICE: Symbol = symbol_short!("TWAP_PRC");
+const TWAP_SUM: Symbol = symbol_short!("TWAP_SUM");
+const TWAP_COUNT: Symbol = symbol_short!("TWAP_CNT");
+const TWAP_WINDOW: Symbol = symbol_short!("TWAP_WIN");
 // ── Errors ───────────────────────────────────────────────────────────────────
 
 /// Contract-level errors returned by all public functions.
@@ -71,6 +88,9 @@ pub enum Error {
     InsufficientOracleQuorum = 17,
     InvalidPrice = 18,
     NotPaused = 19,
+    AlreadyInProgress = 20,
+    AlreadyPaused = 21,
+    ArithmeticOverflow = 22,
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -419,7 +439,7 @@ impl StellarKraal {
         }
         owner.require_auth();
 
-        let id = Self::next_id(&env, DataKey::CollateralCounter);
+        let id = Self::next_id(&env, DataKey::CollateralCounter)?;
         let record = CollateralRecord {
             owner,
             animal_type,
@@ -431,7 +451,7 @@ impl StellarKraal {
 
         // Emit livestock_registered event
         env.events().publish(
-            (symbol_short!("livestock"), symbol_short!("registered")),
+            (symbol_short!("livestock"), Symbol::new(&env, "registered")),
             (id, record.owner.clone(), record.animal_type.clone(), record.count, record.appraised_value),
         );
 
@@ -510,7 +530,7 @@ impl StellarKraal {
         let fee = amount.checked_mul(orig_fee_bps as i128).ok_or(Error::InvalidAmount)? / 10_000;
         let disbursement = amount.checked_sub(fee).ok_or(Error::InvalidAmount)?;
 
-        let loan_id = Self::next_id(&env, DataKey::LoanCounter);
+        let loan_id = Self::next_id(&env, DataKey::LoanCounter)?;
         let loan = LoanRecord {
             id: loan_id,
             borrower: borrower.clone(),
@@ -548,7 +568,7 @@ impl StellarKraal {
 
         // Emit loan_requested event
         env.events().publish(
-            (symbol_short!("loan"), symbol_short!("requested")),
+            (symbol_short!("loan"), Symbol::new(&env, "requested")),
             (loan_id, borrower.clone(), amount, disbursement, total_collateral_value),
         );
 
@@ -629,10 +649,12 @@ impl StellarKraal {
         }
         env.storage().persistent().set(&DataKey::Loan(loan_id), &loan);
 
+        let principal_paid = repay_amount.checked_sub(interest_portion).ok_or(Error::InvalidAmount)?;
+
         // Emit loan_repaid event
         env.events().publish(
-            (symbol_short!("loan"), symbol_short!("repaid")),
-            (loan_id, borrower.clone(), repay_amount, loan.outstanding, loan.status.clone()),
+            (Symbol::new(&env, "loan_repaid"), borrower.clone()),
+            (loan_id, principal_paid, interest_portion, loan.outstanding),
         );
 
         Ok(())
@@ -710,7 +732,7 @@ impl StellarKraal {
 
         // Emit loan_liquidated event
         env.events().publish(
-            (symbol_short!("loan"), symbol_short!("liquidated")),
+            (symbol_short!("loan"), Symbol::new(&env, "liquidated")),
             (loan_id, liquidator.clone(), repay_amount, loan.outstanding, loan.status.clone()),
         );
 
@@ -829,6 +851,31 @@ impl StellarKraal {
         Ok(records)
     }
 
+    // ── get_collateral_count ────────────────────────────────────────────────
+    /// Get the number of non-liquidated collaterals for an owner.
+    pub fn get_collateral_count(env: Env, owner: Address) -> u32 {
+        let counter: u64 = env.storage().instance().get(&DataKey::CollateralCounter).unwrap_or(0);
+        let mut count: u32 = 0;
+        for id in 1..=counter {
+            if let Some(col) = env.storage().persistent().get::<_, CollateralRecord>(&DataKey::Collateral(id)) {
+                if col.owner == owner {
+                    let mut is_liquidated = false;
+                    if col.loan_id > 0 {
+                        if let Some(loan) = env.storage().persistent().get::<_, LoanRecord>(&DataKey::Loan(col.loan_id)) {
+                            if loan.status == LoanStatus::Liquidated {
+                                is_liquidated = true;
+                            }
+                        }
+                    }
+                    if !is_liquidated {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        count
+    }
+
     // ── update_fee_config ─────────────────────────────────────────────────
     /// Update origination and interest fee rates.
     ///
@@ -881,55 +928,6 @@ impl StellarKraal {
             interest_fee_bps: int,
         })
     }
-
-    // ── set_pause_duration ────────────────────────────────────────────────
-    pub fn set_pause_duration(env: Env, admin: Address, duration: u64) -> Result<(), Error> {
-        Self::assert_initialized(&env)?;
-        admin.require_auth();
-        let stored_admin: Address = env.storage().instance().get(&ADMIN).ok_or(Error::NotInitialized)?;
-        if admin != stored_admin {
-            return Err(Error::Unauthorized);
-        }
-        env.storage().instance().set(&symbol_short!("PAUSEDUR"), &duration);
-        Ok(())
-    }
-
-    // ── pause ─────────────────────────────────────────────────────────────
-    pub fn pause(env: Env, admin: Address) -> Result<(), Error> {
-        Self::assert_initialized(&env)?;
-        admin.require_auth();
-        let stored_admin: Address = env.storage().instance().get(&ADMIN).ok_or(Error::NotInitialized)?;
-        if admin != stored_admin {
-            return Err(Error::Unauthorized);
-        }
-        env.storage().instance().set(&PAUSED, &true);
-        let duration: u64 = env.storage().instance().get(&symbol_short!("PAUSEDUR")).unwrap_or(0);
-        if duration > 0 {
-            let expires_at = env.ledger().timestamp().checked_add(duration).ok_or(Error::InvalidAmount)?;
-            env.storage().instance().set(&PAUSE_EXP, &expires_at);
-        } else {
-            env.storage().instance().set(&PAUSE_EXP, &0u64);
-        }
-        Ok(())
-    }
-
-    // ── unpause ───────────────────────────────────────────────────────────
-    pub fn unpause(env: Env, admin: Address) -> Result<(), Error> {
-        Self::assert_initialized(&env)?;
-        admin.require_auth();
-        let stored_admin: Address = env.storage().instance().get(&ADMIN).ok_or(Error::NotInitialized)?;
-        if admin != stored_admin {
-            return Err(Error::Unauthorized);
-        }
-        let paused: bool = env.storage().instance().get(&PAUSED).unwrap_or(false);
-        if !paused {
-            return Err(Error::NotPaused);
-        }
-        env.storage().instance().set(&PAUSED, &false);
-        env.storage().instance().set(&PAUSE_EXP, &0u64);
-        Ok(())
-    }
-
     // ── add_oracle ────────────────────────────────────────────────────────
     pub fn add_oracle(env: Env, admin: Address, oracle: Address) -> Result<(), Error> {
         Self::assert_initialized(&env)?;
@@ -1118,7 +1116,7 @@ impl StellarKraal {
             .checked_mul(liq_thr as i128)
             .ok_or(Error::InvalidAmount)?;
         let denominator = loan.outstanding.checked_mul(10_000).ok_or(Error::InvalidAmount)?;
-        Ok(numerator / denominator * 10_000)
+        Ok(numerator * 10_000 / denominator)
     }
 
     fn calculate_utilization(env: &Env) -> Result<u32, Error> {

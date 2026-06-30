@@ -35,17 +35,16 @@ Emitted by `request_loan` when a new loan is originated.
 | `disbursement` | `i128` | Net amount disbursed to borrower |
 | `total_collateral_value` | `i128` | Sum of all collateral appraised values |
 
-### `loan / repaid`
+### `loan_repaid`
 
 Emitted by `repay_loan` after each repayment (partial or full).
 
 | Field | Type | Description |
 |---|---|---|
 | `loan_id` | `u64` | Loan ID |
-| `borrower` | `Address` | Borrower's Stellar address |
-| `repay_amount` | `i128` | Amount repaid in this transaction |
-| `outstanding` | `i128` | Remaining outstanding balance after repayment |
-| `status` | `LoanStatus` | New loan status (`Active` or `Repaid`) |
+| `principal_paid` | `i128` | Amount of principal repaid in this transaction |
+| `interest_paid` | `i128` | Amount of interest repaid in this transaction |
+| `remaining_balance` | `i128` | Remaining outstanding balance after repayment |
 
 ### `loan / liquidated`
 
@@ -75,7 +74,7 @@ Topics follow the pattern `(namespace, action)` using `symbol_short!` macros:
 ```
 (symbol_short!("livestock"), symbol_short!("registered"))
 (symbol_short!("loan"),      symbol_short!("requested"))
-(symbol_short!("loan"),      symbol_short!("repaid"))
+(Symbol::new(&env, "loan_repaid"), borrower_address)
 (symbol_short!("loan"),      symbol_short!("liquidated"))
 ```
 
