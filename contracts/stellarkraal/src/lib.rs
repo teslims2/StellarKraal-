@@ -15,41 +15,45 @@
 mod tests;
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, BytesN, Env,
-    Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, BytesN,
+    Env, String, Symbol, Vec,
 };
 
 // ── Storage keys ────────────────────────────────────────────────────────────
 const ADMIN: Symbol = symbol_short!("ADMIN");
 const ORACLE: Symbol = symbol_short!("ORACLE");
 const TOKEN: Symbol = symbol_short!("TOKEN");
-const LTV: Symbol = symbol_short!("LTV");
-const LIQ_THR: Symbol = symbol_short!("LIQTHR");
+const LTV: Symbol = symbol_short!("LTV"); // loan-to-value bps  e.g. 6000 = 60%
+const LIQ_THR: Symbol = symbol_short!("LIQTHR"); // liquidation threshold bps e.g. 8000
 const TREASURY: Symbol = symbol_short!("TREASURY");
-const ORIG_FEE: Symbol = symbol_short!("ORIGFEE");
-const INT_FEE: Symbol = symbol_short!("INTFEE");
-const CLOSE_FACTOR: Symbol = symbol_short!("CLSFACT");
-const PAUSED: Symbol = symbol_short!("PAUSED");
-const PAUSE_EXP: Symbol = symbol_short!("PAUSEXP");
+const ORIG_FEE: Symbol = symbol_short!("ORIGFEE"); // origination fee bps e.g. 50 = 0.5%
+const INT_FEE: Symbol = symbol_short!("INTFEE"); // interest fee bps e.g. 1000 = 10%
+const CLOSE_FACTOR: Symbol = symbol_short!("CLSFACT"); // close factor bps e.g. 5000 = 50%
+const PAUSED: Symbol = symbol_short!("PAUSED"); // pause state flag
+const PAUSE_EXP: Symbol = symbol_short!("PAUSEXP"); // pause expiry timestamp
 const ORACLES: Symbol = symbol_short!("ORACLES");
 const PAUSE_DUR: Symbol = symbol_short!("PAUSEDUR");
-const PENDING_ADMIN: Symbol = symbol_short!("PNDADMIN");
+const PENDING_ADMIN: Symbol = symbol_short!("PEND_ADM");
+const TOTAL_BORROWED: Symbol = symbol_short!("TOT_BORR");
+const TOTAL_LIQUIDITY: Symbol = symbol_short!("TOT_LIQ");
 const BASE_RATE: Symbol = symbol_short!("BASERATE");
 const SLOPE1: Symbol = symbol_short!("SLOPE1");
 const SLOPE2: Symbol = symbol_short!("SLOPE2");
 const KINK: Symbol = symbol_short!("KINK");
-const TOTAL_BORROWED: Symbol = symbol_short!("TOTBORRD");
-const TOTAL_LIQUIDITY: Symbol = symbol_short!("TOTLIQD");
-const TWAP_WINDOW: Symbol = symbol_short!("TWAPWIN");
-const LAST_PRICE: Symbol = symbol_short!("LSTPRICE");
-const LAST_PRICE_TIME: Symbol = symbol_short!("LSTPRCT");
-const TWAP_PRICE: Symbol = symbol_short!("TWAPPRC");
-const TWAP_SUM: Symbol = symbol_short!("TWAPSUM");
-const TWAP_COUNT: Symbol = symbol_short!("TWAPCNT");
-const PRICE_MIN: Symbol = symbol_short!("PRICEMIN");
-const PRICE_MAX: Symbol = symbol_short!("PRICEMAX");
-const STALE_THR: Symbol = symbol_short!("STALETHR");
-const DEV_BPS: Symbol = symbol_short!("DEVBPS");
+const PRICE_MIN: Symbol = symbol_short!("PRC_MIN");
+const PRICE_MAX: Symbol = symbol_short!("PRC_MAX");
+const STALE_THR: Symbol = symbol_short!("STALE_THR");
+const DEV_BPS: Symbol = symbol_short!("DEV_BPS");
+const LAST_PRICE: Symbol = symbol_short!("LST_PRC");
+const LAST_PRICE_TIME: Symbol = symbol_short!("LST_TIME");
+const TWAP_PRICE: Symbol = symbol_short!("TWAP_PRC");
+const TWAP_SUM: Symbol = symbol_short!("TWAP_SUM");
+const TWAP_COUNT: Symbol = symbol_short!("TWAP_CNT");
+const TWAP_WINDOW: Symbol = symbol_short!("TWAP_WIN");
+/// Minimum number of oracle responses required for `submit_oracle_prices` (admin-configurable).
+const MIN_QUORUM: Symbol = symbol_short!("MINQRM");
+/// Count of addresses currently on the liquidator whitelist.
+const WL_COUNT: Symbol = symbol_short!("WLCOUNT");
 
 // ── Issue #669 storage keys ──────────────────────────────────────────────────
 const PNDG_WASM: Symbol = symbol_short!("PNDGWASM");
@@ -61,7 +65,7 @@ const UPG_TIME: Symbol = symbol_short!("UPGTIME");
 ///
 /// Calculated as 30 days × 24 hours × 720 ledgers/hour (at 5 seconds/ledger):
 /// `30 * 24 * 720 = 518_400`.  This constant caps the value accepted by
-/// [`set_pause_duration`] so that no single pause can exceed 30 days.
+/// [`StellarKraal::set_pause_duration`] so that no single pause can exceed 30 days.
 pub const MAX_PAUSE_DURATION: u64 = 518_400;
 
 /// Timelock enforced between a WASM upgrade proposal and its execution, in seconds.
@@ -69,6 +73,20 @@ pub const MAX_PAUSE_DURATION: u64 = 518_400;
 /// 24 hours = `24 × 3_600` seconds, giving governance participants time to review
 /// before a proposed upgrade takes effect.
 pub const UPGRADE_TIMELOCK_SECS: u64 = 86_400;
+
+/// TTL bump threshold (in ledgers) below which `extend_ttl` actually extends an entry.
+///
+/// ~5.7 days at 5 s/ledger. Chosen so that entries are refreshed well before
+/// they would otherwise expire under the default network minimum TTL.
+pub const PERSISTENT_TTL_THRESHOLD: u32 = 100_000;
+
+/// TTL value (in ledgers) that persistent loan/collateral records are extended to
+/// on every write. ~30 days at 5 s/ledger.
+pub const PERSISTENT_TTL_LEDGERS: u32 = 518_400;
+
+/// Maximum accepted oracle price (exclusive). Any price ≥ `MAX_PRICE` is
+/// rejected by [`StellarKraal::submit_oracle_prices`] as `InvalidPrice`.
+pub const MAX_PRICE: i128 = 1_000_000_000_000_000_000i128; // 10^18
 
 // ── Errors ───────────────────────────────────────────────────────────────────
 
@@ -111,7 +129,7 @@ pub enum Error {
     OracleNotFound = 16,
     /// Fewer oracle responses than the minimum quorum.
     InsufficientOracleQuorum = 17,
-    /// Price value is invalid (e.g. zero or wrong vector length).
+    /// Price value is invalid (e.g. zero, negative, ≥ `MAX_PRICE`, or wrong vector length).
     InvalidPrice = 18,
     /// `unpause` called when the contract is not paused.
     NotPaused = 19,
@@ -125,6 +143,8 @@ pub enum Error {
     NoUpgradePending = 23,
     /// `execute_upgrade` called before the 24-hour timelock has elapsed.
     TimelockNotElapsed = 24,
+    /// `liquidate` called by an address not on a non-empty liquidator whitelist.
+    LiquidatorNotWhitelisted = 25,
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -155,6 +175,8 @@ pub struct CollateralRecord {
     pub appraised_value: i128,
     /// ID of the loan this collateral is locked to; `0` means unlocked.
     pub loan_id: u64,
+    /// Rolling log of the last 3 appraised values (newest last).
+    pub appraisal_history: Vec<i128>,
 }
 
 /// On-chain record for a loan.
@@ -187,11 +209,15 @@ pub struct FeeConfig {
     pub interest_fee_bps: u32,
 }
 
+/// Aggregated result of a multi-oracle price submission.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleReport {
+    /// Median of the submitted prices.
     pub median: i128,
+    /// Number of price responses included in the aggregation.
     pub responses: u32,
+    /// Number of submitted prices that deviated > 50% from the median.
     pub flagged_count: u32,
 }
 
@@ -210,6 +236,8 @@ pub enum DataKey {
     CollateralCounter,
     /// Reentrancy guard lock.
     Guard,
+    /// Liquidator whitelist entry keyed by address.
+    WhitelistEntry(Address),
     /// Pending WASM hash for a proposed upgrade.
     PendingWasm,
     /// Ledger timestamp at which the pending upgrade was proposed.
@@ -251,8 +279,27 @@ impl StellarKraal {
     // ── initialize ────────────────────────────────────────────────────────
     /// Initialise the contract with protocol parameters.
     ///
+    /// # Parameters
+    /// - `admin`: Address that will have admin privileges (fee updates, pause).
+    ///   Must not be the all-zeros account (`GAAA…WHF`).
+    /// - `oracle`: Address of the price oracle (reserved for future use).
+    /// - `token`: SAC token address used for loan disbursements and repayments.
+    /// - `treasury`: Address that receives origination and interest fees.
+    /// - `ltv_bps`: Loan-to-value ratio in basis points (e.g. 6000 = 60 %).
+    ///   Must be in the range 1–9000 inclusive.
+    /// - `liquidation_threshold_bps`: Health-factor threshold below which
+    ///   liquidation is permitted (e.g. 8000 = 80 %). Must be ≥ `ltv_bps`.
+    /// - `min_quorum`: Minimum number of oracle responses required by
+    ///   `submit_oracle_prices`. `0` falls back to a sensible default.
+    ///
     /// # Errors
     /// - [`Error::AlreadyInitialized`] if called more than once.
+    /// - [`Error::Unauthorized`] if `admin` is the zero address.
+    /// - [`Error::InvalidAmount`] if `ltv_bps` is 0 or > 9000, or if
+    ///   `liquidation_threshold_bps` < `ltv_bps`.
+    ///
+    /// # Security
+    /// Requires auth from `admin`. Can only be called once.
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -261,9 +308,26 @@ impl StellarKraal {
         treasury: Address,
         ltv_bps: u32,
         liquidation_threshold_bps: u32,
+        min_quorum: u32,
     ) -> Result<(), Error> {
         if env.storage().instance().has(&ADMIN) {
             return Err(Error::AlreadyInitialized);
+        }
+        // Reject the all-zeros Stellar account as admin.
+        let zero = Address::from_string(&String::from_str(
+            &env,
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        ));
+        if admin == zero {
+            return Err(Error::Unauthorized);
+        }
+        // ltv_bps must be in (0, 9000].
+        if ltv_bps == 0 || ltv_bps > 9000 {
+            return Err(Error::InvalidAmount);
+        }
+        // Liquidation threshold must be at least as large as LTV.
+        if liquidation_threshold_bps < ltv_bps {
+            return Err(Error::InvalidAmount);
         }
         admin.require_auth();
         env.storage().instance().set(&ADMIN, &admin);
@@ -271,22 +335,33 @@ impl StellarKraal {
         env.storage().instance().set(&TOKEN, &token);
         env.storage().instance().set(&TREASURY, &treasury);
         env.storage().instance().set(&LTV, &ltv_bps);
-        env.storage().instance().set(&LIQ_THR, &liquidation_threshold_bps);
-        env.storage().instance().set(&ORIG_FEE, &50u32);
-        env.storage().instance().set(&INT_FEE, &1000u32);
-        env.storage().instance().set(&CLOSE_FACTOR, &5000u32);
+        env.storage()
+            .instance()
+            .set(&LIQ_THR, &liquidation_threshold_bps);
+        env.storage().instance().set(&MIN_QUORUM, &min_quorum);
+        env.storage().instance().set(&ORIG_FEE, &50u32); // 0.5%
+        env.storage().instance().set(&INT_FEE, &1000u32); // 10%
+        env.storage().instance().set(&CLOSE_FACTOR, &5000u32); // 50%
+
+        // Initialize interest rate model (Compound-like jump rate model)
+        // base_rate: 2%, slope1: 5%, slope2: 45%, kink: 80%
         env.storage().instance().set(&BASE_RATE, &200u32);
         env.storage().instance().set(&SLOPE1, &500u32);
         env.storage().instance().set(&SLOPE2, &4500u32);
         env.storage().instance().set(&KINK, &8000u32);
+
+        // Initialize liquidity tracking
         env.storage().instance().set(&TOTAL_BORROWED, &0i128);
         env.storage().instance().set(&TOTAL_LIQUIDITY, &0i128);
+
+        // Initialize TWAP (1 hour window = 3600 seconds)
         env.storage().instance().set(&TWAP_WINDOW, &3600u64);
         env.storage().instance().set(&LAST_PRICE, &0i128);
         env.storage().instance().set(&LAST_PRICE_TIME, &0u64);
         env.storage().instance().set(&TWAP_PRICE, &0i128);
         env.storage().instance().set(&TWAP_SUM, &0i128);
         env.storage().instance().set(&TWAP_COUNT, &0u32);
+        // Initialize oracle validation config (defaults: no bounds, 1h staleness, 20% deviation)
         env.storage().instance().set(&PRICE_MIN, &0i128);
         env.storage().instance().set(&PRICE_MAX, &0i128);
         env.storage().instance().set(&STALE_THR, &3600u64);
@@ -296,6 +371,9 @@ impl StellarKraal {
 
     // ── is_paused ─────────────────────────────────────────────────────────
     /// Returns `true` if the contract is currently paused.
+    ///
+    /// Pause state auto-expires once the stored expiry ledger timestamp is
+    /// reached, so this may return `false` even if `pause` was called earlier.
     pub fn is_paused(env: Env) -> bool {
         Self::is_paused_raw(&env)
     }
@@ -372,15 +450,27 @@ impl StellarKraal {
     }
 
     // ── update_oracle ─────────────────────────────────────────────────────
-    /// Update the oracle address.
+    /// Update the oracle address and optionally the minimum quorum.
+    ///
+    /// # Parameters
+    /// - `new_oracle`: New oracle address to store.
+    /// - `new_min_quorum`: New minimum quorum. Pass `0` to leave unchanged.
     ///
     /// # Security
     /// Admin-only. Requires auth from `admin`.
-    pub fn update_oracle(env: Env, admin: Address, new_oracle: Address) -> Result<(), Error> {
+    pub fn update_oracle(
+        env: Env,
+        admin: Address,
+        new_oracle: Address,
+        new_min_quorum: u32,
+    ) -> Result<(), Error> {
         Self::assert_initialized(&env)?;
         Self::assert_admin(&env, &admin)?;
         admin.require_auth();
         env.storage().instance().set(&ORACLE, &new_oracle);
+        if new_min_quorum > 0 {
+            env.storage().instance().set(&MIN_QUORUM, &new_min_quorum);
+        }
         env.events().publish(
             (symbol_short!("Admin"), symbol_short!("OracleUpd")),
             new_oracle,
@@ -417,11 +507,7 @@ impl StellarKraal {
     ///
     /// # Security
     /// Admin-only. Requires auth from `admin`.
-    pub fn propose_new_admin(
-        env: Env,
-        admin: Address,
-        new_admin: Address,
-    ) -> Result<(), Error> {
+    pub fn propose_new_admin(env: Env, admin: Address, new_admin: Address) -> Result<(), Error> {
         Self::assert_initialized(&env)?;
         Self::assert_admin(&env, &admin)?;
         admin.require_auth();
@@ -491,13 +577,20 @@ impl StellarKraal {
             count,
             appraised_value,
             loan_id: 0,
+            appraisal_history: Vec::new(&env),
         };
         env.storage()
             .persistent()
             .set(&DataKey::Collateral(id), &record);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Collateral(id),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_LEDGERS,
+        );
 
+        // Emit collateral_registered event
         env.events().publish(
-            (symbol_short!("livestock"), symbol_short!("registrd")),
+            (symbol_short!("livestock"), Symbol::new(&env, "registered")),
             (id, owner, animal_type, count, appraised_value),
         );
 
@@ -581,6 +674,11 @@ impl StellarKraal {
         env.storage()
             .persistent()
             .set(&DataKey::Loan(loan_id), &loan);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Loan(loan_id),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_LEDGERS,
+        );
 
         for col_id in collateral_ids.iter() {
             let mut col: CollateralRecord = env
@@ -592,6 +690,11 @@ impl StellarKraal {
             env.storage()
                 .persistent()
                 .set(&DataKey::Collateral(col_id), &col);
+            env.storage().persistent().extend_ttl(
+                &DataKey::Collateral(col_id),
+                PERSISTENT_TTL_THRESHOLD,
+                PERSISTENT_TTL_LEDGERS,
+            );
         }
 
         let token_addr: Address = env.storage().instance().get(&TOKEN).unwrap();
@@ -609,8 +712,14 @@ impl StellarKraal {
         token_client.transfer(&env.current_contract_address(), &borrower, &disbursement);
 
         env.events().publish(
-            (symbol_short!("loan"), symbol_short!("requested")),
-            (loan_id, borrower, amount, disbursement, total_collateral_value),
+            (symbol_short!("loan"), Symbol::new(&env, "requested")),
+            (
+                loan_id,
+                borrower,
+                amount,
+                disbursement,
+                total_collateral_value,
+            ),
         );
 
         Ok(loan_id)
@@ -630,12 +739,7 @@ impl StellarKraal {
     ///
     /// # Security
     /// Requires auth from `borrower`.
-    pub fn repay_loan(
-        env: Env,
-        borrower: Address,
-        loan_id: u64,
-        amount: i128,
-    ) -> Result<(), Error> {
+    pub fn repay_loan(env: Env, borrower: Address, loan_id: u64, amount: i128) -> Result<(), Error> {
         let _guard = ReentrancyGuard::new(&env)?;
         Self::assert_initialized(&env)?;
         if amount <= 0 {
@@ -693,10 +797,19 @@ impl StellarKraal {
         env.storage()
             .persistent()
             .set(&DataKey::Loan(loan_id), &loan);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Loan(loan_id),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_LEDGERS,
+        );
+
+        let principal_paid = repay_amount
+            .checked_sub(interest_portion)
+            .ok_or(Error::InvalidAmount)?;
 
         env.events().publish(
-            (symbol_short!("loan"), symbol_short!("repaid")),
-            (loan_id, borrower, repay_amount, loan.outstanding, loan.status.clone()),
+            (Symbol::new(&env, "loan_repaid"), borrower),
+            (loan_id, principal_paid, interest_portion, loan.outstanding),
         );
 
         Ok(())
@@ -708,6 +821,8 @@ impl StellarKraal {
     /// # Errors
     /// - [`Error::NotInitialized`] / [`Error::ContractPaused`]
     /// - [`Error::InvalidAmount`] if `repay_amount` ≤ 0.
+    /// - [`Error::LiquidatorNotWhitelisted`] if a non-empty whitelist exists and
+    ///   `liquidator` is not on it.
     /// - [`Error::LoanNotFound`] / [`Error::LoanAlreadyClosed`]
     /// - [`Error::HealthFactorSafe`] if health factor ≥ 10 000.
     /// - [`Error::ExceedsCloseFactor`] if `repay_amount` exceeds the close-factor cap.
@@ -727,6 +842,18 @@ impl StellarKraal {
             return Err(Error::InvalidAmount);
         }
         liquidator.require_auth();
+
+        // Enforce liquidator whitelist: if the whitelist is non-empty, only
+        // approved addresses may liquidate.
+        let wl_count: u32 = env.storage().instance().get(&WL_COUNT).unwrap_or(0);
+        if wl_count > 0
+            && !env
+                .storage()
+                .persistent()
+                .has(&DataKey::WhitelistEntry(liquidator.clone()))
+        {
+            return Err(Error::LiquidatorNotWhitelisted);
+        }
 
         let mut loan: LoanRecord = env
             .storage()
@@ -759,6 +886,7 @@ impl StellarKraal {
         let token_client = token::Client::new(&env, &token_addr);
         token_client.transfer(&liquidator, &env.current_contract_address(), &repay_amount);
 
+        let outstanding_before = loan.outstanding;
         loan.outstanding = loan
             .outstanding
             .checked_sub(repay_amount)
@@ -766,13 +894,38 @@ impl StellarKraal {
         if loan.outstanding == 0 {
             loan.status = LoanStatus::Liquidated;
         }
+
+        // Compute collateral_seized as proportional share of total collateral value.
+        // collateral_seized = repay_amount * total_collateral_value / outstanding_before
+        let collateral_seized = if outstanding_before > 0 {
+            repay_amount
+                .checked_mul(loan.total_collateral_value)
+                .unwrap_or(0)
+                / outstanding_before
+        } else {
+            0
+        };
+
+        let borrower = loan.borrower.clone();
         env.storage()
             .persistent()
             .set(&DataKey::Loan(loan_id), &loan);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Loan(loan_id),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_LEDGERS,
+        );
 
+        // Emit loan_liquidated event
+        // Topics: [symbol!(loan_liquidated), borrower, liquidator]
+        // Data:   { loan_id, repay_amount, collateral_seized }
         env.events().publish(
-            (symbol_short!("loan"), symbol_short!("liquidatd")),
-            (loan_id, liquidator, repay_amount, loan.outstanding, loan.status.clone()),
+            (
+                Symbol::new(&env, "loan_liquidated"),
+                borrower,
+                liquidator,
+            ),
+            (loan_id, repay_amount, collateral_seized),
         );
 
         Ok(())
@@ -787,11 +940,7 @@ impl StellarKraal {
     ///
     /// # Security
     /// Admin-only. Requires auth from `admin`.
-    pub fn set_close_factor(
-        env: Env,
-        admin: Address,
-        close_factor_bps: u32,
-    ) -> Result<(), Error> {
+    pub fn set_close_factor(env: Env, admin: Address, close_factor_bps: u32) -> Result<(), Error> {
         Self::assert_initialized(&env)?;
         Self::assert_admin(&env, &admin)?;
         admin.require_auth();
@@ -814,6 +963,112 @@ impl StellarKraal {
         Ok(env.storage().instance().get(&CLOSE_FACTOR).unwrap())
     }
 
+    // ── add_liquidator ────────────────────────────────────────────────────
+    /// Add an address to the approved liquidator whitelist.
+    ///
+    /// Once at least one address is on the whitelist, only whitelisted
+    /// addresses can call `liquidate`. When the whitelist is empty any
+    /// address may liquidate (backward-compatible default).
+    ///
+    /// # Parameters
+    /// - `admin`: Must match the stored admin address.
+    /// - `liquidator`: Address to approve as a liquidator.
+    ///
+    /// # Errors
+    /// - [`Error::NotInitialized`] / [`Error::Unauthorized`]
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn add_liquidator(env: Env, admin: Address, liquidator: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+
+        // Idempotent: skip if already present
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::WhitelistEntry(liquidator.clone()))
+        {
+            return Ok(());
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::WhitelistEntry(liquidator.clone()), &());
+
+        // Increment count
+        let count: u32 = env.storage().instance().get(&WL_COUNT).unwrap_or(0);
+        env.storage().instance().set(&WL_COUNT, &(count + 1));
+
+        env.events().publish(
+            (symbol_short!("whitelist"), symbol_short!("added")),
+            liquidator,
+        );
+        Ok(())
+    }
+
+    // ── remove_liquidator ─────────────────────────────────────────────────
+    /// Remove an address from the approved liquidator whitelist.
+    ///
+    /// If the address is not currently whitelisted this is a no-op.
+    ///
+    /// # Parameters
+    /// - `admin`: Must match the stored admin address.
+    /// - `liquidator`: Address to remove from the whitelist.
+    ///
+    /// # Errors
+    /// - [`Error::NotInitialized`] / [`Error::Unauthorized`]
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn remove_liquidator(env: Env, admin: Address, liquidator: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::WhitelistEntry(liquidator.clone()))
+        {
+            return Ok(()); // Idempotent no-op
+        }
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::WhitelistEntry(liquidator.clone()));
+
+        // Decrement count (saturating to prevent underflow)
+        let count: u32 = env.storage().instance().get(&WL_COUNT).unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&WL_COUNT, &count.saturating_sub(1));
+
+        env.events().publish(
+            (symbol_short!("whitelist"), symbol_short!("removed")),
+            liquidator,
+        );
+        Ok(())
+    }
+
+    // ── is_whitelisted ────────────────────────────────────────────────────
+    /// Returns `true` if the given address is on the approved liquidator
+    /// whitelist, or if the whitelist is empty (open liquidation mode).
+    ///
+    /// # Parameters
+    /// - `liquidator`: Address to check.
+    pub fn is_whitelisted(env: Env, liquidator: Address) -> bool {
+        let wl_count: u32 = env.storage().instance().get(&WL_COUNT).unwrap_or(0);
+        // Empty whitelist → open mode → every address is "whitelisted"
+        if wl_count == 0 {
+            return true;
+        }
+        env.storage()
+            .persistent()
+            .has(&DataKey::WhitelistEntry(liquidator))
+    }
+
     // ── health_factor ─────────────────────────────────────────────────────
     /// Compute the health factor for a loan (scaled by 10 000).
     ///
@@ -830,6 +1085,81 @@ impl StellarKraal {
             .ok_or(Error::LoanNotFound)?;
         let liq_thr: u32 = env.storage().instance().get(&LIQ_THR).unwrap();
         Self::compute_health_factor_with_thr(&loan, liq_thr)
+    }
+
+    // ── update_appraisal ──────────────────────────────────────────────────
+    /// Update the appraised value of a collateral record and append it to the
+    /// rolling 3-entry history log used for trend-based health factor analysis.
+    ///
+    /// # Parameters
+    /// - `owner`: Must be the collateral owner (auth required).
+    /// - `collateral_id`: ID of the collateral to update.
+    /// - `new_value`: New appraised value (must be > 0).
+    ///
+    /// # Errors
+    /// - [`Error::NotInitialized`] / [`Error::ContractPaused`]
+    /// - [`Error::CollateralNotFound`] if `collateral_id` is invalid.
+    /// - [`Error::Unauthorized`] if caller is not the collateral owner.
+    /// - [`Error::InvalidAmount`] if `new_value` ≤ 0.
+    pub fn update_appraisal(
+        env: Env,
+        owner: Address,
+        collateral_id: u64,
+        new_value: i128,
+    ) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_not_paused(&env)?;
+        if new_value <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+        owner.require_auth();
+
+        let mut record: CollateralRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Collateral(collateral_id))
+            .ok_or(Error::CollateralNotFound)?;
+
+        if record.owner != owner {
+            return Err(Error::Unauthorized);
+        }
+
+        // Maintain a rolling window of the last 3 appraisals (newest last).
+        if record.appraisal_history.len() >= 3 {
+            let mut new_hist = Vec::new(&env);
+            let start = record.appraisal_history.len() - 2;
+            for i in start..record.appraisal_history.len() {
+                new_hist.push_back(record.appraisal_history.get(i).unwrap());
+            }
+            record.appraisal_history = new_hist;
+        }
+        record.appraisal_history.push_back(new_value);
+        record.appraised_value = new_value;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Collateral(collateral_id), &record);
+
+        env.events().publish(
+            (symbol_short!("collat"), symbol_short!("appraised")),
+            (collateral_id, new_value),
+        );
+
+        Ok(())
+    }
+
+    // ── get_appraisal_history ─────────────────────────────────────────────
+    /// Return the rolling appraisal history (up to 3 entries) for a collateral.
+    ///
+    /// # Errors
+    /// - [`Error::CollateralNotFound`] if `collateral_id` is invalid.
+    pub fn get_appraisal_history(env: Env, collateral_id: u64) -> Result<Vec<i128>, Error> {
+        let record: CollateralRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Collateral(collateral_id))
+            .ok_or(Error::CollateralNotFound)?;
+        Ok(record.appraisal_history)
     }
 
     // ── get_loan ──────────────────────────────────────────────────────────
@@ -895,10 +1225,7 @@ impl StellarKraal {
     /// # Errors
     /// - [`Error::LoanNotFound`] if `loan_id` does not exist.
     /// - [`Error::CollateralNotFound`] if any linked collateral record is missing.
-    pub fn get_loan_collaterals(
-        env: Env,
-        loan_id: u64,
-    ) -> Result<Vec<CollateralRecord>, Error> {
+    pub fn get_loan_collaterals(env: Env, loan_id: u64) -> Result<Vec<CollateralRecord>, Error> {
         let loan: LoanRecord = env
             .storage()
             .persistent()
@@ -914,6 +1241,43 @@ impl StellarKraal {
             records.push_back(col);
         }
         Ok(records)
+    }
+
+    // ── get_collateral_count ────────────────────────────────────────────────
+    /// Get the number of non-liquidated collaterals for an owner.
+    pub fn get_collateral_count(env: Env, owner: Address) -> u32 {
+        let counter: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::CollateralCounter)
+            .unwrap_or(0);
+        let mut count: u32 = 0;
+        for id in 1..=counter {
+            if let Some(col) = env
+                .storage()
+                .persistent()
+                .get::<_, CollateralRecord>(&DataKey::Collateral(id))
+            {
+                if col.owner == owner {
+                    let mut is_liquidated = false;
+                    if col.loan_id > 0 {
+                        if let Some(loan) = env
+                            .storage()
+                            .persistent()
+                            .get::<_, LoanRecord>(&DataKey::Loan(col.loan_id))
+                        {
+                            if loan.status == LoanStatus::Liquidated {
+                                is_liquidated = true;
+                            }
+                        }
+                    }
+                    if !is_liquidated {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        count
     }
 
     // ── update_fee_config ─────────────────────────────────────────────────
@@ -939,8 +1303,18 @@ impl StellarKraal {
             return Err(Error::InvalidFeeRate);
         }
 
-        env.storage().instance().set(&ORIG_FEE, &origination_fee_bps);
+        let old_orig: u32 = env.storage().instance().get(&ORIG_FEE).unwrap();
+        let old_int: u32 = env.storage().instance().get(&INT_FEE).unwrap();
+
+        env.storage()
+            .instance()
+            .set(&ORIG_FEE, &origination_fee_bps);
         env.storage().instance().set(&INT_FEE, &interest_fee_bps);
+
+        env.events().publish(
+            (symbol_short!("fee"), symbol_short!("cfgUpd")),
+            (old_orig, old_int, origination_fee_bps, interest_fee_bps),
+        );
         Ok(())
     }
 
@@ -1002,11 +1376,7 @@ impl StellarKraal {
 
     // ── get_oracles ───────────────────────────────────────────────────────
     pub fn get_oracles(env: Env) -> Vec<Address> {
-        if let Some(oracles) = env
-            .storage()
-            .instance()
-            .get::<_, Vec<Address>>(&ORACLES)
-        {
+        if let Some(oracles) = env.storage().instance().get::<_, Vec<Address>>(&ORACLES) {
             oracles
         } else {
             let mut oracles = Vec::new(&env);
@@ -1031,16 +1401,25 @@ impl StellarKraal {
             return Err(Error::InvalidPrice);
         }
 
-        let mut non_zero_prices = Vec::new(&env);
-        let mut responses = 0u32;
+        // Validate every submitted price individually before aggregating.
         for price in prices.iter() {
-            if price > 0 {
-                non_zero_prices.push_back(price);
-                responses += 1;
+            if price <= 0 || price >= MAX_PRICE {
+                return Err(Error::InvalidPrice);
             }
         }
 
-        let min_quorum = if oracles.len() >= 3 { 3 } else { oracles.len() };
+        let mut non_zero_prices = Vec::new(&env);
+        let mut responses = 0u32;
+        for price in prices.iter() {
+            non_zero_prices.push_back(price);
+            responses += 1;
+        }
+
+        let min_quorum: u32 = env
+            .storage()
+            .instance()
+            .get(&MIN_QUORUM)
+            .unwrap_or(if oracles.len() >= 3 { 3 } else { oracles.len() });
         if responses < min_quorum {
             return Err(Error::InsufficientOracleQuorum);
         }
@@ -1069,15 +1448,13 @@ impl StellarKraal {
 
         let mut flagged_count = 0u32;
         for price in prices.iter() {
-            if price > 0 {
-                let diff = if price > median {
-                    price - median
-                } else {
-                    median - price
-                };
-                if median > 0 && diff * 100 > median * 50 {
-                    flagged_count += 1;
-                }
+            let diff = if price > median {
+                price - median
+            } else {
+                median - price
+            };
+            if median > 0 && diff * 100 > median * 50 {
+                flagged_count += 1;
             }
         }
 
@@ -1100,14 +1477,22 @@ impl StellarKraal {
     ///
     /// # Security
     /// Admin-only. Requires auth from `admin`.
-    pub fn propose_upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+    pub fn propose_upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), Error> {
         Self::assert_initialized(&env)?;
         Self::assert_admin(&env, &admin)?;
         admin.require_auth();
 
         let proposal_time = env.ledger().timestamp();
-        env.storage().persistent().set(&DataKey::PendingWasm, &new_wasm_hash);
-        env.storage().persistent().set(&DataKey::UpgradeTime, &proposal_time);
+        env.storage()
+            .persistent()
+            .set(&DataKey::PendingWasm, &new_wasm_hash);
+        env.storage()
+            .persistent()
+            .set(&DataKey::UpgradeTime, &proposal_time);
 
         env.events().publish(
             (symbol_short!("upgrade"), symbol_short!("proposed")),
@@ -1206,11 +1591,7 @@ impl StellarKraal {
         if !paused {
             return false;
         }
-        let expires_at: u64 = env
-            .storage()
-            .instance()
-            .get(&PAUSE_EXP)
-            .unwrap_or(0);
+        let expires_at: u64 = env.storage().instance().get(&PAUSE_EXP).unwrap_or(0);
         if expires_at == 0 {
             return true;
         }
@@ -1252,16 +1633,8 @@ impl StellarKraal {
 
     #[allow(dead_code)]
     fn calculate_utilization(env: &Env) -> Result<u32, Error> {
-        let total_borrowed: i128 = env
-            .storage()
-            .instance()
-            .get(&TOTAL_BORROWED)
-            .unwrap_or(0);
-        let total_liquidity: i128 = env
-            .storage()
-            .instance()
-            .get(&TOTAL_LIQUIDITY)
-            .unwrap_or(1);
+        let total_borrowed: i128 = env.storage().instance().get(&TOTAL_BORROWED).unwrap_or(0);
+        let total_liquidity: i128 = env.storage().instance().get(&TOTAL_LIQUIDITY).unwrap_or(1);
         if total_liquidity <= 0 {
             return Ok(0);
         }
@@ -1271,26 +1644,10 @@ impl StellarKraal {
 
     #[allow(dead_code)]
     fn calculate_interest_rate(env: &Env, utilization_bps: u32) -> Result<u32, Error> {
-        let base: u32 = env
-            .storage()
-            .instance()
-            .get(&BASE_RATE)
-            .unwrap_or(200);
-        let slope1: u32 = env
-            .storage()
-            .instance()
-            .get(&SLOPE1)
-            .unwrap_or(500);
-        let slope2: u32 = env
-            .storage()
-            .instance()
-            .get(&SLOPE2)
-            .unwrap_or(4500);
-        let kink: u32 = env
-            .storage()
-            .instance()
-            .get(&KINK)
-            .unwrap_or(8000);
+        let base: u32 = env.storage().instance().get(&BASE_RATE).unwrap_or(200);
+        let slope1: u32 = env.storage().instance().get(&SLOPE1).unwrap_or(500);
+        let slope2: u32 = env.storage().instance().get(&SLOPE2).unwrap_or(4500);
+        let kink: u32 = env.storage().instance().get(&KINK).unwrap_or(8000);
 
         let rate = if utilization_bps <= kink {
             let slope1_component = (slope1 as u64)

@@ -30,6 +30,9 @@
                 },
                 {
                   "u32": 8000
+                },
+                {
+                  "u32": 1
                 }
               ]
             }
@@ -141,7 +144,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "DEVBPS"
+                          "symbol": "DEV_BPS"
                         },
                         "val": {
                           "u32": 2000
@@ -173,15 +176,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "LSTPRCT"
-                        },
-                        "val": {
-                          "u64": 0
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "LSTPRICE"
+                          "symbol": "LST_PRC"
                         },
                         "val": {
                           "i128": {
@@ -192,10 +187,26 @@
                       },
                       {
                         "key": {
+                          "symbol": "LST_TIME"
+                        },
+                        "val": {
+                          "u64": 0
+                        }
+                      },
+                      {
+                        "key": {
                           "symbol": "LTV"
                         },
                         "val": {
                           "u32": 6000
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "MINQRM"
+                        },
+                        "val": {
+                          "u32": 1
                         }
                       },
                       {
@@ -240,7 +251,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "PRICEMAX"
+                          "symbol": "PRC_MAX"
                         },
                         "val": {
                           "i128": {
@@ -251,7 +262,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "PRICEMIN"
+                          "symbol": "PRC_MIN"
                         },
                         "val": {
                           "i128": {
@@ -278,7 +289,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "STALETHR"
+                          "symbol": "STALE_THR"
                         },
                         "val": {
                           "u64": 3600
@@ -294,7 +305,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TOTBORRD"
+                          "symbol": "TOT_BORR"
                         },
                         "val": {
                           "i128": {
@@ -305,7 +316,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TOTLIQD"
+                          "symbol": "TOT_LIQ"
                         },
                         "val": {
                           "i128": {
@@ -324,7 +335,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TWAPCNT"
+                          "symbol": "TWAP_CNT"
                         },
                         "val": {
                           "u32": 0
@@ -332,7 +343,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TWAPPRC"
+                          "symbol": "TWAP_PRC"
                         },
                         "val": {
                           "i128": {
@@ -343,7 +354,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TWAPSUM"
+                          "symbol": "TWAP_SUM"
                         },
                         "val": {
                           "i128": {
@@ -354,7 +365,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TWAPWIN"
+                          "symbol": "TWAP_WIN"
                         },
                         "val": {
                           "u64": 3600
@@ -562,6 +573,9 @@
                 },
                 {
                   "u32": 8000
+                },
+                {
+                  "u32": 1
                 }
               ]
             }
