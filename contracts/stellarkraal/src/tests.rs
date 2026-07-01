@@ -100,6 +100,43 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
     }
 
     #[test]
+    fn test_register_livestock_value_at_cap_ok() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let owner = Address::generate(&env);
+
+        client.set_animal_cap(&admin, &symbol_short!("cattle"), &1_000_000i128);
+        let id = client.register_livestock(&owner, &symbol_short!("cattle"), &1u32, &1_000_000i128);
+
+        assert_eq!(id, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "#8")]
+    fn test_register_livestock_value_above_cap_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let owner = Address::generate(&env);
+
+        client.set_animal_cap(&admin, &symbol_short!("cattle"), &1_000_000i128);
+        client.register_livestock(&owner, &symbol_short!("cattle"), &1u32, &1_000_001i128);
+    }
+
+    #[test]
+    fn test_register_livestock_without_cap_unrestricted() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let owner = Address::generate(&env);
+
+        let id = client.register_livestock(&owner, &symbol_short!("goat"), &1u32, &i128::MAX);
+
+        assert_eq!(id, 1);
+    }
+
+    #[test]
     #[should_panic(expected = "#8")]
     fn test_register_zero_count_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();

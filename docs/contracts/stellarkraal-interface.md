@@ -67,6 +67,16 @@ The contract manages livestock-backed loans with the following responsibilities:
 - Returns: `Result<(), Error>`.
 - State changes: updates `ORACLE`, emits an oracle update event.
 
+### `set_animal_cap(env, admin, animal_type, max_value)`
+- Description: Set the maximum accepted appraised value for a livestock type.
+- Parameters:
+  - `admin` — admin address.
+  - `animal_type` — short symbol for livestock type.
+  - `max_value` — maximum accepted appraised value in base units.
+- Returns: `Result<(), Error>`.
+- State changes: stores the cap for `animal_type`, emits an admin cap update event.
+- Compatibility: animal types without a configured cap behave as if the cap is `u128::MAX`, so existing deployments remain unrestricted until the admin sets a cap.
+
 ### `set_liquidation_threshold(env, admin, threshold_bps)`
 - Description: Update the liquidation threshold.
 - Parameters:
@@ -407,6 +417,7 @@ Key contract storage state used by the interface:
 
 - `ADMIN`, `PENDING_ADMIN` — admin authority and pending admin transfer.
 - `ORACLE` — authorized oracle address.
+- `AnimalCap(animal_type)` — optional per-animal-type maximum appraised value.
 - `TOKEN`, `TREASURY` — token and treasury addresses.
 - `LTV`, `LIQ_THR`, `ORIG_FEE`, `INT_FEE`, `CLOSE_FACTOR` — protocol parameters.
 - `PAUSED`, `PAUSE_EXP`, `PAUSE_DUR` — pause control state.
