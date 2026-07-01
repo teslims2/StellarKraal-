@@ -1638,8 +1638,12 @@ impl StellarKraal {
         if total_liquidity <= 0 {
             return Ok(0);
         }
-        let utilization = (total_borrowed * 10_000 / total_liquidity) as u32;
-        Ok(utilization.min(10_000))
+        // utilization = (total_borrowed / total_liquidity) * 10_000
+        let utilization = total_borrowed
+            .checked_mul(10_000)
+            .ok_or(Error::InvalidAmount)?
+            / total_liquidity;
+        Ok(utilization.min(10_000) as u32)
     }
 
     #[allow(dead_code)]
