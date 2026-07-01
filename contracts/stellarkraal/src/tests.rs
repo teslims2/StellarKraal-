@@ -467,6 +467,42 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
     }
 
     #[test]
+    fn test_get_state_matches_expected_values() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let oracle2 = Address::generate(&env);
+
+        client.add_oracle(&admin, &oracle2);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        client.pause(&admin);
+
+        let state = client.get_state(&admin);
+
+        assert_eq!(state.admin, admin);
+        assert_eq!(state.token, token);
+        assert_eq!(state.ltv_bps, 6000);
+        assert_eq!(state.liq_threshold_bps, 8000);
+        assert!(state.is_paused);
+        assert_eq!(state.oracle_count, 2);
+        assert_eq!(state.total_loans, 1);
+        assert_eq!(state.total_collaterals, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "#3")]
+    fn test_get_state_non_admin_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let attacker = Address::generate(&env);
+
+        client.get_state(&attacker);
+    }
+
+    #[test]
     #[should_panic(expected = "#5")]
     fn test_get_nonexistent_loan_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();

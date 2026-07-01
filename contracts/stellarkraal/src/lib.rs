@@ -193,6 +193,28 @@ pub struct FeeConfig {
     pub interest_fee_bps: u32,
 }
 
+/// Admin-readable summary of key contract state.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractState {
+    /// Current admin address.
+    pub admin: Address,
+    /// SAC token address used by the protocol.
+    pub token: Address,
+    /// Loan-to-value ratio in basis points.
+    pub ltv_bps: u32,
+    /// Liquidation threshold in basis points.
+    pub liq_threshold_bps: u32,
+    /// Current pause status after applying any pause expiry.
+    pub is_paused: bool,
+    /// Number of registered oracle addresses.
+    pub oracle_count: u32,
+    /// Number of loan records created.
+    pub total_loans: u64,
+    /// Number of collateral records created.
+    pub total_collaterals: u64,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleReport {
