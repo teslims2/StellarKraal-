@@ -670,6 +670,134 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
         assert!(client.is_paused());
     }
 
+    // ── comprehensive pause coverage (Issue 1) ────────────────────────────
+
+    /// update_fee_config must be blocked when paused.
+    #[test]
+    #[should_panic(expected = "#13")]
+    fn test_update_fee_config_blocked_when_paused() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.pause(&admin);
+        client.update_fee_config(&admin, &50u32, &100u32);
+    }
+
+    /// add_oracle must be blocked when paused.
+    #[test]
+    #[should_panic(expected = "#13")]
+    fn test_add_oracle_blocked_when_paused() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        client.pause(&admin);
+        let oracle2 = Address::generate(&env);
+        client.add_oracle(&admin, &oracle2);
+    }
+
+    /// All state-mutating functions succeed after unpause; meaningful state
+    /// changes are verified for each one.
+    #[test]
+    fn test_all_blocked_functions_succeed_after_unpause() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        let owner = Address::generate(&env);
+        let borrower = Address::generate(&env);
+
+        // Register collateral BEFORE pausing (so loan can be requested after unpause)
+        let col_id = client.register_livestock(&owner, &symbol_short!("cattle"), &3u32, &1_000_000i128);
+
+        client.pause(&admin);
+        assert!(client.is_paused(), "contract must be paused");
+
+        // Verify every state-mutating function is blocked (#13)
+        assert_eq!(
+            client.try_register_livestock(&borrower, &symbol_short!("goat"), &1u32, &500_000i128),
+            Err(Ok(Error::ContractPaused)),
+            "register_livestock must be blocked (#13)"
+        );
+        let col_ids = vec![&env, col_id];
+        assert_eq!(
+            client.try_request_loan(&owner, &col_ids, &600_000i128),
+            Err(Ok(Error::ContractPaused)),
+            "request_loan must be blocked (#13)"
+        );
+        assert_eq!(
+            client.try_update_fee_config(&admin, &50u32, &100u32),
+            Err(Ok(Error::ContractPaused)),
+            "update_fee_config must be blocked (#13)"
+        );
+        let new_oracle = Address::generate(&env);
+        assert_eq!(
+            client.try_add_oracle(&admin, &new_oracle),
+            Err(Ok(Error::ContractPaused)),
+            "add_oracle must be blocked (#13)"
+        );
+
+        // Unpause and verify each function succeeds
+        client.unpause(&admin);
+        assert!(!client.is_paused(), "contract must be unpaused");
+
+        // register_livestock succeeds: new collateral ID is assigned
+        let new_col_id = client.register_livestock(&borrower, &symbol_short!("goat"), &2u32, &800_000i128);
+        assert!(new_col_id > col_id, "new collateral ID must be greater than previous");
+        let new_col = client.get_collateral(&new_col_id);
+        assert_eq!(new_col.count, 2, "collateral count must match");
+
+        // request_loan succeeds: loan record is created
+        let col_ids2 = vec![&env, col_id];
+        let loan_id = client.request_loan(&owner, &col_ids2, &600_000i128);
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.status, LoanStatus::Active, "loan must be Active after unpause");
+        assert_eq!(loan.principal, 600_000, "loan principal must match requested amount");
+
+        // update_fee_config succeeds: fee config reflects new values
+        client.update_fee_config(&admin, &100u32, &200u32);
+        let fee_cfg = client.get_fee_config();
+        assert_eq!(fee_cfg.origination_fee_bps, 100, "origination fee must be updated");
+        assert_eq!(fee_cfg.interest_fee_bps, 200, "interest fee must be updated");
+
+        // add_oracle succeeds: oracle list grows
+        let oracles_before = client.get_oracles().len();
+        client.add_oracle(&admin, &new_oracle);
+        let oracles_after = client.get_oracles().len();
+        assert_eq!(oracles_after, oracles_before + 1, "oracle list must grow by 1");
+    }
+
+    /// repay_loan is explicitly allowed when paused and correctly reduces the outstanding balance.
+    #[test]
+    fn test_repay_allowed_when_paused_state_correct() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let borrower = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
+        token::StellarAssetClient::new(&env, &token).mint(&borrower, &10_000_000i128);
+
+        client.pause(&admin);
+        assert!(client.is_paused());
+
+        // First partial repayment while paused
+        client.repay_loan(&borrower, &loan_id, &100_000i128);
+        let loan = client.get_loan(&loan_id);
+        assert_eq!(loan.outstanding, 500_000, "outstanding must drop by 100_000");
+        assert_eq!(loan.status, LoanStatus::Active, "loan must remain Active after partial repay");
+
+        // Second partial repayment while still paused
+        client.repay_loan(&borrower, &loan_id, &200_000i128);
+        let loan2 = client.get_loan(&loan_id);
+        assert_eq!(loan2.outstanding, 300_000, "outstanding must drop by another 200_000");
+
+        // Full repayment while still paused closes the loan
+        client.repay_loan(&borrower, &loan_id, &300_000i128);
+        let loan3 = client.get_loan(&loan_id);
+        assert_eq!(loan3.outstanding, 0, "outstanding must be zero after full repay");
+        assert_eq!(loan3.status, LoanStatus::Repaid, "status must be Repaid after full repay");
+    }
+
     /*
     // ── multi-oracle ──────────────────────────────────────────────────────
     ...

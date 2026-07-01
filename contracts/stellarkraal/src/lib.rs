@@ -139,8 +139,17 @@ pub struct LoanRecord {
     pub total_collateral_value: i128,
     /// Original disbursed principal (before fees).
     pub principal: i128,
-    /// Remaining outstanding balance.
+    /// Remaining outstanding principal balance (excluding accrued interest).
     pub outstanding: i128,
+    /// Interest accrued since the last repayment, in token base units.
+    ///
+    /// Updated on every [`StellarKraal::repay_loan`] call based on time elapsed
+    /// and the configured interest rate. Included in the health-factor denominator
+    /// so undercollateralised positions can be identified before full repayment.
+    pub interest_accrued: i128,
+    /// Ledger timestamp of the last interest-accrual update.
+    /// Set to `env.ledger().timestamp()` at loan origination and after each repayment.
+    pub last_interest_time: u64,
     /// Current lifecycle status.
     pub status: LoanStatus,
 }
@@ -163,20 +172,50 @@ pub struct OracleReport {
     pub flagged_count: u32,
 }
 
+/// Current TWAP state returned by [`StellarKraal::get_twap_data`].
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TWAPData {
+    /// Most recent price submitted by the oracle.
+    pub current_price: i128,
+    /// Time-weighted average price over the current TWAP window.
+    pub twap_price: i128,
+    /// Ledger timestamp of the most recent price submission.
+    pub last_update: u64,
+}
+
 // ── Storage helpers ──────────────────────────────────────────────────────────
 
 /// Persistent storage keys used by the contract.
+///
+/// These keys are used with [`soroban_sdk::storage::Persistent`] or
+/// [`soroban_sdk::storage::Temporary`] storage buckets. Each variant
+/// documents the Rust value type stored under that key.
 #[contracttype]
 pub enum DataKey {
-    /// Loan record keyed by loan ID.
+    /// Full [`LoanRecord`] for the loan identified by the inner `u64` ID.
+    ///
+    /// Value type: [`LoanRecord`]
     Loan(u64),
-    /// Collateral record keyed by collateral ID.
+    /// Full [`CollateralRecord`] for the collateral identified by the inner `u64` ID.
+    ///
+    /// Value type: [`CollateralRecord`]
     Collateral(u64),
-    /// Monotonically increasing counter for loan IDs.
+    /// Monotonically increasing counter used to assign unique loan IDs.
+    /// The value stored is the *last assigned* ID; the next ID is `value + 1`.
+    ///
+    /// Value type: `u64`
     LoanCounter,
-    /// Monotonically increasing counter for collateral IDs.
+    /// Monotonically increasing counter used to assign unique collateral IDs.
+    /// The value stored is the *last assigned* ID; the next ID is `value + 1`.
+    ///
+    /// Value type: `u64`
     CollateralCounter,
-    /// Reentrancy guard lock.
+    /// Reentrancy guard flag stored in *temporary* storage.
+    /// Its mere presence signals that a call is already in progress.
+    /// Cleared automatically when the top-level call completes.
+    ///
+    /// Value type: `()` (unit — presence is the signal)
     Guard,
     /// Liquidator whitelist entry keyed by address.
     WhitelistEntry(Address),
@@ -515,6 +554,8 @@ impl StellarKraal {
             total_collateral_value,
             principal: amount,
             outstanding: amount,
+            interest_accrued: 0,
+            last_interest_time: env.ledger().timestamp(),
             status: LoanStatus::Active,
         };
         env.storage().persistent().set(&DataKey::Loan(loan_id), &loan);
@@ -598,32 +639,59 @@ impl StellarKraal {
             return Err(Error::LoanAlreadyClosed);
         }
 
-        let repay_amount = amount.min(loan.outstanding);
-        
-        // Calculate interest (amount above principal) and fee
-        let principal_remaining = loan.outstanding.min(loan.principal);
-        let interest_portion = if repay_amount > principal_remaining {
-            repay_amount - principal_remaining
-        } else {
-            0
-        };
-        
+        // ── On-chain interest accrual ──────────────────────────────────
+        // interest_rate_bps is the annual rate stored as INT_FEE (e.g. 1000 = 10%)
+        // accrued = outstanding * rate_bps * elapsed_seconds / (10_000 * 31_536_000)
         let int_fee_bps: u32 = env.storage().instance().get(&INT_FEE).unwrap();
-        let interest_fee = interest_portion.checked_mul(int_fee_bps as i128).ok_or(Error::InvalidAmount)? / 10_000;
+        let now = env.ledger().timestamp();
+        let elapsed = now.saturating_sub(loan.last_interest_time);
+        if elapsed > 0 && loan.outstanding > 0 {
+            // Use integer arithmetic; seconds_per_year = 31_536_000
+            let accrued = loan.outstanding
+                .checked_mul(int_fee_bps as i128)
+                .unwrap_or(i128::MAX)
+                .checked_mul(elapsed as i128)
+                .unwrap_or(i128::MAX)
+                / (10_000i128 * 31_536_000i128);
+            loan.interest_accrued = loan.interest_accrued.saturating_add(accrued);
+        }
+        loan.last_interest_time = now;
+
+        // Effective outstanding = principal balance + accrued interest
+        let effective_outstanding = loan.outstanding
+            .checked_add(loan.interest_accrued)
+            .ok_or(Error::InvalidAmount)?;
+        let repay_amount = amount.min(effective_outstanding);
+
+        // Reduce interest_accrued first, then principal outstanding
+        let interest_paid = loan.interest_accrued.min(repay_amount);
+        loan.interest_accrued = loan.interest_accrued
+            .checked_sub(interest_paid)
+            .ok_or(Error::InvalidAmount)?;
+        let principal_paid = repay_amount
+            .checked_sub(interest_paid)
+            .ok_or(Error::InvalidAmount)?;
+        loan.outstanding = loan.outstanding
+            .checked_sub(principal_paid)
+            .ok_or(Error::InvalidAmount)?;
+
+        // Transfer interest fee to treasury on the interest portion paid
+        let interest_fee = interest_paid
+            .checked_mul(int_fee_bps as i128)
+            .ok_or(Error::InvalidAmount)?
+            / 10_000;
 
         let token_addr: Address = env.storage().instance().get(&TOKEN).unwrap();
         let token_client = token::Client::new(&env, &token_addr);
         token_client.transfer(&borrower, &env.current_contract_address(), &repay_amount);
 
-        // Transfer interest fee to treasury
         if interest_fee > 0 {
             let treasury: Address = env.storage().instance().get(&TREASURY).unwrap();
             token_client.transfer(&env.current_contract_address(), &treasury, &interest_fee);
             env.events().publish((symbol_short!("FeeCol"), loan_id), (symbol_short!("interest"), interest_fee));
         }
 
-        loan.outstanding = loan.outstanding.checked_sub(repay_amount).ok_or(Error::InvalidAmount)?;
-        if loan.outstanding == 0 {
+        if loan.outstanding == 0 && loan.interest_accrued == 0 {
             loan.status = LoanStatus::Repaid;
         }
         env.storage().persistent().set(&DataKey::Loan(loan_id), &loan);
@@ -1071,6 +1139,7 @@ impl StellarKraal {
         interest_fee_bps: u32,
     ) -> Result<(), Error> {
         Self::assert_initialized(&env)?;
+        Self::assert_not_paused(&env)?;
         let stored_admin: Address = env.storage().instance().get(&ADMIN).unwrap();
         if admin != stored_admin {
             return Err(Error::Unauthorized);
@@ -1111,12 +1180,10 @@ impl StellarKraal {
     // ── add_oracle ────────────────────────────────────────────────────────
     pub fn add_oracle(env: Env, admin: Address, oracle: Address) -> Result<(), Error> {
         Self::assert_initialized(&env)?;
+        Self::assert_not_paused(&env)?;
+        Self::assert_admin(&env, &admin)?;
         admin.require_auth();
-        let stored_admin: Address = env.storage().instance().get(&ADMIN).ok_or(Error::NotInitialized)?;
-        if admin != stored_admin {
-            return Err(Error::Unauthorized);
-        }
-        
+
         let mut oracles = Self::get_oracles(env.clone());
         if oracles.contains(&oracle) {
             return Err(Error::OracleAlreadyRegistered);
@@ -1239,6 +1306,74 @@ impl StellarKraal {
         })
     }
 
+    // ── submit_price ──────────────────────────────────────────────────────
+    /// Submit a single price observation to update the TWAP.
+    ///
+    /// Only the primary oracle address (stored at initialisation) may call
+    /// this function.  Prices are accumulated in a rolling window; when the
+    /// time since the last submission exceeds `TWAP_WINDOW` the accumulator
+    /// resets and the new price becomes the sole sample.
+    ///
+    /// # Parameters
+    /// - `oracle`: Must match the stored oracle address.
+    /// - `price`: Positive price in token base units (must be > 0).
+    ///
+    /// # Errors
+    /// - [`Error::NotInitialized`]
+    /// - [`Error::Unauthorized`] if caller is not the registered oracle.
+    /// - [`Error::InvalidPrice`] if `price` ≤ 0.
+    pub fn submit_price(env: Env, oracle: Address, price: i128) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        oracle.require_auth();
+        let stored_oracle: Address = env.storage().instance().get(&ORACLE).unwrap();
+        if oracle != stored_oracle {
+            return Err(Error::Unauthorized);
+        }
+        if price <= 0 {
+            return Err(Error::InvalidPrice);
+        }
+
+        let now = env.ledger().timestamp();
+        let window: u64 = env.storage().instance().get(&TWAP_WINDOW).unwrap_or(3600);
+        let last_time: u64 = env.storage().instance().get(&LAST_PRICE_TIME).unwrap_or(0);
+
+        // Reset accumulator when window has elapsed since last submission
+        let (new_sum, new_count) = if last_time == 0 || now.saturating_sub(last_time) > window {
+            (price, 1u32)
+        } else {
+            let sum: i128 = env.storage().instance().get(&TWAP_SUM).unwrap_or(0);
+            let count: u32 = env.storage().instance().get(&TWAP_COUNT).unwrap_or(0);
+            let new_count = count.saturating_add(1);
+            (sum.checked_add(price).unwrap_or(i128::MAX), new_count)
+        };
+
+        let twap = new_sum / new_count as i128;
+        env.storage().instance().set(&LAST_PRICE, &price);
+        env.storage().instance().set(&LAST_PRICE_TIME, &now);
+        env.storage().instance().set(&TWAP_SUM, &new_sum);
+        env.storage().instance().set(&TWAP_COUNT, &new_count);
+        env.storage().instance().set(&TWAP_PRICE, &twap);
+        env.events().publish(
+            (symbol_short!("TWAP"), symbol_short!("price")),
+            (price, twap, now),
+        );
+        Ok(())
+    }
+
+    // ── get_twap_data ─────────────────────────────────────────────────────
+    /// Return the current TWAP state.
+    ///
+    /// # Errors
+    /// - [`Error::NotInitialized`]
+    pub fn get_twap_data(env: Env) -> Result<TWAPData, Error> {
+        Self::assert_initialized(&env)?;
+        Ok(TWAPData {
+            current_price: env.storage().instance().get(&LAST_PRICE).unwrap_or(0),
+            twap_price: env.storage().instance().get(&TWAP_PRICE).unwrap_or(0),
+            last_update: env.storage().instance().get(&LAST_PRICE_TIME).unwrap_or(0),
+        })
+    }
+
     // ── internal helpers ──────────────────────────────────────────────────
     fn assert_initialized(env: &Env) -> Result<(), Error> {
         if !env.storage().instance().has(&ADMIN) {
@@ -1289,9 +1424,16 @@ impl StellarKraal {
     /// once and reuse it, rather than paying for an instance-storage read on every
     /// invocation.  No storage access occurs inside this function.
     ///
-    /// Formula (unchanged): `(collateral * liq_thr) / (outstanding * 10_000) * 10_000`
+    /// Formula: `(collateral * liq_thr) / ((outstanding + interest_accrued) * 10_000) * 10_000`
+    ///
+    /// The denominator includes [`LoanRecord::interest_accrued`] so that
+    /// growing unpaid interest degrades the health factor on-chain, enabling
+    /// liquidation before the nominal principal alone would trigger it.
     fn compute_health_factor_with_thr(loan: &LoanRecord, liq_thr: u32) -> Result<i128, Error> {
-        if loan.outstanding == 0 {
+        let total_debt = loan.outstanding
+            .checked_add(loan.interest_accrued)
+            .ok_or(Error::InvalidAmount)?;
+        if total_debt == 0 {
             return Ok(i128::MAX);
         }
         let numerator = loan

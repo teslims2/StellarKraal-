@@ -3,6 +3,8 @@
 This document describes the public interface for the `StellarKraal` Soroban smart contract in `contracts/stellarkraal/src/lib.rs`.
 It covers contract functions, parameters, return values, error codes, on-chain state changes, and invocation examples using `stellar-cli`.
 
+See also: [DataKey Enum Reference](./datakey-enum.md) — storage key documentation generated from rustdoc comments.
+
 ## Contract Overview
 
 The contract manages livestock-backed loans with the following responsibilities:
