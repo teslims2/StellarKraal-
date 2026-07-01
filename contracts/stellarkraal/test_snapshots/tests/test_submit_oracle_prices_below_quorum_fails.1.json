@@ -30,6 +30,9 @@
                 },
                 {
                   "u32": 8000
+                },
+                {
+                  "u32": 1
                 }
               ]
             }
@@ -74,6 +77,31 @@
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "function_name": "update_oracle",
+              "args": [
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                },
+                {
+                  "u32": 4
                 }
               ]
             }
@@ -143,7 +171,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "DEVBPS"
+                          "symbol": "DEV_BPS"
                         },
                         "val": {
                           "u32": 2000
@@ -167,7 +195,15 @@
                       },
                       {
                         "key": {
-                          "symbol": "LASTPRC"
+                          "symbol": "LIQTHR"
+                        },
+                        "val": {
+                          "u32": 8000
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "LST_PRC"
                         },
                         "val": {
                           "i128": {
@@ -178,15 +214,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "LIQTHR"
-                        },
-                        "val": {
-                          "u32": 8000
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "LSTPRCTM"
+                          "symbol": "LST_TIME"
                         },
                         "val": {
                           "u64": 0
@@ -198,6 +226,14 @@
                         },
                         "val": {
                           "u32": 6000
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "MINQRM"
+                        },
+                        "val": {
+                          "u32": 4
                         }
                       },
                       {
@@ -236,7 +272,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "PRICEMAX"
+                          "symbol": "PRC_MAX"
                         },
                         "val": {
                           "i128": {
@@ -247,7 +283,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "PRICEMIN"
+                          "symbol": "PRC_MIN"
                         },
                         "val": {
                           "i128": {
@@ -274,7 +310,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "STALETHR"
+                          "symbol": "STALE_THR"
                         },
                         "val": {
                           "u64": 3600
@@ -290,7 +326,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TOTBOR"
+                          "symbol": "TOT_BORR"
                         },
                         "val": {
                           "i128": {
@@ -301,7 +337,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TOTLIQ"
+                          "symbol": "TOT_LIQ"
                         },
                         "val": {
                           "i128": {
@@ -320,7 +356,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TWAPCNT"
+                          "symbol": "TWAP_CNT"
                         },
                         "val": {
                           "u32": 0
@@ -328,7 +364,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TWAPPRC"
+                          "symbol": "TWAP_PRC"
                         },
                         "val": {
                           "i128": {
@@ -339,7 +375,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TWAPSUM"
+                          "symbol": "TWAP_SUM"
                         },
                         "val": {
                           "i128": {
@@ -350,7 +386,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TWAPWIN"
+                          "symbol": "TWAP_WIN"
                         },
                         "val": {
                           "u64": 3600
@@ -421,6 +457,39 @@
                 "key": {
                   "ledger_key_nonce": {
                     "nonce": 1033654523790656264
+                  }
+                },
+                "durability": "temporary",
+                "val": "void"
+              }
+            },
+            "ext": "v0"
+          },
+          6311999
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "ledger_key_nonce": {
+                "nonce": 4837995959683129791
+              }
+            },
+            "durability": "temporary"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "ledger_key_nonce": {
+                    "nonce": 4837995959683129791
                   }
                 },
                 "durability": "temporary",
@@ -558,6 +627,9 @@
                 },
                 {
                   "u32": 8000
+                },
+                {
+                  "u32": 1
                 }
               ]
             }
@@ -710,6 +782,86 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
               },
               {
+                "symbol": "update_oracle"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                },
+                {
+                  "u32": 4
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "Admin"
+              },
+              {
+                "symbol": "OracleUpd"
+              }
+            ],
+            "data": {
+              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "update_oracle"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
+              },
+              {
                 "symbol": "submit_oracle_prices"
               }
             ],
@@ -735,7 +887,7 @@
                     {
                       "i128": {
                         "hi": 0,
-                        "lo": 0
+                        "lo": 300
                       }
                     }
                   ]
@@ -844,7 +996,7 @@
                         {
                           "i128": {
                             "hi": 0,
-                            "lo": 0
+                            "lo": 300
                           }
                         }
                       ]

@@ -30,6 +30,9 @@
                 },
                 {
                   "u32": 8000
+                },
+                {
+                  "u32": 1
                 }
               ]
             }
@@ -181,6 +184,21 @@
                     },
                     {
                       "key": {
+                        "symbol": "appraisal_history"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 1000000
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "appraised_value"
                       },
                       "val": {
@@ -220,7 +238,7 @@
             },
             "ext": "v0"
           },
-          4095
+          518400
         ]
       ],
       [
@@ -339,7 +357,7 @@
             },
             "ext": "v0"
           },
-          4095
+          518400
         ]
       ],
       [
@@ -391,7 +409,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "DEVBPS"
+                          "symbol": "DEV_BPS"
                         },
                         "val": {
                           "u32": 2000
@@ -415,7 +433,15 @@
                       },
                       {
                         "key": {
-                          "symbol": "LASTPRC"
+                          "symbol": "LIQTHR"
+                        },
+                        "val": {
+                          "u32": 8000
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "LST_PRC"
                         },
                         "val": {
                           "i128": {
@@ -426,15 +452,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "LIQTHR"
-                        },
-                        "val": {
-                          "u32": 8000
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "LSTPRCTM"
+                          "symbol": "LST_TIME"
                         },
                         "val": {
                           "u64": 0
@@ -446,6 +464,14 @@
                         },
                         "val": {
                           "u32": 5000
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "MINQRM"
+                        },
+                        "val": {
+                          "u32": 1
                         }
                       },
                       {
@@ -466,7 +492,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "PRICEMAX"
+                          "symbol": "PRC_MAX"
                         },
                         "val": {
                           "i128": {
@@ -477,7 +503,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "PRICEMIN"
+                          "symbol": "PRC_MIN"
                         },
                         "val": {
                           "i128": {
@@ -504,7 +530,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "STALETHR"
+                          "symbol": "STALE_THR"
                         },
                         "val": {
                           "u64": 3600
@@ -520,7 +546,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TOTBOR"
+                          "symbol": "TOT_BORR"
                         },
                         "val": {
                           "i128": {
@@ -531,7 +557,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TOTLIQ"
+                          "symbol": "TOT_LIQ"
                         },
                         "val": {
                           "i128": {
@@ -550,7 +576,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TWAPCNT"
+                          "symbol": "TWAP_CNT"
                         },
                         "val": {
                           "u32": 0
@@ -558,7 +584,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TWAPPRC"
+                          "symbol": "TWAP_PRC"
                         },
                         "val": {
                           "i128": {
@@ -569,7 +595,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TWAPSUM"
+                          "symbol": "TWAP_SUM"
                         },
                         "val": {
                           "i128": {
@@ -580,7 +606,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TWAPWIN"
+                          "symbol": "TWAP_WIN"
                         },
                         "val": {
                           "u64": 3600
@@ -845,6 +871,9 @@
                 },
                 {
                   "u32": 8000
+                },
+                {
+                  "u32": 1
                 }
               ]
             }
@@ -1012,7 +1041,7 @@
                 "symbol": "livestock"
               },
               {
-                "symbol": "registrd"
+                "symbol": "registered"
               }
             ],
             "data": {

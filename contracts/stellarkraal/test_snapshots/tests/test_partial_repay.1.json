@@ -30,6 +30,9 @@
                 },
                 {
                   "u32": 8000
+                },
+                {
+                  "u32": 1
                 }
               ]
             }
@@ -101,7 +104,6 @@
         }
       ]
     ],
-    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
@@ -189,6 +191,21 @@
                     },
                     {
                       "key": {
+                        "symbol": "appraisal_history"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 1000000
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "appraised_value"
                       },
                       "val": {
@@ -228,7 +245,7 @@
             },
             "ext": "v0"
           },
-          4095
+          518400
         ]
       ],
       [
@@ -347,7 +364,7 @@
             },
             "ext": "v0"
           },
-          4095
+          518400
         ]
       ],
       [
@@ -399,7 +416,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "DEVBPS"
+                          "symbol": "DEV_BPS"
                         },
                         "val": {
                           "u32": 2000
@@ -423,7 +440,15 @@
                       },
                       {
                         "key": {
-                          "symbol": "LASTPRC"
+                          "symbol": "LIQTHR"
+                        },
+                        "val": {
+                          "u32": 8000
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "LST_PRC"
                         },
                         "val": {
                           "i128": {
@@ -434,15 +459,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "LIQTHR"
-                        },
-                        "val": {
-                          "u32": 8000
-                        }
-                      },
-                      {
-                        "key": {
-                          "symbol": "LSTPRCTM"
+                          "symbol": "LST_TIME"
                         },
                         "val": {
                           "u64": 0
@@ -454,6 +471,14 @@
                         },
                         "val": {
                           "u32": 6000
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "MINQRM"
+                        },
+                        "val": {
+                          "u32": 1
                         }
                       },
                       {
@@ -474,7 +499,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "PRICEMAX"
+                          "symbol": "PRC_MAX"
                         },
                         "val": {
                           "i128": {
@@ -485,7 +510,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "PRICEMIN"
+                          "symbol": "PRC_MIN"
                         },
                         "val": {
                           "i128": {
@@ -512,7 +537,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "STALETHR"
+                          "symbol": "STALE_THR"
                         },
                         "val": {
                           "u64": 3600
@@ -528,7 +553,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TOTBOR"
+                          "symbol": "TOT_BORR"
                         },
                         "val": {
                           "i128": {
@@ -539,7 +564,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TOTLIQ"
+                          "symbol": "TOT_LIQ"
                         },
                         "val": {
                           "i128": {
@@ -558,7 +583,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TWAPCNT"
+                          "symbol": "TWAP_CNT"
                         },
                         "val": {
                           "u32": 0
@@ -566,7 +591,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TWAPPRC"
+                          "symbol": "TWAP_PRC"
                         },
                         "val": {
                           "i128": {
@@ -577,7 +602,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TWAPSUM"
+                          "symbol": "TWAP_SUM"
                         },
                         "val": {
                           "i128": {
@@ -588,7 +613,7 @@
                       },
                       {
                         "key": {
-                          "symbol": "TWAPWIN"
+                          "symbol": "TWAP_WIN"
                         },
                         "val": {
                           "u64": 3600
@@ -853,6 +878,9 @@
                 },
                 {
                   "u32": 8000
+                },
+                {
+                  "u32": 1
                 }
               ]
             }
@@ -936,7 +964,7 @@
                 "symbol": "livestock"
               },
               {
-                "symbol": "registrd"
+                "symbol": "registered"
               }
             ],
             "data": {
@@ -1268,63 +1296,6 @@
                 "symbol": "fn_call"
               },
               {
-                "bytes": "0000000000000000000000000000000000000000000000000000000000000004"
-              },
-              {
-                "symbol": "mint"
-              }
-            ],
-            "data": {
-              "vec": [
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
-                },
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 10000
-                  }
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000004",
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_return"
-              },
-              {
-                "symbol": "mint"
-              }
-            ],
-            "data": "void"
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": null,
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_call"
-              },
-              {
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
               },
               {
@@ -1421,19 +1392,16 @@
           "v0": {
             "topics": [
               {
-                "symbol": "loan"
+                "symbol": "loan_repaid"
               },
               {
-                "symbol": "repaid"
+                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
               }
             ],
             "data": {
               "vec": [
                 {
                   "u64": 1
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
                 },
                 {
                   "i128": {
@@ -1444,15 +1412,14 @@
                 {
                   "i128": {
                     "hi": 0,
-                    "lo": 400000
+                    "lo": 0
                   }
                 },
                 {
-                  "vec": [
-                    {
-                      "symbol": "Active"
-                    }
-                  ]
+                  "i128": {
+                    "hi": 0,
+                    "lo": 400000
+                  }
                 }
               ]
             }
