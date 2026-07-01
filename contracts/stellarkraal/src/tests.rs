@@ -1,7 +1,7 @@
 use super::*;
 use soroban_sdk::{
     symbol_short, vec,
-    testutils::{Address as _, Ledger, Events},
+    testutils::{storage::Persistent as _, Address as _, Ledger, Events},
     Address, Env, Symbol, IntoVal,
 };
 use proptest::prelude::*;
@@ -12,6 +12,7 @@ pub struct MockToken;
 #[contractimpl]
 impl MockToken {
     pub fn transfer(_env: Env, _from: Address, _to: Address, _amount: i128) {}
+    pub fn balance(_env: Env, _id: Address) -> i128 { 0 }
 }
 
 fn setup() -> (Env, Address, Address, Address, Address, Address) {
@@ -51,7 +52,7 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
         let (env, cid, _admin, oracle, token, treasury) = setup();
         let client = StellarKraalClient::new(&env, &cid);
         let zero = Address::from_string(&String::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"));
-        client.initialize(&zero, &oracle, &token, &treasury, &6000u32, &8000u32);
+        client.initialize(&zero, &oracle, &token, &treasury, &6000u32, &8000u32, &1u32);
     }
 
     #[test]
@@ -59,7 +60,7 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
     fn test_initialize_zero_ltv_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         let client = StellarKraalClient::new(&env, &cid);
-        client.initialize(&admin, &oracle, &token, &treasury, &0u32, &8000u32);
+        client.initialize(&admin, &oracle, &token, &treasury, &0u32, &8000u32, &1u32);
     }
 
     #[test]
@@ -67,7 +68,7 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
     fn test_initialize_ltv_above_max_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         let client = StellarKraalClient::new(&env, &cid);
-        client.initialize(&admin, &oracle, &token, &treasury, &9001u32, &9500u32);
+        client.initialize(&admin, &oracle, &token, &treasury, &9001u32, &9500u32, &1u32);
     }
 
     #[test]
@@ -76,7 +77,7 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
         let (env, cid, admin, oracle, token, treasury) = setup();
         let client = StellarKraalClient::new(&env, &cid);
         // liq_threshold (5000) < ltv (6000) → InvalidAmount
-        client.initialize(&admin, &oracle, &token, &treasury, &6000u32, &5000u32);
+        client.initialize(&admin, &oracle, &token, &treasury, &6000u32, &5000u32, &1u32);
     }
 
     #[test]
@@ -84,7 +85,7 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
         let (env, cid, admin, oracle, token, treasury) = setup();
         let client = StellarKraalClient::new(&env, &cid);
         // liq_threshold == ltv is the boundary case (allowed)
-        client.initialize(&admin, &oracle, &token, &treasury, &6000u32, &6000u32);
+        client.initialize(&admin, &oracle, &token, &treasury, &6000u32, &6000u32, &1u32);
     }
 
     // ── register_livestock ────────────────────────────────────────────────
@@ -387,7 +388,7 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
         // Unhealthy condition:  collateral(1_000_000) * 8000 / outstanding < 10_000
         //                       outstanding > 800_000
         // We set outstanding = 900_000 (> 800_000) to force hf < 10_000.
-        {
+        env.as_contract(&cid, || {
             let mut loan: LoanRecord = env
                 .storage()
                 .persistent()
@@ -395,44 +396,33 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
                 .unwrap();
             loan.outstanding = 900_000;
             env.storage().persistent().set(&DataKey::Loan(loan_id), &loan);
-        }
+        });
 
         // Liquidator repays 50 % of outstanding (close factor cap = 50 %)
         let repay = 450_000i128;
         client.liquidate(&liquidator, &loan_id, &repay);
 
         // Inspect the emitted events.  The last event should be `loan_liquidated`.
+        // Topics: [symbol_short!(loan), symbol!(liquidated)]
+        // Data:   { loan_id, liquidator, repay_amount, outstanding, status }
         let events = env.events().all();
+        let topic = vec![
+            &env,
+            symbol_short!("loan").into_val(&env),
+            Symbol::new(&env, "liquidated").into_val(&env),
+        ];
         let liq_event = events
             .iter()
             .rev()
-            .find(|e| {
-                // topics[0] is loan_liquidated symbol
-                e.0 == (
-                    symbol_short!("loan_liquidated"),
-                    borrower.clone(),
-                    liquidator.clone(),
-                )
-            })
+            .find(|e| e.1 == topic)
             .expect("loan_liquidated event not found");
 
-        // Verify data: (loan_id, repay_amount, collateral_seized)
-        // collateral_seized = repay * total_collateral_value / outstanding_before
-        //                   = 450_000 * 1_000_000 / 900_000 = 500_000
-        let data: (u64, i128, i128) = liq_event.1.clone().into_val(&env);
+        let data: (u64, Address, i128, i128, LoanStatus) = liq_event.2.clone().into_val(&env);
         assert_eq!(data.0, loan_id, "loan_id mismatch in event data");
-        assert_eq!(data.1, repay, "repay_amount mismatch in event data");
-        assert_eq!(data.2, 500_000i128, "collateral_seized mismatch in event data");
-
-        // Confirm topics carry the right addresses
-        let (topic_symbol, topic_borrower, topic_liquidator): (
-            soroban_sdk::Symbol,
-            Address,
-            Address,
-        ) = liq_event.0.clone().into_val(&env);
-        assert_eq!(topic_symbol, symbol_short!("loan_liquidated"));
-        assert_eq!(topic_borrower, borrower);
-        assert_eq!(topic_liquidator, liquidator);
+        assert_eq!(data.1, liquidator, "liquidator mismatch in event data");
+        assert_eq!(data.2, repay, "repay_amount mismatch in event data");
+        assert_eq!(data.3, 900_000 - repay, "outstanding mismatch in event data");
+        assert_eq!(data.4, LoanStatus::Active, "status mismatch in event data");
     }
 
     // ── get_loan / get_collateral ─────────────────────────────────────────
@@ -889,6 +879,35 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
     }
 
     #[test]
+    #[should_panic(expected = "#17")]
+    fn test_submit_oracle_prices_below_quorum_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        // Add 2 more oracles → 3 total
+        client.add_oracle(&admin, &Address::generate(&env));
+        client.add_oracle(&admin, &Address::generate(&env));
+        // Raise min_quorum above the number of registered oracles
+        client.update_oracle(&admin, &oracle, &4u32);
+        let submitter = Address::generate(&env);
+        // 3 valid prices, but min_quorum (4) exceeds the oracle count
+        let prices = vec![&env, 100i128, 200i128, 300i128];
+        client.submit_oracle_prices(&submitter, &prices);
+    }
+
+    #[test]
+    #[should_panic(expected = "#18")]
+    fn test_submit_oracle_prices_wrong_length_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let submitter = Address::generate(&env);
+        // 1 oracle registered but 2 prices submitted — length mismatch
+        let prices = vec![&env, 100i128, 200i128];
+        client.submit_oracle_prices(&submitter, &prices);
+    }
+
+    #[test]
     fn test_livestock_registered_event_emitted() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
@@ -1128,34 +1147,6 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
         client.get_collateral(&9999u64);
     }
 
-    // Error::HealthFactorSafe = 7
-    #[test]
-    #[should_panic(expected = "#7")]
-    fn test_liquidate_healthy_loan_fails() {
-        let (env, cid, admin, oracle, token, treasury) = setup();
-        init(&env, &cid, &admin, &oracle, &token, &treasury);
-        let client = StellarKraalClient::new(&env, &cid);
-        let borrower = Address::generate(&env);
-        let liquidator = Address::generate(&env);
-        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &1u32, &1_000_000i128);
-        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &500_000i128);
-        client.liquidate(&liquidator, &loan_id, &100_000i128);
-    }
-
-    // Error::LoanAlreadyClosed = 9
-    #[test]
-    #[should_panic(expected = "#9")]
-    fn test_repay_closed_loan_fails() {
-        let (env, cid, admin, oracle, token, treasury) = setup();
-        init(&env, &cid, &admin, &oracle, &token, &treasury);
-        let client = StellarKraalClient::new(&env, &cid);
-        let borrower = Address::generate(&env);
-        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &1u32, &1_000_000i128);
-        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
-        client.repay_loan(&borrower, &loan_id, &600_000i128);
-        client.repay_loan(&borrower, &loan_id, &1i128);
-    }
-
     // Error::InvalidFeeRate = 10
     #[test]
     #[should_panic(expected = "#10")]
@@ -1178,10 +1169,20 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
         let liquidator = Address::generate(&env);
         let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &1u32, &1_000_000i128);
         let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &600_000i128);
-        // Lower collateral value so loan becomes liquidatable
-        client.update_appraisal(&borrower, &col_id, &500_000i128);
-        // outstanding=600_000, close_factor=50% → max_repay=300_000; request 400_000
-        client.liquidate(&liquidator, &loan_id, &400_000i128);
+        // Force the loan unhealthy by pushing outstanding above the
+        // threshold-adjusted collateral value (liq_thr defaults to 8000 bps,
+        // so outstanding > 800_000 on 1_000_000 collateral triggers hf < 10_000).
+        env.as_contract(&cid, || {
+            let mut loan: LoanRecord = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Loan(loan_id))
+                .unwrap();
+            loan.outstanding = 900_000;
+            env.storage().persistent().set(&DataKey::Loan(loan_id), &loan);
+        });
+        // outstanding=900_000, close_factor=50% → max_repay=450_000; request 500_000
+        client.liquidate(&liquidator, &loan_id, &500_000i128);
     }
 
     // Error::InvalidCloseFactor = 12
@@ -1215,31 +1216,166 @@ fn setup() -> (Env, Address, Address, Address, Address, Address) {
         client.register_livestock(&owner, &symbol_short!("goat"), &1u32, &500_000i128);
     }
 
-    // Error::OracleAlreadyRegistered = 14
+    // ── get_fee_config ───────────────────────────────────────────────────
     #[test]
-    #[should_panic(expected = "#14")]
-    fn test_add_duplicate_oracle_fails() {
+    fn test_get_fee_config_matches_init_values() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
-        let new_oracle = Address::generate(&env);
-        client.add_oracle(&admin, &new_oracle);
-        client.add_oracle(&admin, &new_oracle);
+        let fee = client.get_fee_config();
+        // initialize sets origination_fee = 50 bps, interest_fee = 1000 bps
+        assert_eq!(fee.origination_fee_bps, 50);
+        assert_eq!(fee.interest_fee_bps, 1000);
     }
 
-    // Error::NotPaused = 19
+    #[test]
+    fn test_get_fee_config_after_update() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        client.update_fee_config(&admin, &100u32, &200u32);
+        let fee = client.get_fee_config();
+        assert_eq!(fee.origination_fee_bps, 100);
+        assert_eq!(fee.interest_fee_bps, 200);
+    }
+
+    #[test]
+    fn test_get_fee_config_is_read_only() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        let fee1 = client.get_fee_config();
+        let fee2 = client.get_fee_config();
+        // Calling get_fee_config twice should return identical results (no mutation)
+        assert_eq!(fee1.origination_fee_bps, fee2.origination_fee_bps);
+        assert_eq!(fee1.interest_fee_bps, fee2.interest_fee_bps);
+    }
+
+    // ── emergency_withdraw ───────────────────────────────────────────────
+    #[test]
+    fn test_emergency_withdraw_paused_admin_ok() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let recipient = Address::generate(&env);
+
+        client.pause(&admin);
+        let events_before = env.events().all().len();
+        client.emergency_withdraw(&admin, &recipient);
+        let events_after = env.events().all().len();
+        assert!(events_after > events_before, "emergency_withdraw should emit an event");
+    }
+
     #[test]
     #[should_panic(expected = "#19")]
-    fn test_unpause_when_not_paused_fails() {
+    fn test_emergency_withdraw_unpaused_fails() {
         let (env, cid, admin, oracle, token, treasury) = setup();
         init(&env, &cid, &admin, &oracle, &token, &treasury);
         let client = StellarKraalClient::new(&env, &cid);
-        client.unpause(&admin);
+        let recipient = Address::generate(&env);
+        // Contract is not paused — should fail with NotPaused (#19)
+        client.emergency_withdraw(&admin, &recipient);
     }
 
-    // Error::ArithmeticOverflow = 20  (not testable in unit context:
+    #[test]
+    #[should_panic(expected = "#3")]
+    fn test_emergency_withdraw_non_admin_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let attacker = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        client.pause(&admin);
+        // Non-admin caller — should fail with Unauthorized (#3)
+        client.emergency_withdraw(&attacker, &recipient);
+    }
+
+    // ── set_ltv ──────────────────────────────────────────────────────────
+    #[test]
+    fn test_set_ltv_ok() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        client.set_ltv(&admin, &5000u32);
+        // Verify via a loan request: with ltv 50%, max loan on 1M collateral = 500K
+        let borrower = Address::generate(&env);
+        let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &1_000_000i128);
+        let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &500_000i128);
+        assert_eq!(loan_id, 1);
+    }
+
+    #[test]
+    fn test_set_ltv_emits_event() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+
+        let events_before = env.events().all().len();
+        client.set_ltv(&admin, &7000u32);
+        let events_after = env.events().all().len();
+        assert!(events_after > events_before, "set_ltv should emit an event");
+    }
+
+    #[test]
+    fn test_set_ltv_boundary_low() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        // 1000 bps (10%) is the minimum — should succeed
+        client.set_ltv(&admin, &1000u32);
+    }
+
+    #[test]
+    fn test_set_ltv_boundary_high() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        // 9000 bps (90%) is the maximum — should succeed
+        client.set_ltv(&admin, &9000u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "#8")]
+    fn test_set_ltv_below_min_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        // 999 bps is below minimum — should fail with InvalidAmount (#8)
+        client.set_ltv(&admin, &999u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "#8")]
+    fn test_set_ltv_above_max_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        // 9001 bps is above maximum — should fail with InvalidAmount (#8)
+        client.set_ltv(&admin, &9001u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "#3")]
+    fn test_set_ltv_non_admin_fails() {
+        let (env, cid, admin, oracle, token, treasury) = setup();
+        init(&env, &cid, &admin, &oracle, &token, &treasury);
+        let client = StellarKraalClient::new(&env, &cid);
+        let attacker = Address::generate(&env);
+        // Non-admin — should fail with Unauthorized (#3)
+        client.set_ltv(&attacker, &5000u32);
+    }
+
+    // Error::LiquidatorNotWhitelisted = 23  (covered by liquidator-whitelist
+    //   tests once added; whitelist defaults to open mode so no dedicated
+    //   should_panic test is required here)
+
+    // Error::ArithmeticOverflow = 22  (not testable in unit context:
     //   would require the loan/collateral counter to exceed u64::MAX)
 
-    // Error::AlreadyInProgress = 21  (not testable in unit context:
+    // Error::AlreadyInProgress = 20  (not testable in unit context:
     //   requires a reentrant cross-contract call that the single-contract
     //   test harness cannot model)

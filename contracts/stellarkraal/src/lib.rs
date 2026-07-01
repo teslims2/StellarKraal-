@@ -50,6 +50,30 @@ const TWAP_PRICE: Symbol = symbol_short!("TWAP_PRC");
 const TWAP_SUM: Symbol = symbol_short!("TWAP_SUM");
 const TWAP_COUNT: Symbol = symbol_short!("TWAP_CNT");
 const TWAP_WINDOW: Symbol = symbol_short!("TWAP_WIN");
+const MIN_QUORUM: Symbol = symbol_short!("MINQRM"); // minimum oracle response quorum
+const WL_COUNT: Symbol = symbol_short!("WLCOUNT");  // number of whitelisted liquidators
+
+/// Maximum accepted oracle price (exclusive). Any price ≥ `MAX_PRICE` is
+/// rejected as invalid.
+pub const MAX_PRICE: i128 = 1_000_000_000_000_000_000i128; // 10^18
+
+// ── TTL management ───────────────────────────────────────────────────────────
+//
+// Persistent storage entries (loans, collaterals) must have their TTL extended
+// on every write to prevent archival. The strategy is:
+//   - Extend to `PERSISTENT_TTL_LEDGERS` on every write.
+//   - Only extend when the current TTL is below `PERSISTENT_TTL_THRESHOLD`.
+//     This avoids a redundant ledger write on reads when the entry is already
+//     near the maximum.
+//   - The values are compile-time constants so they can be adjusted for
+//     different network configurations (mainnet vs testnet) without changing
+//     contract logic. At ~5 s/ledger, 518_400 ledgers ≈ 30 days.
+
+/// Minimum remaining TTL (in ledgers) below which a persistent entry is extended.
+pub const PERSISTENT_TTL_THRESHOLD: u32 = 100_000; // ~5.7 days
+/// Target TTL (in ledgers) applied when extending a persistent entry.
+pub const PERSISTENT_TTL_LEDGERS: u32 = 518_400;   // ~30 days
+
 // ── Errors ───────────────────────────────────────────────────────────────────
 
 /// Contract-level errors returned by all public functions.
@@ -88,9 +112,14 @@ pub enum Error {
     InsufficientOracleQuorum = 17,
     InvalidPrice = 18,
     NotPaused = 19,
+    /// Reentrancy guard: another call is already in progress.
     AlreadyInProgress = 20,
+    /// Contract is already paused.
     AlreadyPaused = 21,
+    /// Arithmetic overflow detected.
     ArithmeticOverflow = 22,
+    /// Caller is not on the approved liquidator whitelist.
+    LiquidatorNotWhitelisted = 23,
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -349,6 +378,62 @@ impl StellarKraal {
         Self::is_paused_raw(&env)
     }
 
+    // ── pause ─────────────────────────────────────────────────────────────
+    /// Pause the contract, blocking new loans and liquidations.
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn pause(env: Env, admin: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+
+        if Self::is_paused_raw(&env) {
+            return Err(Error::AlreadyPaused);
+        }
+
+        let duration: u64 = env.storage().instance().get(&PAUSE_DUR).unwrap_or(24 * 3600); // Default 1 day
+        let expires_at = env.ledger().timestamp().checked_add(duration).ok_or(Error::ArithmeticOverflow)?;
+
+        env.storage().instance().set(&PAUSED, &true);
+        env.storage().instance().set(&PAUSE_EXP, &expires_at);
+        env.events().publish((symbol_short!("Pause"),), expires_at);
+        Ok(())
+    }
+
+    // ── unpause ───────────────────────────────────────────────────────────
+    /// Unpause the contract.
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn unpause(env: Env, admin: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+
+        if !Self::is_paused_raw(&env) {
+            return Err(Error::NotPaused);
+        }
+
+        env.storage().instance().set(&PAUSED, &false);
+        env.storage().instance().set(&PAUSE_EXP, &0u64);
+        env.events().publish((symbol_short!("Unpause"),), env.ledger().timestamp());
+        Ok(())
+    }
+
+    // ── set_pause_duration ────────────────────────────────────────────────
+    /// Set the default duration for a pause.
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn set_pause_duration(env: Env, admin: Address, duration: u64) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+        env.storage().instance().set(&PAUSE_DUR, &duration);
+        Ok(())
+    }
+
     // ── update_oracle ─────────────────────────────────────────────────────
     /// Update the oracle address and optionally the minimum quorum.
     ///
@@ -454,6 +539,8 @@ impl StellarKraal {
         owner.require_auth();
 
         let id = Self::next_id(&env, DataKey::CollateralCounter)?;
+        let mut history = Vec::new(&env);
+        history.push_back(appraised_value);
         let record = CollateralRecord {
             owner,
             animal_type,
@@ -801,8 +888,8 @@ impl StellarKraal {
         env.storage().persistent().extend_ttl(&DataKey::Loan(loan_id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_LEDGERS);
 
         // Emit loan_liquidated event
-        // Topics: [symbol!(loan_liquidated), borrower, liquidator]
-        // Data:   { loan_id, repay_amount, collateral_seized }
+        // Topics: [symbol_short!(loan), symbol!(liquidated)]
+        // Data:   { loan_id, liquidator, repay_amount, outstanding, status }
         env.events().publish(
             (symbol_short!("loan"), Symbol::new(&env, "liquidated")),
             (loan_id, liquidator.clone(), repay_amount, loan.outstanding, loan.status.clone()),
@@ -1177,6 +1264,81 @@ impl StellarKraal {
             interest_fee_bps: int,
         })
     }
+
+    // ── emergency_withdraw ─────────────────────────────────────────────
+    /// Emergency withdrawal of all token reserves.
+    ///
+    /// Transfers the entire token balance held by the contract to the
+    /// specified `recipient`. Only callable by admin when contract is paused.
+    ///
+    /// # Parameters
+    /// - `admin`: Must match the stored admin address.
+    /// - `recipient`: Address to receive the withdrawn tokens.
+    ///
+    /// # Errors
+    /// - [`Error::NotInitialized`] / [`Error::Unauthorized`]
+    /// - [`Error::NotPaused`] if the contract is not currently paused.
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`. Contract must be paused.
+    pub fn emergency_withdraw(env: Env, admin: Address, recipient: Address) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+
+        if !Self::is_paused_raw(&env) {
+            return Err(Error::NotPaused);
+        }
+
+        let token_addr: Address = env.storage().instance().get(&TOKEN).unwrap();
+        let token_client = token::Client::new(&env, &token_addr);
+        let balance = token_client.balance(&env.current_contract_address());
+
+        if balance > 0 {
+            token_client.transfer(&env.current_contract_address(), &recipient, &balance);
+        }
+
+        env.events().publish(
+            (symbol_short!("emergency"),),
+            (recipient, balance),
+        );
+
+        Ok(())
+    }
+
+    // ── set_ltv ──────────────────────────────────────────────────────────
+    /// Update the loan-to-value ratio.
+    ///
+    /// # Parameters
+    /// - `admin`: Must match the stored admin address.
+    /// - `ltv_bps`: New LTV in basis points. Must be between 1000 (10%) and 9000 (90%).
+    ///
+    /// # Errors
+    /// - [`Error::NotInitialized`] / [`Error::Unauthorized`]
+    /// - [`Error::InvalidAmount`] if `ltv_bps` is outside 1000–9000.
+    ///
+    /// # Security
+    /// Admin-only. Requires auth from `admin`.
+    pub fn set_ltv(env: Env, admin: Address, ltv_bps: u32) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+
+        if ltv_bps < 1000 || ltv_bps > 9000 {
+            return Err(Error::InvalidAmount);
+        }
+
+        let old_ltv: u32 = env.storage().instance().get(&LTV).unwrap();
+        env.storage().instance().set(&LTV, &ltv_bps);
+
+        env.events().publish(
+            (symbol_short!("Admin"), symbol_short!("LtvUpd")),
+            (old_ltv, ltv_bps),
+        );
+
+        Ok(())
+    }
+
     // ── add_oracle ────────────────────────────────────────────────────────
     pub fn add_oracle(env: Env, admin: Address, oracle: Address) -> Result<(), Error> {
         Self::assert_initialized(&env)?;
