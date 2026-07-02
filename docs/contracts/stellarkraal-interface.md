@@ -3,6 +3,8 @@
 This document describes the public interface for the `StellarKraal` Soroban smart contract in `contracts/stellarkraal/src/lib.rs`.
 It covers contract functions, parameters, return values, error codes, on-chain state changes, and invocation examples using `stellar-cli`.
 
+See also: [DataKey Enum Reference](./datakey-enum.md) — storage key documentation generated from rustdoc comments.
+
 ## Contract Overview
 
 The contract manages livestock-backed loans with the following responsibilities:
@@ -64,6 +66,16 @@ The contract manages livestock-backed loans with the following responsibilities:
   - `new_oracle` — new oracle address.
 - Returns: `Result<(), Error>`.
 - State changes: updates `ORACLE`, emits an oracle update event.
+
+### `set_animal_cap(env, admin, animal_type, max_value)`
+- Description: Set the maximum accepted appraised value for a livestock type.
+- Parameters:
+  - `admin` — admin address.
+  - `animal_type` — short symbol for livestock type.
+  - `max_value` — maximum accepted appraised value in base units.
+- Returns: `Result<(), Error>`.
+- State changes: stores the cap for `animal_type`, emits an admin cap update event.
+- Compatibility: animal types without a configured cap behave as if the cap is `u128::MAX`, so existing deployments remain unrestricted until the admin sets a cap.
 
 ### `set_liquidation_threshold(env, admin, threshold_bps)`
 - Description: Update the liquidation threshold.
@@ -207,10 +219,60 @@ The contract manages livestock-backed loans with the following responsibilities:
 - State changes: updates `ORIG_FEE` and `INT_FEE`.
 
 ### `get_fee_config(env)`
-- Description: Read the current fee configuration.
+- Description: Read the current fee configuration. This is a read-only query that does not modify contract state.
 - Parameters: none.
 - Returns: `Result<FeeConfig, Error>`.
+- Return type fields:
+  - `origination_fee_bps: u32` — origination fee in basis points (e.g. 50 = 0.5%). Deducted from loan disbursement at origination and sent to the treasury.
+  - `interest_fee_bps: u32` — interest fee in basis points (e.g. 1000 = 10%). Applied to the interest portion of repayments and sent to the treasury.
 - State changes: none.
+- Errors: `NotInitialized` if the contract has not been initialized.
+
+### `emergency_withdraw(env, admin, recipient)`
+- Description: Emergency withdrawal of all token reserves held by the contract. Only callable by admin when the contract is paused.
+- Parameters:
+  - `admin` — must match the stored admin address.
+  - `recipient` — address to receive the withdrawn tokens.
+- Returns: `Result<(), Error>`.
+- State changes: transfers entire token balance to `recipient`, emits an `emergency` event with the recipient address and withdrawn amount.
+- Errors:
+  - `NotInitialized` if the contract has not been initialized.
+  - `Unauthorized` if the caller is not admin.
+  - `NotPaused` if the contract is not currently paused.
+
+### `set_ltv(env, admin, ltv_bps)`
+- Description: Update the loan-to-value ratio used for new loan requests.
+- Parameters:
+  - `admin` — must match the stored admin address.
+  - `ltv_bps` — new LTV in basis points. Must be between 1000 (10%) and 9000 (90%).
+- Returns: `Result<(), Error>`.
+- State changes: updates `LTV`, emits an `(Admin, LtvUpd)` event with old and new values.
+- Errors:
+  - `NotInitialized` if the contract has not been initialized.
+  - `Unauthorized` if the caller is not admin.
+  - `InvalidAmount` if `ltv_bps` is outside the 1000–9000 range.
+
+### `get_state(env, admin)`
+- Description: Return an admin-only operational summary of key contract state.
+- Parameters:
+  - `admin` — admin address.
+- Returns: `Result<ContractState, Error>`.
+- State changes: none.
+- Security: requires authorization from the stored admin address.
+- Return type:
+
+```rust
+pub struct ContractState {
+    pub admin: Address,
+    pub token: Address,
+    pub ltv_bps: u32,
+    pub liq_threshold_bps: u32,
+    pub is_paused: bool,
+    pub oracle_count: u32,
+    pub total_loans: u64,
+    pub total_collaterals: u64,
+}
+```
 
 ### `set_interest_rate_model(env, admin, base_rate_bps, slope1_bps, slope2_bps, kink_bps)`
 - Description: Update the jump-rate interest model.
@@ -344,8 +406,10 @@ The contract manages livestock-backed loans with the following responsibilities:
 | 17 | `PriceBelowMin` | Oracle price below configured minimum. |
 | 18 | `PriceAboveMax` | Oracle price above configured maximum. |
 | 19 | `PriceStale` | Submitted price is too old. |
-| 20 | `PriceDeviationExceeded` | Price change exceeds allowed deviation. |
-| 20 | `LiquidatorNotWhitelisted` | Caller is not on the approved liquidator whitelist. |
+| 20 | `AlreadyInProgress` | Reentrancy guard prevented nested execution. |
+| 21 | `AlreadyPaused` | Contract is already paused. |
+| 22 | `ArithmeticOverflow` | Arithmetic overflow detected. |
+| 23 | `LiquidatorNotWhitelisted` | Caller is not on the approved liquidator whitelist. |
 
 ## On-Chain State
 
@@ -353,6 +417,7 @@ Key contract storage state used by the interface:
 
 - `ADMIN`, `PENDING_ADMIN` — admin authority and pending admin transfer.
 - `ORACLE` — authorized oracle address.
+- `AnimalCap(animal_type)` — optional per-animal-type maximum appraised value.
 - `TOKEN`, `TREASURY` — token and treasury addresses.
 - `LTV`, `LIQ_THR`, `ORIG_FEE`, `INT_FEE`, `CLOSE_FACTOR` — protocol parameters.
 - `PAUSED`, `PAUSE_EXP`, `PAUSE_DUR` — pause control state.

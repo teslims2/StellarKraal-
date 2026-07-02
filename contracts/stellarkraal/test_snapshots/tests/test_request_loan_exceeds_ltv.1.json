@@ -134,7 +134,14 @@
                         "symbol": "appraisal_history"
                       },
                       "val": {
-                        "vec": []
+                        "vec": [
+                          {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 1000000
+                            }
+                          }
+                        ]
                       }
                     },
                     {

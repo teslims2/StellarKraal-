@@ -200,7 +200,14 @@
                         "symbol": "appraisal_history"
                       },
                       "val": {
-                        "vec": []
+                        "vec": [
+                          {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 600000
+                            }
+                          }
+                        ]
                       }
                     },
                     {
@@ -297,7 +304,14 @@
                         "symbol": "appraisal_history"
                       },
                       "val": {
-                        "vec": []
+                        "vec": [
+                          {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 400000
+                            }
+                          }
+                        ]
                       }
                     },
                     {
@@ -410,6 +424,25 @@
                       },
                       "val": {
                         "u64": 1
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "interest_accrued"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 0
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "last_interest_time"
+                      },
+                      "val": {
+                        "u64": 0
                       }
                     },
                     {
@@ -1551,7 +1584,14 @@
                         "symbol": "appraisal_history"
                       },
                       "val": {
-                        "vec": []
+                        "vec": [
+                          {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 600000
+                            }
+                          }
+                        ]
                       }
                     },
                     {
@@ -1606,7 +1646,14 @@
                         "symbol": "appraisal_history"
                       },
                       "val": {
-                        "vec": []
+                        "vec": [
+                          {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 400000
+                            }
+                          }
+                        ]
                       }
                     },
                     {
