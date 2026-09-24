@@ -10,6 +10,7 @@
  *
  * Access tokens expire in ACCESS_TTL_MS (default 15 min).
  * Refresh tokens expire in REFRESH_TTL_MS (default 7 days) and are stored as SHA-256 hashes.
+ * Revoked/rotated tokens are stored in a blocklist to prevent reuse attacks.
  * All POST/PUT/DELETE routes (except auth endpoints) require a valid JWT.
  */
 import { Request, Response, NextFunction, Router } from 'express';
@@ -17,6 +18,8 @@ import { createHmac, createHash, randomBytes } from 'crypto';
 import { Keypair } from '@stellar/stellar-sdk';
 import { config } from '../config';
 import { getProfile, updateProfile } from '../db/store';
+import { hashRefreshToken, revokeToken, isTokenBlocked } from '../utils/tokenBlocklist';
+import logger from '../utils/logger';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -62,11 +65,6 @@ const refreshTokens = new Map<string, { publicKey: string; exp: number }>();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** SHA-256 hash of a raw token string (stored in DB, never the raw token). */
-function hashToken(raw: string): string {
-  return createHash('sha256').update(raw).digest('hex');
-}
-
 /**
  * Issue a new access token and rotate the refresh token.
  * Stores only the hash of the refresh token.
@@ -77,7 +75,7 @@ function issueTokens(publicKey: string): { accessToken: string; rawRefresh: stri
   const now = Date.now();
   const accessToken = signJwt({ sub: publicKey, iat: Math.floor(now / 1000), exp: Math.floor((now + ACCESS_TTL_MS) / 1000) });
   const rawRefresh = randomBytes(32).toString('hex');
-  refreshTokens.set(hashToken(rawRefresh), { publicKey, exp: now + REFRESH_TTL_MS });
+  refreshTokens.set(hashRefreshToken(rawRefresh), { publicKey, exp: now + REFRESH_TTL_MS });
   return { accessToken, rawRefresh, expiresIn: ACCESS_TTL_MS / 1000 };
 }
 
@@ -240,7 +238,7 @@ authRouter.post('/login', (req: Request, res: Response) => {
  *     tags:
  *       - auth
  *     summary: Rotate refresh token
- *     description: Reads the refresh token from the refreshToken httpOnly cookie, validates it, and issues a new access token and rotated cookie.
+ *     description: Reads the refresh token from the refreshToken httpOnly cookie, validates it, and issues a new access token and rotated cookie. Old token is added to blocklist to prevent reuse attacks.
  *     operationId: refreshToken
  *     security: []
  *     responses:
@@ -274,17 +272,35 @@ authRouter.post('/refresh', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'MISSING_TOKEN', message: 'Refresh token cookie is required' });
   }
 
-  const tokenHash = hashToken(rawToken);
+  const tokenHash = hashRefreshToken(rawToken);
+
+  // Check if token is in blocklist (revoked/rotated)
+  if (isTokenBlocked(tokenHash)) {
+    logger.warn('Refresh token reuse attempt blocked', {
+      tokenHash: tokenHash.slice(0, 8) + '...',
+      ip: req.ip,
+    });
+    return res.status(401).json({ error: 'INVALID_TOKEN', message: 'Refresh token has been revoked' });
+  }
+
   const entry = refreshTokens.get(tokenHash);
 
   if (!entry || Date.now() > entry.exp) {
     return res.status(401).json({ error: 'INVALID_TOKEN', message: 'Refresh token is invalid or expired' });
   }
 
-  // Rotate: invalidate old token hash, issue new pair
+  // Rotate: invalidate old token by adding to blocklist, issue new pair
+  revokeToken(tokenHash, 'rotated');
   refreshTokens.delete(tokenHash);
+  
   const { accessToken, rawRefresh, expiresIn } = issueTokens(entry.publicKey);
   setRefreshCookie(res, rawRefresh);
+  
+  logger.info('Refresh token rotated successfully', {
+    publicKey: entry.publicKey,
+    oldTokenHash: tokenHash.slice(0, 8) + '...',
+  });
+  
   res.json({ accessToken, expiresIn });
 });
 
