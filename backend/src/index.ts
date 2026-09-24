@@ -95,7 +95,8 @@ import { compressionMiddleware } from './middleware/compression';
 import { apiKeyRouter } from './middleware/apiKey';
 import { deduplicationMiddleware } from './middleware/deduplication';
 import { v2Router } from './routes/v2';
-import { httpActiveConnections, httpRequestDurationSeconds, httpRequestsTotal } from './metrics';
+import { createGraphQLMiddleware } from './graphql/server';
+import { registry, httpActiveConnections, httpRequestDurationSeconds, httpRequestsTotal } from './metrics';
 import { fireAlert } from './utils/alerting';
 import { rules } from './utils/alertRules';
 import { healthRouter } from './routes/health';
@@ -166,6 +167,27 @@ app.get('/api/health', async (_req: Request, res: Response) => {
  */
 app.use('/api/v1/health', healthRouter);
 
+// ── Prometheus metrics endpoint ───────────────────────────────────────────────
+/**
+ * GET /metrics
+ *
+ * Exposes Prometheus-format metrics for scraping.
+ * Includes default Node.js metrics (memory, CPU, event loop lag) plus
+ * application-specific counters and histograms (HTTP requests, duration,
+ * DB pool acquired/available/wait).
+ *
+ * Intentionally unauthenticated — metrics should be restricted at the
+ * network/ingress layer (e.g., only accessible from the Prometheus scrape subnet).
+ */
+app.get('/metrics', async (_req: Request, res: Response) => {
+  try {
+    res.set('Content-Type', registry.contentType);
+    res.end(await registry.metrics());
+  } catch (err) {
+    res.status(500).end(String(err));
+  }
+});
+
 // Add API-Version: 1 header to all v1 responses
 app.use('/api/v1', (_req: Request, res: Response, next: NextFunction) => {
   res.setHeader('API-Version', '1');
@@ -233,6 +255,35 @@ app.use(deduplicationMiddleware);
 
 // ── API v2 stub ───────────────────────────────────────────────────────────────
 app.use('/api/v2', v2Router);
+
+// ── GraphQL endpoint (ADR-009 proof-of-concept) ───────────────────────────────
+/**
+ * POST /graphql
+ *
+ * Apollo Server v4 GraphQL endpoint exposing Query { loans, collateral } and
+ * Mutation { requestLoan, repayLoan } backed by the existing service layer.
+ *
+ * Apollo Sandbox (interactive explorer) is available in non-production at /graphql.
+ *
+ * The endpoint is intentionally unauthenticated for the PoC; add jwtMiddleware
+ * to the handler array when authentication is required.
+ */
+let apolloServer: import('@apollo/server').ApolloServer | undefined;
+
+(async () => {
+  try {
+    const { middleware, server } = await createGraphQLMiddleware();
+    apolloServer = server;
+    // Apollo Server 4 / expressMiddleware requires JSON body parsing before the handler.
+    // Cast to any to work around Express 5 generic overload resolution.
+    app.use('/graphql', express.json(), middleware as any);
+    logger.info('GraphQL endpoint mounted at /graphql');
+  } catch (err) {
+    logger.error('Failed to start Apollo Server', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+})();
 
 // ── API key routes ────────────────────────────────────────────────────────────
 app.use('/api/v1/admin/api-keys', apiKeyRouter);
@@ -1951,6 +2002,12 @@ async function gracefulShutdown(signal: string): Promise<void> {
     // Close database connections
     pool.close();
     logger.info('Database connection pool closed');
+
+    // Stop Apollo GraphQL server
+    if (apolloServer) {
+      await apolloServer.stop();
+      logger.info('Apollo GraphQL server stopped');
+    }
 
     healthFactorTask.stop();
     logger.info('Health factor job stopped');
