@@ -57,6 +57,9 @@ import {
 import logger, { createRequestLogger } from './utils/logger';
 import { pool, PoolExhaustedError } from './utils/connectionPool';
 import { auditMiddleware, redact, auditLogger } from './middleware/audit';
+import { gracefulShutdown, registerSignalHandlers } from './utils/gracefulShutdown';
+import { requestDrainingMiddleware } from './middleware/requestDraining';
+import { shutdownGuardMiddleware } from './middleware/shutdownGuard';
 import { authRouter, jwtMiddleware } from './middleware/auth';
 import { timeoutMiddleware } from './middleware/timeout';
 import {
@@ -134,6 +137,12 @@ app.use(corsMiddleware);
 app.use(express.json());
 app.use(compressionMiddleware);
 
+// Request draining middleware - track in-flight requests for graceful shutdown
+app.use(requestDrainingMiddleware);
+
+// Shutdown guard middleware - reject new requests during graceful shutdown
+app.use(shutdownGuardMiddleware);
+
 // ── Health check — excluded from rate limiting and JWT ────────────────────────
 // GET /api/health
 app.get('/api/health', async (_req: Request, res: Response) => {
@@ -185,19 +194,6 @@ app.use(globalLimiter);
 app.use(timeoutMiddleware(parseInt(config.TIMEOUT_GLOBAL_MS, 10)));
 app.use(loggingMiddleware);
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
-
-// Shutdown middleware - reject new requests during graceful shutdown
-let isShuttingDown = false;
-app.use((req: Request, res: Response, next: NextFunction) => {
-  if (isShuttingDown) {
-    res.setHeader('Connection', 'close');
-    return res.status(503).json({
-      error: 'Server is shutting down',
-      message: 'Please retry your request',
-    });
-  }
-  next();
-});
 
 // Request logging middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -1908,84 +1904,13 @@ scheduleRepaymentReminderJob();
 
 const SHUTDOWN_TIMEOUT_MS = parseInt(config.SHUTDOWN_TIMEOUT_MS, 10);
 
-async function gracefulShutdown(signal: string): Promise<void> {
-  if (isShuttingDown) {
-    logger.warn('Shutdown already in progress, ignoring signal', { signal });
-    return;
-  }
-
-  isShuttingDown = true;
-  logger.info(`Received ${signal}, starting graceful shutdown...`, { signal });
-
-  // Stop accepting new connections
-  httpServer.close(() => {
-    logger.info('HTTP server closed, no longer accepting connections');
-  });
-
-  // Set a timeout to force shutdown if graceful shutdown takes too long
-  const forceShutdownTimer = setTimeout(() => {
-    logger.error('Graceful shutdown timeout exceeded, forcing exit', {
-      timeoutMs: SHUTDOWN_TIMEOUT_MS,
-    });
-    process.exit(1);
-  }, SHUTDOWN_TIMEOUT_MS);
-
-  try {
-    // Wait for in-flight requests to complete
-    await new Promise<void>((resolve) => {
-      const checkInterval = setInterval(() => {
-        const stats = pool.stats();
-        if (stats.inUse === 0) {
-          clearInterval(checkInterval);
-          resolve();
-        } else {
-          logger.info('Waiting for in-flight requests to complete', {
-            inUse: stats.inUse,
-          });
-        }
-      }, 1000);
-    });
-
-    logger.info('All in-flight requests completed');
-
-    // Close database connections
-    pool.close();
-    logger.info('Database connection pool closed');
-
-    healthFactorTask.stop();
-    logger.info('Health factor job stopped');
-
-    clearTimeout(forceShutdownTimer);
-    logger.info('Graceful shutdown complete');
-    process.exit(0);
-  } catch (error) {
-    logger.error('Error during graceful shutdown', {
-      error: (error as Error).message,
-    });
-    clearTimeout(forceShutdownTimer);
-    process.exit(1);
-  }
-}
-
-// Register signal handlers
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-// Handle uncaught errors
-process.on('uncaughtException', (error: Error) => {
-  logger.error('Uncaught exception', {
-    error: error.message,
-    stack: error.stack,
-  });
-  gracefulShutdown('uncaughtException');
+// Create HTTP server for graceful shutdown reference
+const httpServer = app.listen(parseInt(config.PORT, 10), () => {
+  logger.info(`Server started on port ${config.PORT}`);
 });
 
-process.on('unhandledRejection', (reason: unknown) => {
-  logger.error('Unhandled promise rejection', {
-    reason: reason instanceof Error ? reason.message : String(reason),
-  });
-  gracefulShutdown('unhandledRejection');
-});
+// Register signal handlers for graceful shutdown
+registerSignalHandlers(httpServer, SHUTDOWN_TIMEOUT_MS, undefined, healthFactorTask);
 
 // Redirect unversioned routes to v1 with deprecation warning
 app.use('/api', (req: Request, res: Response, next: NextFunction) => {
@@ -2008,8 +1933,3 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
 });
 
 export default app;
-
-// Create HTTP server for graceful shutdown reference
-const httpServer = app.listen(parseInt(config.PORT, 10), () => {
-  logger.info(`Server started on port ${config.PORT}`);
-});
