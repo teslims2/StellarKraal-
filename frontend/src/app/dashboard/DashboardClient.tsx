@@ -17,6 +17,9 @@ import { useOnboarding } from "@/hooks/useOnboarding";
 import { Hero } from "@/components/Hero";
 import { useToast } from "@/components/toast";
 import { fetchWithRetry } from "@/lib/fetchWithRetry";
+import { useLoans } from "@/hooks/useLoans";
+import { useLiquidationWarning } from "@/hooks/useLiquidationWarning";
+import RiskAlertBanner from "@/components/RiskAlertBanner";
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -68,12 +71,27 @@ const RepayPanel = dynamic(() => import("@/components/RepayPanel"), {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+type TabName = "overview" | "loans" | "collateral" | "transactions";
+type LoanWithHealth = {
+  id: string;
+  health_factor?: number | null;
+  status?: string;
+};
+
+const TABS: { id: TabName; label: string }[] = [
+  { id: "overview", label: "Overview" },
+  { id: "loans", label: "Loans" },
+  { id: "collateral", label: "Collateral" },
+  { id: "transactions", label: "Transactions" },
+];
+
 export default function DashboardClient() {
   const router = useRouter();
   const toast = useToast();
   const [wallet, setWallet] = useState<string | null>(null);
   const [loanId, setLoanId] = useState("");
   const [activeTab, setActiveTab] = useState<TabName>("overview");
+  const [helpOpen, setHelpOpen] = useState(false);
   const { showOnboarding, openOnboarding, closeOnboarding } = useOnboarding();
   const { healthFactor, loading: isHealthLoading, refresh: refreshHealth } = useHealthFactor(loanId);
   
@@ -169,7 +187,11 @@ export default function DashboardClient() {
       <Hero className="py-10 mb-6">
         <div className="flex items-center justify-between px-4">
           <h1 className="text-3xl font-bold text-brown">Dashboard</h1>
-          <HelpMenu onShowOnboarding={openOnboarding} />
+          <HelpMenu
+            onShowOnboarding={openOnboarding}
+            isOpen={helpOpen}
+            onClose={() => setHelpOpen(false)}
+          />
         </div>
       </Hero>
       <div className="px-4">
@@ -178,6 +200,7 @@ export default function DashboardClient() {
       </div>
       {wallet && (
         <>
+          <RiskAlertBanner loans={loans as unknown as LoanWithHealth[]} />
           <OnboardingChecklist
             hasWallet={!!wallet}
             hasCollateral={hasCollateral}
@@ -198,7 +221,7 @@ export default function DashboardClient() {
           </div>
           <div className="border-b border-brown/20 mb-6">
             <div className="flex gap-4" role="tablist" aria-label="Dashboard views">
-              {tabs.map((tab, index) => (
+              {TABS.map((tab, index) => (
                 <button
                   key={tab.id}
                   role="tab"
