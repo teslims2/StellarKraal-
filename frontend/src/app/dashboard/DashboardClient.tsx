@@ -17,6 +17,9 @@ import { useOnboarding } from "@/hooks/useOnboarding";
 import { Hero } from "@/components/Hero";
 import { useToast } from "@/components/toast";
 import { fetchWithRetry } from "@/lib/fetchWithRetry";
+import { useLoans } from "@/hooks/useLoans";
+import { useLiquidationWarning } from "@/hooks/useLiquidationWarning";
+import LoanPortfolioSummary from "@/components/LoanPortfolioSummary";
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -44,29 +47,19 @@ const RepayPanel = dynamic(() => import("@/components/RepayPanel"), {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── Lazy-loaded heavy components ─────────────────────────────────────────────
-// Using next/dynamic with ssr:false prevents hydration mismatches for
-// canvas/SVG-heavy components. Skeleton fallbacks maintain layout stability.
+type TabName = "overview" | "loans" | "collateral" | "transactions";
+type LoanWithHealth = {
+  id: string;
+  health_factor?: number | null;
+  status?: string;
+};
 
-const HealthGauge = dynamic(() => import("@/components/HealthGauge"), {
-  ssr: false,
-  loading: () => <SkeletonHealthDashboard />,
-});
-
-const LoanRepaymentCalculator = dynamic(
-  () => import("@/components/LoanRepaymentCalculator"),
-  {
-    ssr: false,
-    loading: () => <SkeletonLoanCard />,
-  },
-);
-
-const RepayPanel = dynamic(() => import("@/components/RepayPanel"), {
-  ssr: false,
-  loading: () => <SkeletonLoanCard />,
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
+const TABS: { id: TabName; label: string }[] = [
+  { id: "overview", label: "Overview" },
+  { id: "loans", label: "Loans" },
+  { id: "collateral", label: "Collateral" },
+  { id: "transactions", label: "Transactions" },
+];
 
 export default function DashboardClient() {
   const router = useRouter();
@@ -74,6 +67,7 @@ export default function DashboardClient() {
   const [wallet, setWallet] = useState<string | null>(null);
   const [loanId, setLoanId] = useState("");
   const [activeTab, setActiveTab] = useState<TabName>("overview");
+  const [helpOpen, setHelpOpen] = useState(false);
   const { showOnboarding, openOnboarding, closeOnboarding } = useOnboarding();
   const { healthFactor, loading: isHealthLoading, refresh: refreshHealth } = useHealthFactor(loanId);
   
@@ -169,7 +163,11 @@ export default function DashboardClient() {
       <Hero className="py-10 mb-6">
         <div className="flex items-center justify-between px-4">
           <h1 className="text-3xl font-bold text-brown">Dashboard</h1>
-          <HelpMenu onShowOnboarding={openOnboarding} />
+          <HelpMenu
+            onShowOnboarding={openOnboarding}
+            isOpen={helpOpen}
+            onClose={() => setHelpOpen(false)}
+          />
         </div>
       </Hero>
       <div className="px-4">
@@ -178,6 +176,7 @@ export default function DashboardClient() {
       </div>
       {wallet && (
         <>
+          <LoanPortfolioSummary loans={loans} />
           <OnboardingChecklist
             hasWallet={!!wallet}
             hasCollateral={hasCollateral}
@@ -198,7 +197,7 @@ export default function DashboardClient() {
           </div>
           <div className="border-b border-brown/20 mb-6">
             <div className="flex gap-4" role="tablist" aria-label="Dashboard views">
-              {tabs.map((tab, index) => (
+              {TABS.map((tab, index) => (
                 <button
                   key={tab.id}
                   role="tab"
