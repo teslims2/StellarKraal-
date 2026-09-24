@@ -60,3 +60,38 @@ export const dbPoolWaitMs = new Histogram({
   buckets: [0, 1, 5, 10, 25, 50, 100, 250, 500],
   registers: [registry],
 });
+
+// ── Loan Lifecycle Metrics ────────────────────────────────────────────────────
+
+/**
+ * Total number of loans created.
+ * Labels: collateral_type (animal type), status (initial status)
+ */
+export const loanCreatedTotal = new Counter({
+  name: "loan_created_total",
+  help: "Total number of loans created",
+  labelNames: ["collateral_type", "status"] as const,
+  registers: [registry],
+});
+
+/**
+ * Total amount of loans repaid (in stroops).
+ * Labels: collateral_type (animal type), status (after repayment)
+ */
+export const loanRepaidTotal = new Counter({
+  name: "loan_repaid_total",
+  help: "Total amount of loans repaid in stroops",
+  labelNames: ["collateral_type", "status"] as const,
+  registers: [registry],
+});
+
+/**
+ * Total number of loans liquidated.
+ * Labels: collateral_type (animal type), status (liquidated)
+ */
+export const loanLiquidatedTotal = new Counter({
+  name: "loan_liquidated_total",
+  help: "Total number of loans liquidated",
+  labelNames: ["collateral_type", "status"] as const,
+  registers: [registry],
+});
