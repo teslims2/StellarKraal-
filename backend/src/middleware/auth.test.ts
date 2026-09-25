@@ -169,6 +169,38 @@ describe("JWT Authentication", () => {
       expect(res.status).toBe(401);
       expect(res.body.error).toBe("INVALID_TOKEN");
     });
+
+    it("returns message 'Refresh token has been revoked' on blocklisted token", async () => {
+      const { refreshCookie } = await login(kp);
+      const cv = refreshCookie.split(";")[0];
+      
+      // First rotation succeeds
+      const firstRotation = await request(app).post("/api/auth/refresh").set("Cookie", cv);
+      expect(firstRotation.status).toBe(200);
+      
+      // Second attempt with same old token should be blocked with revocation message
+      const secondAttempt = await request(app).post("/api/auth/refresh").set("Cookie", cv);
+      expect(secondAttempt.status).toBe(401);
+      expect(secondAttempt.body.message).toContain("revoked");
+    });
+
+    it("issued tokens are independent after rotation", async () => {
+      const { refreshCookie: cookie1 } = await login(kp);
+      const cv1 = cookie1.split(";")[0];
+      
+      // First rotation
+      const res1 = await request(app).post("/api/auth/refresh").set("Cookie", cv1);
+      const cookie2 = (res1.headers["set-cookie"] as unknown as string[])?.[0];
+      const cv2 = cookie2.split(";")[0];
+      
+      // Second rotation with new token succeeds
+      const res2 = await request(app).post("/api/auth/refresh").set("Cookie", cv2);
+      expect(res2.status).toBe(200);
+      
+      // Old token should still be rejected
+      const res3 = await request(app).post("/api/auth/refresh").set("Cookie", cv1);
+      expect(res3.status).toBe(401);
+    });
   });
 
   describe("JWT middleware", () => {

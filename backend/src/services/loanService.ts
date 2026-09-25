@@ -23,6 +23,7 @@ import {
 import { fireWebhooks } from "../webhooks";
 import { buildContractTx, CONTRACT_ID, NETWORK_PASSPHRASE } from "./contractTx";
 import rpcClient from "../utils/rpcClient";
+import { loanCreatedTotal, loanRepaidTotal, loanLiquidatedTotal } from "../metrics";
 
 const SCALE = 10_000;
 const SIMULATION_ACCOUNT = "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6";
@@ -157,6 +158,7 @@ export class InvalidPaginationError extends Error {
 
 /**
  * Builds a `request_loan` contract transaction and fires approval webhooks.
+ * Increments the loan_created_total metric.
  *
  * @param input - Validated loan request payload (see {@link loanRequestSchema}).
  * @returns Unsigned XDR transaction envelope for client-side signing.
@@ -164,6 +166,11 @@ export class InvalidPaginationError extends Error {
  */
 export async function requestLoan(input: LoanRequestInput): Promise<{ xdr: string }> {
   const { borrower, collateral_ids, amount, min_disbursement } = input;
+  
+  // Get collateral info for metric labels
+  const collateral = collateral_ids.length > 0 ? getCollateral(String(collateral_ids[0])) : null;
+  const collateralType = collateral?.animal_type ?? "unknown";
+  
   const idsScVal = xdr.ScVal.scvVec(
     collateral_ids.map((id) => nativeToScVal(BigInt(id), { type: "u64" }))
   );
@@ -177,12 +184,17 @@ export async function requestLoan(input: LoanRequestInput): Promise<{ xdr: strin
     nativeToScVal(BigInt(amount), { type: "i128" }),
     minDisbursementScVal,
   ]);
+  
+  // Increment metric
+  loanCreatedTotal.inc({ collateral_type: collateralType, status: "active" });
+  
   fireWebhooks("loan.approved", { borrower, collateral_ids, amount });
   return { xdr: xdrTx };
 }
 
 /**
  * Builds a `repay_loan` contract transaction and fires repayment webhooks.
+ * Increments the loan_repaid_total metric with the repayment amount.
  *
  * @param input - Validated loan repayment payload (see {@link loanRepaySchema}).
  * @returns Unsigned XDR transaction envelope for client-side signing.
@@ -190,11 +202,22 @@ export async function requestLoan(input: LoanRequestInput): Promise<{ xdr: strin
  */
 export async function repayLoan(input: LoanRepayInput): Promise<{ xdr: string }> {
   const { borrower, loan_id, amount } = input;
+  
+  // Get loan and collateral info for metric labels
+  const loan = getLoan(String(loan_id));
+  const collateral = loan ? getCollateral(loan.collateral_id) : null;
+  const collateralType = collateral?.animal_type ?? "unknown";
+  const status = loan?.status ?? "unknown";
+  
   const xdrTx = await buildContractTx(borrower, "repay_loan", [
     new Address(borrower).toScVal(),
     nativeToScVal(BigInt(loan_id), { type: "u64" }),
     nativeToScVal(BigInt(amount), { type: "i128" }),
   ]);
+  
+  // Increment metric with repayment amount
+  loanRepaidTotal.inc({ collateral_type: collateralType, status }, amount);
+  
   fireWebhooks("loan.repaid", { borrower, loan_id, amount });
   return { xdr: xdrTx };
 }
@@ -202,6 +225,7 @@ export async function repayLoan(input: LoanRepayInput): Promise<{ xdr: string }>
 /**
  * Validates liquidation eligibility, builds the on-chain `liquidate` transaction,
  * updates local state, and fires liquidation webhooks.
+ * Increments the loan_liquidated_total metric.
  *
  * Health factor is computed off-chain as:
  * `(collateral_value × 8000) / (loan_amount × SCALE)`.
@@ -254,6 +278,10 @@ export async function liquidateLoan(input: LoanLiquidateInput) {
     loanId: loan.id,
     collateralId: loan.collateral_id,
   });
+
+  // Increment metric
+  const collateralType = collateral?.animal_type ?? "unknown";
+  loanLiquidatedTotal.inc({ collateral_type: collateralType, status: "liquidated" });
 
   fireWebhooks("loan.liquidated", { liquidator, loan_id, repay_amount });
   return { xdr: xdrTx, loan: updatedLoan };

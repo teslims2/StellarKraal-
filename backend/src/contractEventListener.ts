@@ -25,7 +25,7 @@
 import { rpc as SorobanRpc, xdr, Address } from "@stellar/stellar-sdk";
 import { z } from "zod";
 import logger from "./utils/logger";
-import { insertCollateral, insertLoan, updateTransaction, updateLoan, insertLiquidationEvent } from "./db/store";
+import { insertCollateral, insertLoan, updateTransaction, updateLoan, insertLiquidationEvent, getLedgerCursor, setLedgerCursor } from "./db/store";
 
 const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
 const getContractId = () => process.env.CONTRACT_ID || "";
@@ -140,7 +140,9 @@ function handleEvent(event: SorobanRpc.Api.RawEventResponse): void {
     if (event.type !== "contract") return;
 
     const rawTopics = event.topic ?? [];
-    const topics = rawTopics.map((t) => xdr.ScVal.fromXDR(t, "base64"));
+    // Cast to any to call the XDR accessor methods (.sym, .vec, etc.) which are
+    // not exposed on the base ScVal union type in the current SDK typings.
+    const topics = rawTopics.map((t) => xdr.ScVal.fromXDR(t, "base64") as any);
     if (topics.length < 2) return;
 
     const ns = topics[0].sym?.().toString();
@@ -155,7 +157,7 @@ function handleEvent(event: SorobanRpc.Api.RawEventResponse): void {
       // topics: [symbol("collateral_registered"), owner]
       // data: (id, animal_type, count, appraised_value)
       const owner = (() => { try { return Address.fromScVal(topics[1]).toString(); } catch { return ""; } })();
-      const vals = xdr.ScVal.fromXDR(event.value, "base64").vec?.() ?? [];
+      const vals = ((xdr.ScVal.fromXDR(event.value, "base64") as any).vec?.() ?? []) as any[];
       if (vals.length < 4) return;
       const id = vals[0].u64?.().toString() ?? "";
       const animal_type = vals[1].sym?.().toString() ?? "";
@@ -169,7 +171,7 @@ function handleEvent(event: SorobanRpc.Api.RawEventResponse): void {
       });
     } else if (key === "loan/requested") {
       // data: (loan_id, borrower, amount, disbursement, total_collateral_value)
-      const vals = xdr.ScVal.fromXDR(event.value, "base64").vec?.() ?? [];
+      const vals = ((xdr.ScVal.fromXDR(event.value, "base64") as any).vec?.() ?? []) as any[];
       if (vals.length < 3) return;
       const id = vals[0].u64?.().toString() ?? "";
       const borrower = (() => { try { return Address.fromScVal(vals[1]).toString(); } catch { return ""; } })();
@@ -182,7 +184,7 @@ function handleEvent(event: SorobanRpc.Api.RawEventResponse): void {
       });
     } else if (key === "loan_repaid") {
       // data: (loan_id, principal_paid, interest_paid, remaining_balance)
-      const vals = xdr.ScVal.fromXDR(event.value, "base64").vec?.() ?? [];
+      const vals = ((xdr.ScVal.fromXDR(event.value, "base64") as any).vec?.() ?? []) as any[];
       if (vals.length < 4) return;
       const id = vals[0].u64?.().toString() ?? "";
       const principalPaid = Number(vals[1].i128?.().lo ?? 0);
@@ -192,7 +194,7 @@ function handleEvent(event: SorobanRpc.Api.RawEventResponse): void {
       logEvent("contract.event.loan_repaid_synced", event, { id, repayAmount, principalPaid, interestPaid });
     } else if (key === "loan/liquidated") {
       // data: (loan_id, liquidator, repay_amount, outstanding, status)
-      const vals = xdr.ScVal.fromXDR(event.value, "base64").vec?.() ?? [];
+      const vals = ((xdr.ScVal.fromXDR(event.value, "base64") as any).vec?.() ?? []) as any[];
       if (vals.length < 3) return;
       const id = vals[0].u64?.().toString() ?? "";
       const liquidator = (() => { try { return Address.fromScVal(vals[1]).toString(); } catch { return ""; } })();
@@ -238,6 +240,11 @@ async function poll(): Promise<void> {
         lastLedger = event.ledger;
       }
     }
+
+    // Persist cursor so restarts can replay from this point
+    if (response.events.length > 0) {
+      setLedgerCursor(contractId, lastLedger);
+    }
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
     const stubEvent = { ledger: lastLedger } as SorobanRpc.Api.RawEventResponse;
@@ -247,6 +254,11 @@ async function poll(): Promise<void> {
 
 /**
  * Start the contract event listener polling loop.
+ *
+ * On startup the last persisted ledger cursor is loaded from the store so that
+ * any events emitted while the listener was offline are replayed before
+ * resuming normal polling.
+ *
  * @param intervalMs - Polling interval in milliseconds (default: POLL_INTERVAL_MS env var or 5000)
  */
 export function startEventListener(intervalMs = POLL_INTERVAL_MS): void {
@@ -262,6 +274,21 @@ export function startEventListener(intervalMs = POLL_INTERVAL_MS): void {
     });
     return;
   }
+
+  // Restore cursor from persistent store to replay missed events on restart
+  const persistedLedger = getLedgerCursor(contractId);
+  if (persistedLedger > lastLedger) {
+    lastLedger = persistedLedger;
+    logger.info("event_listener_cursor_restored", {
+      timestamp: new Date().toISOString(),
+      eventType: "contract.event.cursor_restored",
+      contractId,
+      ledger: lastLedger,
+      correlationId: "listener-bootstrap",
+      context: { restoredFromLedger: persistedLedger },
+    });
+  }
+
   logger.info("event_listener_started", {
     timestamp: new Date().toISOString(),
     eventType: "contract.event.listener_started",

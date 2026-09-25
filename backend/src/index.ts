@@ -98,7 +98,8 @@ import { compressionMiddleware } from './middleware/compression';
 import { apiKeyRouter } from './middleware/apiKey';
 import { deduplicationMiddleware } from './middleware/deduplication';
 import { v2Router } from './routes/v2';
-import { httpActiveConnections, httpRequestDurationSeconds, httpRequestsTotal } from './metrics';
+import { createGraphQLMiddleware } from './graphql/server';
+import { registry, httpActiveConnections, httpRequestDurationSeconds, httpRequestsTotal } from './metrics';
 import { fireAlert } from './utils/alerting';
 import { rules } from './utils/alertRules';
 import { healthRouter } from './routes/health';
@@ -175,6 +176,27 @@ app.get('/api/health', async (_req: Request, res: Response) => {
  */
 app.use('/api/v1/health', healthRouter);
 
+// ── Prometheus metrics endpoint ───────────────────────────────────────────────
+/**
+ * GET /metrics
+ *
+ * Exposes Prometheus-format metrics for scraping.
+ * Includes default Node.js metrics (memory, CPU, event loop lag) plus
+ * application-specific counters and histograms (HTTP requests, duration,
+ * DB pool acquired/available/wait).
+ *
+ * Intentionally unauthenticated — metrics should be restricted at the
+ * network/ingress layer (e.g., only accessible from the Prometheus scrape subnet).
+ */
+app.get('/metrics', async (_req: Request, res: Response) => {
+  try {
+    res.set('Content-Type', registry.contentType);
+    res.end(await registry.metrics());
+  } catch (err) {
+    res.status(500).end(String(err));
+  }
+});
+
 // Add API-Version: 1 header to all v1 responses
 app.use('/api/v1', (_req: Request, res: Response, next: NextFunction) => {
   res.setHeader('API-Version', '1');
@@ -229,6 +251,35 @@ app.use(deduplicationMiddleware);
 
 // ── API v2 stub ───────────────────────────────────────────────────────────────
 app.use('/api/v2', v2Router);
+
+// ── GraphQL endpoint (ADR-009 proof-of-concept) ───────────────────────────────
+/**
+ * POST /graphql
+ *
+ * Apollo Server v4 GraphQL endpoint exposing Query { loans, collateral } and
+ * Mutation { requestLoan, repayLoan } backed by the existing service layer.
+ *
+ * Apollo Sandbox (interactive explorer) is available in non-production at /graphql.
+ *
+ * The endpoint is intentionally unauthenticated for the PoC; add jwtMiddleware
+ * to the handler array when authentication is required.
+ */
+let apolloServer: import('@apollo/server').ApolloServer | undefined;
+
+(async () => {
+  try {
+    const { middleware, server } = await createGraphQLMiddleware();
+    apolloServer = server;
+    // Apollo Server 4 / expressMiddleware requires JSON body parsing before the handler.
+    // Cast to any to work around Express 5 generic overload resolution.
+    app.use('/graphql', express.json(), middleware as any);
+    logger.info('GraphQL endpoint mounted at /graphql');
+  } catch (err) {
+    logger.error('Failed to start Apollo Server', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+})();
 
 // ── API key routes ────────────────────────────────────────────────────────────
 app.use('/api/v1/admin/api-keys', apiKeyRouter);
@@ -1904,9 +1955,82 @@ scheduleRepaymentReminderJob();
 
 const SHUTDOWN_TIMEOUT_MS = parseInt(config.SHUTDOWN_TIMEOUT_MS, 10);
 
-// Create HTTP server for graceful shutdown reference
-const httpServer = app.listen(parseInt(config.PORT, 10), () => {
-  logger.info(`Server started on port ${config.PORT}`);
+async function gracefulShutdown(signal: string): Promise<void> {
+  if (isShuttingDown) {
+    logger.warn('Shutdown already in progress, ignoring signal', { signal });
+    return;
+  }
+
+  isShuttingDown = true;
+  logger.info(`Received ${signal}, starting graceful shutdown...`, { signal });
+
+  // Stop accepting new connections
+  httpServer.close(() => {
+    logger.info('HTTP server closed, no longer accepting connections');
+  });
+
+  // Set a timeout to force shutdown if graceful shutdown takes too long
+  const forceShutdownTimer = setTimeout(() => {
+    logger.error('Graceful shutdown timeout exceeded, forcing exit', {
+      timeoutMs: SHUTDOWN_TIMEOUT_MS,
+    });
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+
+  try {
+    // Wait for in-flight requests to complete
+    await new Promise<void>((resolve) => {
+      const checkInterval = setInterval(() => {
+        const stats = pool.stats();
+        if (stats.inUse === 0) {
+          clearInterval(checkInterval);
+          resolve();
+        } else {
+          logger.info('Waiting for in-flight requests to complete', {
+            inUse: stats.inUse,
+          });
+        }
+      }, 1000);
+    });
+
+    logger.info('All in-flight requests completed');
+
+    // Close database connections
+    pool.close();
+    logger.info('Database connection pool closed');
+
+    // Stop Apollo GraphQL server
+    if (apolloServer) {
+      await apolloServer.stop();
+      logger.info('Apollo GraphQL server stopped');
+    }
+
+    healthFactorTask.stop();
+    logger.info('Health factor job stopped');
+
+    clearTimeout(forceShutdownTimer);
+    logger.info('Graceful shutdown complete');
+    process.exit(0);
+  } catch (error) {
+    logger.error('Error during graceful shutdown', {
+      error: (error as Error).message,
+    });
+    clearTimeout(forceShutdownTimer);
+    process.exit(1);
+  }
+}
+
+// Register signal handlers
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Handle uncaught errors
+process.on('uncaughtException', (error: Error) => {
+  logger.error('Uncaught exception', {
+    error: error.message,
+    stack: error.stack,
+  });
+  gracefulShutdown('uncaughtException');
 });
 
 // Register signal handlers for graceful shutdown
