@@ -2415,6 +2415,22 @@
             "type": "string",
             "description": "Type of livestock (e.g. cattle, goat, sheep)."
           },
+          "breed": {
+            "type": "string",
+            "description": "Breed of the livestock."
+          },
+          "age_years": {
+            "type": "number",
+            "description": "Age of the livestock in years."
+          },
+          "weight_kg": {
+            "type": "number",
+            "description": "Weight of the livestock in kilograms."
+          },
+          "photo_url": {
+            "type": "string",
+            "description": "URL to photo of the livestock collateral."
+          },
           "count": {
             "type": "integer",
             "description": "Number of animals in this collateral group."

@@ -57,7 +57,7 @@ import {
 import logger, { createRequestLogger } from './utils/logger';
 import { pool, PoolExhaustedError } from './utils/connectionPool';
 import { auditMiddleware, redact, auditLogger } from './middleware/audit';
-import { gracefulShutdown, registerSignalHandlers } from './utils/gracefulShutdown';
+import { registerSignalHandlers } from './utils/gracefulShutdown';
 import { requestDrainingMiddleware } from './middleware/requestDraining';
 import { shutdownGuardMiddleware } from './middleware/shutdownGuard';
 import { authRouter, jwtMiddleware } from './middleware/auth';
@@ -1299,11 +1299,10 @@ app.post(
       animal_type: species.trim(),
       count: 1,
       appraised_value,
-      species: species.trim(),
       breed: breed.trim(),
-      age: ageNum,
-      weight: weightNum,
-      image_url: imageUrl,
+      age_years: ageNum,
+      weight_kg: weightNum,
+      photo_url: imageUrl,
     });
 
     invalidateCache('/api/collateral');
@@ -1939,104 +1938,22 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   errorHandler(err, req, res, next);
 });
 
+const healthFactorTask = scheduleHealthFactorJob();
+scheduleRepaymentReminderJob();
+
+const SHUTDOWN_TIMEOUT_MS = parseInt(config.SHUTDOWN_TIMEOUT_MS, 10);
+
 if (process.env.NODE_ENV !== 'test') {
   const PORT = parseInt(process.env.PORT || '3001', 10);
-  app.listen(PORT, () => {
+  const httpServer = app.listen(PORT, () => {
     logger.info(`StellarKraal API running on port ${PORT}`, {
       port: PORT,
       environment: process.env.NODE_ENV || 'development',
       logLevel: process.env.LOG_LEVEL || 'info',
     });
   });
+  registerSignalHandlers(httpServer, SHUTDOWN_TIMEOUT_MS, undefined, healthFactorTask);
 }
-
-const healthFactorTask = scheduleHealthFactorJob();
-scheduleRepaymentReminderJob();
-
-// ── Graceful Shutdown ─────────────────────────────────────────────────────────
-
-const SHUTDOWN_TIMEOUT_MS = parseInt(config.SHUTDOWN_TIMEOUT_MS, 10);
-
-async function gracefulShutdown(signal: string): Promise<void> {
-  if (isShuttingDown) {
-    logger.warn('Shutdown already in progress, ignoring signal', { signal });
-    return;
-  }
-
-  isShuttingDown = true;
-  logger.info(`Received ${signal}, starting graceful shutdown...`, { signal });
-
-  // Stop accepting new connections
-  httpServer.close(() => {
-    logger.info('HTTP server closed, no longer accepting connections');
-  });
-
-  // Set a timeout to force shutdown if graceful shutdown takes too long
-  const forceShutdownTimer = setTimeout(() => {
-    logger.error('Graceful shutdown timeout exceeded, forcing exit', {
-      timeoutMs: SHUTDOWN_TIMEOUT_MS,
-    });
-    process.exit(1);
-  }, SHUTDOWN_TIMEOUT_MS);
-
-  try {
-    // Wait for in-flight requests to complete
-    await new Promise<void>((resolve) => {
-      const checkInterval = setInterval(() => {
-        const stats = pool.stats();
-        if (stats.inUse === 0) {
-          clearInterval(checkInterval);
-          resolve();
-        } else {
-          logger.info('Waiting for in-flight requests to complete', {
-            inUse: stats.inUse,
-          });
-        }
-      }, 1000);
-    });
-
-    logger.info('All in-flight requests completed');
-
-    // Close database connections
-    pool.close();
-    logger.info('Database connection pool closed');
-
-    // Stop Apollo GraphQL server
-    if (apolloServer) {
-      await apolloServer.stop();
-      logger.info('Apollo GraphQL server stopped');
-    }
-
-    healthFactorTask.stop();
-    logger.info('Health factor job stopped');
-
-    clearTimeout(forceShutdownTimer);
-    logger.info('Graceful shutdown complete');
-    process.exit(0);
-  } catch (error) {
-    logger.error('Error during graceful shutdown', {
-      error: (error as Error).message,
-    });
-    clearTimeout(forceShutdownTimer);
-    process.exit(1);
-  }
-}
-
-// Register signal handlers
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-// Handle uncaught errors
-process.on('uncaughtException', (error: Error) => {
-  logger.error('Uncaught exception', {
-    error: error.message,
-    stack: error.stack,
-  });
-  gracefulShutdown('uncaughtException');
-});
-
-// Register signal handlers for graceful shutdown
-registerSignalHandlers(httpServer, SHUTDOWN_TIMEOUT_MS, undefined, healthFactorTask);
 
 // Redirect unversioned routes to v1 with deprecation warning
 app.use('/api', (req: Request, res: Response, next: NextFunction) => {

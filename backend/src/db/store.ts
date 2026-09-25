@@ -25,10 +25,6 @@ export interface CollateralRecord {
   count: number;
   appraised_value: number;
   appraisal_history: AppraisalEntry[];
-  species?: string;
-  age?: number;
-  weight?: number;
-  image_url?: string;
   status?: CollateralStatus;
   createdAt: string;
   deletedAt: string | null;
