@@ -181,7 +181,7 @@
           "auth"
         ],
         "summary": "Rotate refresh token",
-        "description": "Reads the refresh token from the refreshToken httpOnly cookie, validates it, and issues a new access token and rotated cookie.",
+        "description": "Reads the refresh token from the refreshToken httpOnly cookie, validates it, and issues a new access token and rotated cookie. Old token is added to blocklist to prevent reuse attacks.",
         "operationId": "refreshToken",
         "security": [],
         "responses": {
