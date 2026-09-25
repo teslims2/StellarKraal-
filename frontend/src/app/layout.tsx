@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import KeyboardShortcutsProvider from '@/components/KeyboardShortcutsProvider';
 import Link from 'next/link';
@@ -20,6 +20,12 @@ export const metadata: Metadata = {
   title: 'StellarKraal — Livestock Micro-Lending',
   description: 'Livestock-backed micro-lending on Stellar/Soroban',
   manifest: '/manifest.json',
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -169,6 +175,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   style={{ color: 'var(--color-text-muted)' }}
                 >
                   Collateral
+                </Link>
+                <Link
+                  href="/transactions"
+                  className="hover:opacity-100 transition"
+                  style={{ color: 'var(--color-text-muted)' }}
+                >
+                  Transactions
                 </Link>
                 <Link
                   href="/help/faq"

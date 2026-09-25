@@ -309,6 +309,31 @@ fn test_register_zero_value_fails() {
     client.register_livestock(&owner, &symbol_short!("sheep"), &3u32, &0i128);
 }
 
+#[test]
+fn test_collateral_minimum_rejects_below_boundary() {
+    let (env, cid, admin, oracle, token, treasury) = setup();
+    init(&env, &cid, &admin, &oracle, &token, &treasury);
+    let client = StellarKraalClient::new(&env, &cid);
+    let owner = Address::generate(&env);
+    client.set_min_collateral_value(&admin, &1_000i128);
+    assert_eq!(client.get_min_collateral_value(), 1_000);
+
+    let result = client.try_register_livestock(&owner, &symbol_short!("goat"), &1u32, &999i128);
+    assert_eq!(result, Err(Ok(Error::CollateralValueTooLow)));
+    let id = client.register_livestock(&owner, &symbol_short!("goat"), &1u32, &1_000i128);
+    assert_eq!(id, 1);
+}
+
+#[test]
+fn test_collateral_minimum_non_admin_fails() {
+    let (env, cid, admin, oracle, token, treasury) = setup();
+    init(&env, &cid, &admin, &oracle, &token, &treasury);
+    let client = StellarKraalClient::new(&env, &cid);
+    let attacker = Address::generate(&env);
+    let result = client.try_set_min_collateral_value(&attacker, &1_000i128);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+}
+
 // ── TTL management ────────────────────────────────────────────────────
 #[test]
 fn test_collateral_ttl_set_on_register() {
@@ -339,6 +364,39 @@ fn test_loan_ttl_set_on_create() {
 }
 
 // ── request_loan ──────────────────────────────────────────────────────
+#[test]
+fn test_request_extension_approved_and_limited() {
+    let (env, cid, admin, oracle, token, treasury) = setup();
+    init(&env, &cid, &admin, &oracle, &token, &treasury);
+    let client = StellarKraalClient::new(&env, &cid);
+    let borrower = Address::generate(&env);
+    let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &100_000_000i128);
+    let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &20_000_000i128, &Some(1_000u64));
+    client.set_max_extensions(&admin, &1);
+    assert_eq!(client.get_max_extensions(), 1);
+    assert_eq!(client.request_extension(&borrower, &loan_id, &500u64), 1);
+    assert_eq!(client.get_loan(&loan_id).due_ledger, Some(1_500));
+    let result = client.try_request_extension(&borrower, &loan_id, &500u64);
+    assert_eq!(result, Err(Ok(Error::ExtensionLimitReached)));
+}
+
+#[test]
+fn test_request_extension_denied_when_unsafe() {
+    let (env, cid, admin, oracle, token, treasury) = setup();
+    init(&env, &cid, &admin, &oracle, &token, &treasury);
+    let client = StellarKraalClient::new(&env, &cid);
+    let borrower = Address::generate(&env);
+    let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &100_000_000i128);
+    let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &20_000_000i128, &Some(1_000u64));
+    env.as_contract(&cid, || {
+        let mut loan: LoanRecord = env.storage().persistent().get(&DataKey::Loan(loan_id)).unwrap();
+        loan.outstanding = 100_000_000;
+        env.storage().persistent().set(&DataKey::Loan(loan_id), &loan);
+    });
+    let result = client.try_request_extension(&borrower, &loan_id, &500u64);
+    assert_eq!(result, Err(Ok(Error::ExtensionDenied)));
+}
+
 #[test]
 fn test_request_loan_within_ltv() {
     let (env, cid, admin, oracle, token, treasury) = setup();
@@ -1021,6 +1079,22 @@ fn test_repay_more_than_outstanding_caps_at_outstanding() {
     assert_eq!(loan.outstanding, 0);
 }
 
+#[test]
+fn test_accrue_interest_is_idempotent() {
+    let (env, cid, admin, oracle, token, treasury) = setup();
+    init(&env, &cid, &admin, &oracle, &token, &treasury);
+    let client = StellarKraalClient::new(&env, &cid);
+    let borrower = Address::generate(&env);
+    let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &100_000_000i128);
+    let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &20_000_000i128, &None);
+
+    assert_eq!(client.accrue_interest(&loan_id), 0);
+    env.ledger().with_mut(|li| li.timestamp += 31_536_000);
+    assert_eq!(client.accrue_interest(&loan_id), 2_000_000);
+    assert_eq!(client.accrue_interest(&loan_id), 0);
+    assert_eq!(client.get_loan(&loan_id).interest_accrued, 2_000_000);
+}
+
 // ── pause / unpause ───────────────────────────────────────────────────
 #[test]
 fn test_pause_by_admin_ok() {
@@ -1294,6 +1368,16 @@ fn test_cancel_upgrade_no_proposal_fails() {
 }
 
 #[test]
+fn test_upgrade_non_admin_fails() {
+    let (env, cid, admin, oracle, token, treasury) = setup();
+    init(&env, &cid, &admin, &oracle, &token, &treasury);
+    let client = StellarKraalClient::new(&env, &cid);
+    let attacker = Address::generate(&env);
+    let result = client.try_upgrade(&attacker, &zero_wasm_hash(&env));
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
 #[should_panic(expected = "#3")]
 fn test_propose_upgrade_non_admin_fails() {
     let (env, cid, admin, oracle, token, treasury) = setup();
@@ -1536,6 +1620,29 @@ fn test_loan_requested_event_emitted() {
     ];
     let loan_event = events.iter().find(|e| e.1 == topic);
     assert!(loan_event.is_some());
+}
+
+#[test]
+fn test_loan_transition_event_schema() {
+    let (env, cid, admin, oracle, token, treasury) = setup();
+    init(&env, &cid, &admin, &oracle, &token, &treasury);
+    let client = StellarKraalClient::new(&env, &cid);
+    let borrower = Address::generate(&env);
+    let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &100_000_000i128);
+    let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &20_000_000i128, &None);
+
+    let events = env.events().all();
+    let topic = vec![
+        &env,
+        symbol_short!("loan").into_val(&env),
+        Symbol::new(&env, "transition").into_val(&env),
+    ];
+    let event = events.iter().find(|event| event.1 == topic).expect("transition event missing");
+    let data: (u64, Address, Symbol, Symbol, u64) = event.2.try_into_val(&env).unwrap();
+    assert_eq!(data.0, loan_id);
+    assert_eq!(data.1, borrower);
+    assert_eq!(data.2, Symbol::new(&env, "pending"));
+    assert_eq!(data.3, Symbol::new(&env, "active"));
 }
 
 #[test]

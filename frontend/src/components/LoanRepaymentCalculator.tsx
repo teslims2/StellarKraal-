@@ -3,6 +3,7 @@ import HealthGauge from '@/components/HealthGauge';
 import EmptyState from '@/components/EmptyState';
 import { EmptyLoansIllustration } from '@/components/illustrations';
 import { formatXlmFromStroops } from '@/lib/formatMoney';
+import { calculateRepaymentPreview } from '@/lib/repaymentMath';
 
 interface Props {
   onProceed?: (loanId: string, amount: string) => void;
@@ -13,6 +14,8 @@ interface Props {
    * has a specific loan in context (e.g. the loan detail page).
    */
   loanId?: number | string;
+  outstanding?: number;
+  collateralValue?: number;
 }
 
 interface RepaymentPreview {
@@ -34,6 +37,8 @@ export default function LoanRepaymentCalculator({
   onProceed,
   onApplyForLoan,
   loanId: fixedLoanId,
+  outstanding,
+  collateralValue,
 }: Props) {
   const isFixedLoan = fixedLoanId !== undefined && fixedLoanId !== null;
   const [loanId, setLoanId] = useState(isFixedLoan ? String(fixedLoanId) : '');
@@ -49,6 +54,26 @@ export default function LoanRepaymentCalculator({
     [isFixedLoan, fixedLoanId, loanId]
   );
   const parsedAmount = useMemo(() => Number(amount), [amount]);
+  const localPreview = useMemo<RepaymentPreview | null>(() => {
+    if (outstanding === undefined || collateralValue === undefined) return null;
+    const result = calculateRepaymentPreview({
+      amount: parsedAmount,
+      outstanding,
+      collateralValue,
+    });
+    return {
+      loan_id: parsedLoanId,
+      repayment_amount: result.appliedAmount,
+      breakdown: {
+        principal: result.appliedAmount,
+        interest: 0,
+        fees: 0,
+        remaining_balance: result.remainingBalance,
+      },
+      projected_health_factor_bps: result.projectedHealthFactorBps,
+      fully_repaid: result.remainingBalance === 0,
+    };
+  }, [collateralValue, outstanding, parsedAmount, parsedLoanId]);
 
   useEffect(() => {
     if (isFixedLoan) return undefined;
@@ -89,6 +114,12 @@ export default function LoanRepaymentCalculator({
       return;
     }
     const timeout = setTimeout(async () => {
+      if (localPreview) {
+        setPreview(localPreview);
+        setError(null);
+        setLoading(false);
+        return;
+      }
       try {
         setLoading(true);
         setError(null);
@@ -112,7 +143,7 @@ export default function LoanRepaymentCalculator({
       }
     }, 300);
     return () => clearTimeout(timeout);
-  }, [parsedAmount, parsedLoanId]);
+  }, [localPreview, parsedAmount, parsedLoanId]);
 
   return (
     <div
@@ -174,6 +205,11 @@ export default function LoanRepaymentCalculator({
             type="number"
           />
         </div>
+        {localPreview && localPreview.breakdown.remaining_balance === 0 && parsedAmount > (outstanding ?? 0) && (
+          <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-300">
+            Repayment exceeds the outstanding balance; only the outstanding amount will be applied.
+          </p>
+        )}
       </div>
 
       {loading && (

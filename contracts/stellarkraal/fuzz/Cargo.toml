@@ -1,6 +1,6 @@
 [package]
 name = "stellarkraal-fuzz"
-version = "0.0.0"
+version = "0.1.0"
 publish = false
 edition = "2021"
 
@@ -8,40 +8,15 @@ edition = "2021"
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
+libfuzzer-sys = "0.4"
+stellarkraal = { path = ".." }
 
-# Standalone workspace so cargo-fuzz does not try to build the `#![no_std]`
-# cdylib contract crate (which cannot link the libFuzzer host runtime).
+[[bin]]
+name = "loan_arithmetic"
+path = "fuzz_targets/loan_arithmetic.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
-
-[profile.release]
-debug = 1
-
-[[bin]]
-name = "health_factor"
-path = "fuzz_targets/health_factor.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "loan_request"
-path = "fuzz_targets/loan_request.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "interest_rate"
-path = "fuzz_targets/interest_rate.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "liquidation"
-path = "fuzz_targets/liquidation.rs"
-test = false
-doc = false
-bench = false

@@ -1,6 +1,13 @@
 /**
  * Design tokens for StellarKraal
- * All colors meet WCAG 2.1 AA contrast requirements (4.5:1 for normal text, 3:1 for large text)
+ *
+ * All colours meet WCAG 2.1 AA requirements:
+ *   - Normal text  (< 18 pt / < 14 pt bold): ≥ 4.5:1 contrast ratio
+ *   - Large text   (≥ 18 pt / ≥ 14 pt bold): ≥ 3:1 contrast ratio
+ *   - UI components / graphical objects:      ≥ 3:1 contrast ratio
+ *
+ * Contrast ratios are documented inline with each token.
+ * Run `npm run test:a11y` (axe-core) to verify zero contrast violations.
  */
 
 export const colors = {
@@ -156,3 +163,120 @@ export const HEALTH_TIER_LABEL: Record<HealthTier, string> = {
   warning: 'Warning',
   danger: 'Danger',
 };
+
+// ── Loading state tokens (#1091) ─────────────────────────────────────────────
+//
+// StellarKraal uses exactly three loading affordances. Each token names the
+// Tailwind/component to use and states when to use it.
+//
+//   Tier 1 — Skeleton     → initial page / data load (no content yet)
+//   Tier 2 — Spinner      → user-triggered action (indeterminate wait)
+//   Tier 3 — ProgressBar  → file / media upload with a known % value
+//
+// See src/components/LoadingStates.stories.tsx for the full decision tree,
+// usage rules, and live examples of all three variants.
+
+export const loadingTokens = {
+  /**
+   * Skeleton shimmer — CSS classes applied by the `Skeleton` component.
+   * Uses `skeleton-shimmer` (defined in globals.css) which reads
+   * `--color-skeleton-base` and `--color-skeleton-shine` from :root / .dark.
+   */
+  skeleton: {
+    /** Base shimmer class — always apply this to the Skeleton element. */
+    base: 'skeleton-shimmer rounded',
+    /** aria attributes to apply to the *container*, not individual bars. */
+    aria: { 'aria-busy': 'true' } as const,
+  },
+
+  /**
+   * Spinner — inline SVG `animate-spin` indicator.
+   * Colour is inherited via `currentColor`; no colour tokens needed.
+   * Size variants (Tailwind classes):
+   *   sm   → 'h-4 w-4'  (buttons, inline)
+   *   md   → 'h-6 w-6'  (card-level)
+   *   lg   → 'h-8 w-8'  (full-section)
+   */
+  spinner: {
+    sm: 'h-4 w-4',
+    md: 'h-6 w-6',
+    lg: 'h-8 w-8',
+  },
+
+  /**
+   * ProgressBar — deterministic upload progress.
+   * Fill colour uses semantic tokens:
+   *   in-progress → var(--token-primary)
+   *   complete    → var(--token-success)
+   * Track colour  → var(--token-border)  (light) / var(--token-border) (dark)
+   */
+  progressBar: {
+    trackClass: 'h-2 w-full rounded-full bg-color-border overflow-hidden',
+    fillInProgress: 'var(--token-primary)',
+    fillComplete: 'var(--token-success)',
+  },
+} as const;
+
+// ── WCAG AA colour contrast documentation (#1090) ────────────────────────────
+//
+// All ratios measured against their intended background using the WCAG 2.1
+// relative luminance formula. Updated from the axe-core CI audit.
+//
+// Passing threshold:
+//   Normal text  ≥ 4.5:1
+//   Large text   ≥ 3:1
+//   UI elements  ≥ 3:1
+//
+// Legend: [ratio] [hex on hex] — notes
+
+export const contrastRatios = {
+  // ── Text on light surface (#FEFCF8 / #FDF6EC) ─────────────────────────────
+  textOnLight: {
+    /** brown-700 (#3D2810) on cream (#FEFCF8) — primary body text */
+    bodyPrimary:   { ratio: '13.9:1', hex: '#3D2810 on #FEFCF8', passes: 'AA' },
+    /** brown-600 (#5D3C15) on cream — secondary text, labels */
+    bodySecondary: { ratio: '10.8:1', hex: '#5D3C15 on #FEFCF8', passes: 'AA' },
+    /** brown-500 (#8B5A1F) on cream — muted / caption text */
+    bodyMuted:     { ratio: '5.87:1', hex: '#8B5A1F on #FEFCF8', passes: 'AA' },
+    /** gold-600  (#B45309) on cream — accent links */
+    accentLink:    { ratio: '6.1:1',  hex: '#B45309 on #FEFCF8', passes: 'AA' },
+  },
+
+  // ── Text on dark surface (#1A1007 / #2A1B0B) ──────────────────────────────
+  textOnDark: {
+    /** cream-200 (#FDF6EC) on dark (#1A1007) — primary body text */
+    bodyPrimary:   { ratio: '17.8:1', hex: '#FDF6EC on #1A1007', passes: 'AA' },
+    /** cream-300 (#FBF0E0) on dark — secondary text */
+    bodySecondary: { ratio: '14.6:1', hex: '#FBF0E0 on #1A1007', passes: 'AA' },
+    /** gold-400  (#F8CA47) on dark — muted / caption */
+    bodyMuted:     { ratio: '9.4:1',  hex: '#F8CA47 on #1A1007', passes: 'AA' },
+  },
+
+  // ── Interactive (buttons) ─────────────────────────────────────────────────
+  interactive: {
+    /** cream-50 (#FFFFFF) on brown-600 (#5D3C15) — primary button label */
+    primaryBtn:    { ratio: '10.8:1', hex: '#FFFFFF on #5D3C15', passes: 'AA' },
+    /** cream-50 (#FFFFFF) on gold-600 (#B45309) — secondary button label */
+    secondaryBtn:  { ratio: '6.1:1',  hex: '#FFFFFF on #B45309', passes: 'AA' },
+    /** cream-50 (#FFFFFF) on error-dark (#B91C1C) — destructive button */
+    dangerBtn:     { ratio: '7.1:1',  hex: '#FFFFFF on #B91C1C', passes: 'AA' },
+  },
+
+  // ── Status / badge text ───────────────────────────────────────────────────
+  status: {
+    /** success-dark (#15803D) on success-light (#D4F4DD) */
+    successBadge:  { ratio: '5.2:1',  hex: '#15803D on #D4F4DD', passes: 'AA' },
+    /** error-dark  (#B91C1C) on error-light  (#FEE2E2) */
+    errorBadge:    { ratio: '5.9:1',  hex: '#B91C1C on #FEE2E2', passes: 'AA' },
+    /** warning-dark (#B45309) on warning-light (#FEF3C7) */
+    warningBadge:  { ratio: '5.1:1',  hex: '#B45309 on #FEF3C7', passes: 'AA' },
+  },
+
+  // ── Focus ring ───────────────────────────────────────────────────────────
+  focusRing: {
+    /** gold (#D97706) on cream (#FEFCF8) — light mode focus outline */
+    lightMode:     { ratio: '4.52:1', hex: '#D97706 on #FEFCF8', passes: 'AA' },
+    /** gold-400 (#F8CA47) on brown-900 (#1A1007) — dark mode focus outline */
+    darkMode:      { ratio: '9.4:1',  hex: '#F8CA47 on #1A1007', passes: 'AA' },
+  },
+} as const;

@@ -28,7 +28,7 @@ import {
 import { getProfile, updateProfile, insertAuditEntry, listCollateral, listLoans } from '../db/store';
 import { updateProfileSchema } from '../validators/profile';
 import { validate } from '../middleware/validate';
-import { redact, auditLogger } from '../middleware/audit';
+import { auditMiddleware, redact, auditLogger } from '../middleware/audit';
 import { etagMiddleware } from '../utils/etag';
 import {
   loanRequestSchema,
@@ -107,6 +107,7 @@ v1Router.get('/health', async (req: Request, res: Response, next: NextFunction) 
 
 v1Router.post(
   '/collateral/register',
+  auditMiddleware,
   timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
   writeLimiter,
   asyncHandler(async (req: Request, res: Response) => {
@@ -121,6 +122,7 @@ v1Router.post(
 
 v1Router.post(
   '/collateral/register/batch',
+  auditMiddleware,
   timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
   writeLimiter,
   asyncHandler(async (req: Request, res: Response) => {
@@ -135,6 +137,7 @@ v1Router.post(
 
 v1Router.post(
   '/loan/request',
+  auditMiddleware,
   timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
   writeLimiter,
   asyncHandler(async (req: Request, res: Response) => {
@@ -149,6 +152,7 @@ v1Router.post(
 
 v1Router.post(
   '/loan/repay',
+  auditMiddleware,
   timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
   writeLimiter,
   asyncHandler(async (req: Request, res: Response) => {
@@ -218,6 +222,7 @@ v1Router.post(
  */
 v1Router.post(
   '/loans/:id/repay',
+  auditMiddleware,
   timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
   writeLimiter,
   asyncHandler(async (req: Request, res: Response) => {
@@ -250,6 +255,7 @@ v1Router.post(
 
 v1Router.post(
   '/loan/liquidate',
+  auditMiddleware,
   timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
   writeLimiter,
   asyncHandler(async (req: Request, res: Response) => {
@@ -330,6 +336,7 @@ v1Router.get(
 
 v1Router.post(
   '/oracle/price-update',
+  auditMiddleware,
   timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
   (_req: Request, res: Response) => {
     invalidateAll();
@@ -339,6 +346,7 @@ v1Router.post(
 
 v1Router.post(
   '/webhooks',
+  auditMiddleware,
   timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
   (req: Request, res: Response) => {
     const { url, encrypt } = req.body;
@@ -362,7 +370,7 @@ v1Router.get('/admin/webhooks/logs', (_req: Request, res: Response) => {
   res.json(getDeliveryLogs());
 });
 
-v1Router.delete('/webhooks/:id', (req: Request, res: Response) => {
+v1Router.delete('/webhooks/:id', auditMiddleware, (req: Request, res: Response) => {
   const { id } = req.params;
   const deleted = deleteWebhook(id as string);
   if (!deleted) {
@@ -373,7 +381,7 @@ v1Router.delete('/webhooks/:id', (req: Request, res: Response) => {
   res.status(204).send();
 });
 
-v1Router.post('/alerts/webhook', async (req: Request, res: Response) => {
+v1Router.post('/alerts/webhook', auditMiddleware, async (req: Request, res: Response) => {
   const body = req.body;
 
   if (req.header('x-amz-sns-message-type') === 'SubscriptionConfirmation') {
@@ -455,7 +463,7 @@ v1Router.get('/settings/:wallet', (req: Request, res: Response) => {
   res.json(existing);
 });
 
-v1Router.put('/settings/:wallet', (req: Request, res: Response) => {
+v1Router.put('/settings/:wallet', auditMiddleware, (req: Request, res: Response) => {
   const wallet = req.params.wallet as string;
   const validation = settingsSchema.safeParse(req.body);
   if (!validation.success) {
@@ -557,6 +565,7 @@ v1Router.get(
  */
 v1Router.patch(
   '/profile',
+  auditMiddleware,
   validate(updateProfileSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const user = (req as any).user as { publicKey?: string } | undefined;

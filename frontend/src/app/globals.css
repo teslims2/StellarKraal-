@@ -7,6 +7,12 @@
   .safe-pb {
     padding-bottom: max(1rem, env(safe-area-inset-bottom));
   }
+
+  .mobile-bottom-nav {
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
 }
 
 /* ── Light mode CSS variables ── */
@@ -149,6 +155,21 @@ body {
 .dark .shadow-lg,
 .dark .shadow-md {
   --tw-shadow-color: rgba(0, 0, 0, 0.5);
+}
+
+/* ── WCAG AA contrast fixes (#1090) ──────────────────────────────────────────
+   brown-400 (#B8803D) = 3.1:1 on white — FAILS AA normal-text (need ≥ 4.5:1).
+   Remap `.text-brown-400` to brown-500 (#8B5A1F = 5.87:1) in light mode.
+   In dark mode the original light value is fine on dark surfaces, so we leave
+   dark:text-brown-400 / dark:text-gold-400 unchanged (they sit on dark bg).
+
+   All other text shades in use (brown-500+, gold-600+) already meet AA.
+   Run `npm run test:a11y` to verify zero axe-core contrast violations.
+*/
+:root .text-brown-400,
+:root [class~="text-brown-400"] {
+  /* Upgrades light-mode brown-400 → brown-500 (5.87:1 on cream) */
+  color: #8B5A1F !important;
 }
 
 /* ── Skeleton shimmer ── */

@@ -1,5 +1,4 @@
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import Navbar from '../components/Navbar';
 
@@ -96,37 +95,10 @@ describe('Navbar', () => {
     expect(settingsLink).toHaveAttribute('href', '/settings');
   });
 
-  it('mobile menu opens and closes on hamburger click', async () => {
+  it('does not render a hamburger menu; mobile uses the bottom tab bar', () => {
     render(<Navbar />);
-    // mobile menu is closed initially
+    expect(screen.queryByRole('button', { name: /open menu/i })).toBeNull();
     expect(document.getElementById('mobile-menu')).toBeNull();
-
-    await userEvent.click(screen.getByRole('button', { name: /open menu/i }));
-    expect(screen.getByRole('button', { name: /close menu/i })).toBeTruthy();
-    expect(document.getElementById('mobile-menu')).toBeTruthy();
-  });
-
-  it('mobile menu closes when a link is clicked', async () => {
-    render(<Navbar />);
-    await userEvent.click(screen.getByRole('button', { name: /open menu/i }));
-    const mobileMenu = document.getElementById('mobile-menu');
-    expect(mobileMenu).toBeTruthy();
-
-    const loansLinks = screen.getAllByRole('link', { name: /loans/i });
-    // click the one inside the mobile menu
-    await userEvent.click(loansLinks[loansLinks.length - 1]);
-    expect(document.getElementById('mobile-menu')).toBeNull();
-  });
-
-  // #781: mobile active link also carries aria-current and design tokens
-  it('mobile active link has aria-current=page and design token colour', async () => {
-    render(<Navbar />);
-    await userEvent.click(screen.getByRole('button', { name: /open menu/i }));
-    const mobileLinks = screen.getAllByRole('link', { name: /dashboard/i });
-    const mobileActive = mobileLinks.find((l) => l.getAttribute('aria-current') === 'page');
-    expect(mobileActive).toBeTruthy();
-    const style = mobileActive!.getAttribute('style') || '';
-    expect(style).toMatch(/var\(--token-primary\)/);
   });
 
   it('has no axe accessibility violations', async () => {
@@ -135,29 +107,4 @@ describe('Navbar', () => {
     expect(results).toHaveNoViolations();
   });
 
-  // #524: drawer closes when the overlay behind it is tapped
-  it('mobile menu closes when the overlay is clicked', async () => {
-    render(<Navbar />);
-    await userEvent.click(screen.getByRole('button', { name: /open menu/i }));
-    expect(document.getElementById('mobile-menu')).toBeTruthy();
-
-    const overlay = document.querySelector('[aria-hidden="true"].fixed.inset-0');
-    expect(overlay).toBeTruthy();
-    await userEvent.click(overlay as Element);
-
-    expect(document.getElementById('mobile-menu')).toBeNull();
-  });
-
-  // #524: focus is trapped inside the open drawer for keyboard users
-  it('traps focus inside the open drawer', async () => {
-    render(<Navbar />);
-    await userEvent.click(screen.getByRole('button', { name: /open menu/i }));
-    const drawer = document.getElementById('mobile-menu');
-    expect(drawer).toBeTruthy();
-    expect(drawer).toHaveAttribute('role', 'dialog');
-    expect(drawer).toHaveAttribute('aria-modal', 'true');
-
-    // Focus should be inside the drawer, not left on the page behind it
-    expect(drawer!.contains(document.activeElement)).toBe(true);
-  });
 });

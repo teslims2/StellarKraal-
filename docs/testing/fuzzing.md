@@ -101,6 +101,12 @@ cargo +nightly fuzz run health_factor -- -max_total_time=60
 Rejected inputs map to the contract's `InvalidAmount` (non-positive amount) and
 `InsufficientCollateral` (amount above the LTV cap) outcomes.
 
+### 3. `loan_arithmetic`
+
+**File:** `fuzz/fuzz_targets/loan_arithmetic.rs`
+
+Exercises the checked health-factor, LTV, and interest-accrual helpers with arbitrary signed and unsigned inputs. The target treats rejected inputs as `None` and fails only on a panic or overflow.
+
 ## CI Integration
 
 The [`fuzz.yml`](../../.github/workflows/fuzz.yml) workflow runs on every pull

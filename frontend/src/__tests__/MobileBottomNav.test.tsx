@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { usePathname } from 'next/navigation';
 import MobileBottomNav from '@/components/MobileBottomNav';
 
@@ -12,77 +13,80 @@ describe('MobileBottomNav', () => {
     (usePathname as jest.Mock).mockReturnValue('/dashboard');
   });
 
-  it('renders all navigation items', () => {
+  it('renders Dashboard, Loans, Collateral, and Profile', () => {
     render(<MobileBottomNav />);
 
     expect(screen.getByText('Dashboard')).toBeInTheDocument();
-    expect(screen.getByText('Borrow')).toBeInTheDocument();
+    expect(screen.getByText('Loans')).toBeInTheDocument();
     expect(screen.getByText('Collateral')).toBeInTheDocument();
     expect(screen.getByText('Profile')).toBeInTheDocument();
   });
 
-  it('marks active navigation item', () => {
+  it('marks the active tab and highlights it with the primary colour', () => {
     render(<MobileBottomNav />);
 
-    const dashboardLink = screen.getByText('Dashboard').closest('a');
+    const dashboardLink = screen.getByRole('link', { name: /dashboard/i });
     expect(dashboardLink).toHaveAttribute('aria-current', 'page');
+    expect(dashboardLink.getAttribute('style') || '').toMatch(/var\(--token-primary\)/);
   });
 
   it('does not mark inactive items as current', () => {
     render(<MobileBottomNav />);
 
-    const borrowLink = screen.getByText('Borrow').closest('a');
-    expect(borrowLink).not.toHaveAttribute('aria-current', 'page');
+    const loansLink = screen.getByRole('link', { name: /loans/i });
+    expect(loansLink).not.toHaveAttribute('aria-current', 'page');
   });
 
-  it('shows active tab label', () => {
+  it('shows a label on every tab', () => {
     render(<MobileBottomNav />);
 
-    const dashboardLabel = screen.getByText('Dashboard').closest('span');
-    expect(dashboardLabel).toHaveClass('block');
-  });
-
-  it('hides inactive tab labels', () => {
-    render(<MobileBottomNav />);
-
-    const borrowLabel = screen.getByText('Borrow').closest('span');
-    expect(borrowLabel).toHaveClass('hidden');
+    for (const label of ['Dashboard', 'Loans', 'Collateral', 'Profile']) {
+      expect(screen.getByText(label)).toBeVisible();
+    }
   });
 
   it('renders icon elements with aria-hidden', () => {
     render(<MobileBottomNav />);
 
     const icons = document.querySelectorAll('[aria-hidden="true"]');
-    expect(icons.length).toBe(4); // One for each nav item
+    expect(icons.length).toBe(4);
   });
 
   it('renders as a nav element with proper aria-label', () => {
     render(<MobileBottomNav />);
 
-    const nav = screen.getByRole('navigation', {
-      name: 'Mobile bottom navigation',
-    });
-    expect(nav).toBeInTheDocument();
+    expect(
+      screen.getByRole('navigation', { name: 'Mobile bottom navigation' })
+    ).toBeInTheDocument();
   });
 
-  it('has fixed bottom positioning', () => {
+  it('is fixed to the bottom and hidden from the md breakpoint up', () => {
     const { container } = render(<MobileBottomNav />);
 
     const nav = container.querySelector('nav');
-    expect(nav).toHaveClass('fixed', 'bottom-0', 'left-0', 'right-0');
+    expect(nav).toHaveClass('fixed', 'bottom-0', 'left-0', 'right-0', 'md:hidden');
   });
 
-  it('is hidden on md breakpoint (md:hidden)', () => {
+  it('reserves iOS safe-area insets', () => {
     const { container } = render(<MobileBottomNav />);
-
     const nav = container.querySelector('nav');
-    expect(nav).toHaveClass('md:hidden');
+    expect(nav).toHaveClass('mobile-bottom-nav');
   });
 
-  it('uses semantic link elements for navigation', () => {
+  it('moves focus across tabs with the keyboard', async () => {
+    const user = userEvent.setup();
     render(<MobileBottomNav />);
 
-    const links = screen.getAllByRole('link');
-    expect(links).toHaveLength(4);
+    const dashboard = screen.getByRole('link', { name: /dashboard/i });
+    const loans = screen.getByRole('link', { name: /loans/i });
+    dashboard.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(loans).toHaveFocus();
+
+    await user.keyboard('{Home}');
+    expect(dashboard).toHaveFocus();
+
+    await user.keyboard('{End}');
+    expect(screen.getByRole('link', { name: /profile/i })).toHaveFocus();
   });
 });

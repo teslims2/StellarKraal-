@@ -86,15 +86,15 @@ module.exports = {
         // WCAG AA compliant descriptive palette (kept for backward compat)
         brown: {
           50: "#FDF8F3",
-          100: "#F9EFE1", 
+          100: "#F9EFE1",
           200: "#F0D9B8",
-          300: "#D4A05A", // Updated for better contrast
-          400: "#B8803D",
-          500: "#8B5A1F", // Primary brown - 5.87:1 on white (was too light)
-          600: "#5D3C15", // Dark brown - 10.8:1 on white  
-          700: "#3D2810", // Darker brown - 13.9:1 on white
-          800: "#2A1B0B", // Text brown - 17.1:1 on white
-          900: "#1A1007"  // Darkest brown - 20.1:1 on white
+          300: "#D4A05A", // 3.0:1 on white — decorative / large text only (≥18pt)
+          400: "#B8803D", // 3.1:1 on white — FAILS AA for normal text; see globals.css override
+          500: "#8B5A1F", // 5.87:1 on white — minimum AA shade for normal body text
+          600: "#5D3C15", // 10.8:1 on white — secondary text, labels
+          700: "#3D2810", // 13.9:1 on white — primary body text (preferred)
+          800: "#2A1B0B", // 17.1:1 on white
+          900: "#1A1007"  // 20.1:1 on white
         },
         gold: {
           50: "#FFFBF0",
