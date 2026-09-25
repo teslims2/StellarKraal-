@@ -1,13 +1,32 @@
-import { z } from "zod";
+import { z } from 'zod';
 
-/**
- * Shared collateral field schemas used across create/update endpoints.
- */
-const animalTypeSchema = z.string().trim().min(1, "animal_type is required");
-const countSchema = z.number().int("count must be an integer").gt(0, "count must be greater than 0");
-const appraisedValueSchema = z
-  .number()
-  .gt(0, "appraised_value must be greater than 0");
+const textInput = (message: string) =>
+  z.preprocess(
+    (value) => (typeof value === 'string' ? value.trim() : value),
+    z.string().min(1, message)
+  );
+
+const numericInput = (schema: z.ZodNumber) =>
+  z.preprocess((value) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed === '' ? undefined : Number(trimmed);
+  }, schema);
+
+const animalTypeSchema = textInput('animal_type is required');
+const breedSchema = textInput('breed is required');
+const ageSchema = numericInput(
+  z.number().finite('age must be a finite number').nonnegative('age must be a non-negative number')
+);
+const weightSchema = numericInput(
+  z.number().finite('weight must be a finite number').positive('weight must be a positive number')
+);
+const countSchema = numericInput(
+  z.number().int('count must be an integer').gt(0, 'count must be greater than 0')
+);
+const appraisedValueSchema = numericInput(
+  z.number().gt(0, 'appraised_value must be greater than 0')
+);
 
 /**
  * POST /api/v1/collateral request schema.
@@ -17,6 +36,15 @@ export const createCollateralSchema = z
     animal_type: animalTypeSchema,
     count: countSchema,
     appraised_value: appraisedValueSchema,
+  })
+  .strict();
+
+export const multipartCollateralSchema = z
+  .object({
+    animal_type: animalTypeSchema,
+    breed: breedSchema,
+    age: ageSchema,
+    weight: weightSchema,
   })
   .strict();
 
@@ -32,8 +60,8 @@ export const updateCollateralSchema = z
   })
   .strict()
   .refine((payload) => Object.keys(payload).length > 0, {
-    message: "At least one updatable field must be provided",
-    path: ["_root"],
+    message: 'At least one updatable field must be provided',
+    path: ['_root'],
   });
 
 /**
@@ -44,7 +72,7 @@ export const updateCollateralSchema = z
  */
 export function toValidationMessagesByField(issues: z.ZodIssue[]): Record<string, string[]> {
   return issues.reduce<Record<string, string[]>>((acc, issue) => {
-    const field = issue.path.length > 0 ? issue.path.join(".") : "_root";
+    const field = issue.path.length > 0 ? issue.path.join('.') : '_root';
     if (!acc[field]) acc[field] = [];
     acc[field].push(issue.message);
     return acc;
@@ -52,4 +80,5 @@ export function toValidationMessagesByField(issues: z.ZodIssue[]): Record<string
 }
 
 export type CreateCollateralInput = z.infer<typeof createCollateralSchema>;
+export type MultipartCollateralInput = z.infer<typeof multipartCollateralSchema>;
 export type UpdateCollateralInput = z.infer<typeof updateCollateralSchema>;

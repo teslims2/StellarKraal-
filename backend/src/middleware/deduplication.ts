@@ -37,6 +37,14 @@ function evictExpired(): void {
  */
 export function deduplicationMiddleware(req: Request, res: Response, next: NextFunction): void {
   if (req.method !== 'POST') return next();
+  const contentType = req.headers['content-type'];
+  const contentTypeValue = Array.isArray(contentType) ? contentType[0] : contentType;
+  if (
+    typeof contentTypeValue === 'string' &&
+    contentTypeValue.toLowerCase().startsWith('multipart/form-data')
+  ) {
+    return next();
+  }
 
   const user = (req as any).user as { publicKey?: string } | undefined;
   if (!user?.publicKey) return next();

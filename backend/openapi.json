@@ -545,8 +545,8 @@
         "tags": [
           "collateral"
         ],
-        "summary": "Create collateral record (DB)",
-        "description": "Creates a new livestock collateral record in the database. This does not submit an on-chain transaction; use POST /collateral/register for on-chain registration.",
+        "summary": "Create collateral record",
+        "description": "Creates a livestock collateral record from JSON data or a multipart registration with animal details and a JPEG or PNG image. This does not submit an on-chain transaction; use POST /collateral/register for on-chain registration.",
         "operationId": "createCollateral",
         "requestBody": {
           "required": true,
@@ -555,6 +555,11 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/V1CreateCollateralRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/V1MultipartCollateralRequest"
               }
             }
           }
@@ -2343,6 +2348,48 @@
           }
         }
       },
+      "V1MultipartCollateralRequest": {
+        "type": "object",
+        "description": "Multipart request to create a collateral record with livestock details and a verification image.",
+        "required": [
+          "animal_type",
+          "breed",
+          "age",
+          "weight",
+          "image"
+        ],
+        "properties": {
+          "animal_type": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Type of livestock.",
+            "example": "cattle"
+          },
+          "breed": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Livestock breed.",
+            "example": "Holstein"
+          },
+          "age": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Age of the animal in years.",
+            "example": 3.5
+          },
+          "weight": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Weight of the animal in kilograms.",
+            "example": 450.25
+          },
+          "image": {
+            "type": "string",
+            "format": "binary",
+            "description": "JPEG or PNG image no larger than 5 MiB."
+          }
+        }
+      },
       "V1CreateCollateralRequest": {
         "type": "object",
         "description": "Request to create a collateral record in the database without an on-chain transaction.",
@@ -2414,6 +2461,22 @@
           "animal_type": {
             "type": "string",
             "description": "Type of livestock (e.g. cattle, goat, sheep)."
+          },
+          "breed": {
+            "type": "string",
+            "description": "Livestock breed for multipart registrations."
+          },
+          "age_years": {
+            "type": "number",
+            "description": "Age of the animal in years for multipart registrations."
+          },
+          "weight_kg": {
+            "type": "number",
+            "description": "Weight of the animal in kilograms for multipart registrations."
+          },
+          "photo_url": {
+            "type": "string",
+            "description": "Path to the uploaded verification image."
           },
           "count": {
             "type": "integer",

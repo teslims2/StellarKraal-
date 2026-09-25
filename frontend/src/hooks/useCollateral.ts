@@ -6,10 +6,14 @@ export interface Collateral {
   id: string;
   owner: string;
   animal_type: string;
+  breed?: string;
+  age_years?: number;
+  weight_kg?: number;
+  photo_url?: string;
   count: number;
   appraised_value: number;
   status?: string;
-  createdAt?: string;
+  createdAt: string;
 }
 
 export interface PaginationMeta {

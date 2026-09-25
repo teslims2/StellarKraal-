@@ -75,7 +75,7 @@ import {
 } from './utils/responseCache';
 import { randomUUID } from 'crypto';
 import path from 'path';
-import { mkdirSync } from 'fs';
+import { mkdirSync, unlinkSync } from 'fs';
 import multer from 'multer';
 import { z } from 'zod';
 import { globalLimiter, authLimiter, readLimiter, writeLimiter } from './middleware/rateLimit';
@@ -84,8 +84,9 @@ import { validate } from './middleware/validate';
 import { stellarPublicKeySchema } from './validators/stellar';
 import {
   createCollateralSchema,
+  multipartCollateralSchema,
+  toValidationMessagesByField,
   updateCollateralSchema,
-  type CreateCollateralInput,
   type UpdateCollateralInput,
 } from './validators/collateral';
 import rpcClient from './utils/rpcClient';
@@ -1313,18 +1314,167 @@ app.post(
 
 // ── v1 collateral CRUD ────────────────────────────────────────────────────────
 
-// POST /api/v1/collateral — register collateral (DB record)
+const MAX_COLLATERAL_IMAGE_SIZE = 5 * 1024 * 1024;
+const COLLATERAL_IMAGE_EXTENSIONS: Record<string, string> = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+};
+
+class CollateralImageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CollateralImageError';
+  }
+}
+
+function isMultipartRequest(req: Request): boolean {
+  const contentType = req.headers['content-type'];
+  const value = Array.isArray(contentType) ? contentType[0] : contentType;
+  return typeof value === 'string' && value.toLowerCase().startsWith('multipart/form-data');
+}
+
+function removeUploadedFile(file?: Express.Multer.File): void {
+  if (!file?.path) return;
+  try {
+    unlinkSync(file.path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
+
+function normalizeCollateralBody(body: unknown): unknown {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  const copy = { ...(body as Record<string, unknown>) };
+  delete copy.owner;
+  if (copy.animal_type === undefined && copy.animalType !== undefined) {
+    copy.animal_type = copy.animalType;
+  }
+  delete copy.animalType;
+  if (copy.age === undefined && copy.age_years !== undefined) copy.age = copy.age_years;
+  if (copy.weight === undefined && copy.weight_kg !== undefined) copy.weight = copy.weight_kg;
+  delete copy.age_years;
+  delete copy.weight_kg;
+  return copy;
+}
+
+function sendCollateralValidationError(res: Response, details: Record<string, string[]>): Response {
+  return res.status(422).json({
+    error: 'Validation failed',
+    code: 'VALIDATION_ERROR',
+    details,
+  });
+}
+
+const v1CollateralImageUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, uploadsDir),
+    filename: (_req, file, cb) => {
+      const extension = COLLATERAL_IMAGE_EXTENSIONS[file.mimetype.toLowerCase()] ?? '.bin';
+      cb(null, `${randomUUID()}${extension}`);
+    },
+  }),
+  limits: { fileSize: MAX_COLLATERAL_IMAGE_SIZE },
+  fileFilter: (_req, file, cb) => {
+    const mimetype = file.mimetype.toLowerCase();
+    if (!COLLATERAL_IMAGE_EXTENSIONS[mimetype]) {
+      cb(new CollateralImageError('image must be a JPEG or PNG file'));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+const parseV1CollateralImage = (req: Request, res: Response, next: NextFunction): void => {
+  if (!isMultipartRequest(req)) {
+    next();
+    return;
+  }
+  v1CollateralImageUpload.single('image')(req, res, next);
+};
+
+const handleV1CollateralImageError = (
+  err: Error,
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  const isMulterError =
+    typeof multer.MulterError === 'function' && err instanceof multer.MulterError;
+  const isUploadError = isMulterError || err instanceof CollateralImageError;
+  if (!isUploadError) {
+    next(err);
+    return;
+  }
+
+  removeUploadedFile(req.file);
+  const message =
+    isMulterError && (err as { code?: string }).code === 'LIMIT_FILE_SIZE'
+      ? 'image must be 5 MiB or smaller'
+      : err.message || 'image upload is invalid';
+  res.status(422).json({
+    error: 'Validation failed',
+    code: 'VALIDATION_ERROR',
+    details: { image: [message] },
+  });
+};
+
 app.post(
   '/api/v1/collateral',
   timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
-  validate(createCollateralSchema, { statusCode: 422, errorShape: 'dictionary' }),
+  writeLimiter,
+  parseV1CollateralImage,
   asyncHandler(async (req: Request, res: Response) => {
     const owner = (req as Request & { user?: { publicKey?: string } }).user?.publicKey;
-    if (!owner) {
+    if (typeof owner !== 'string' || owner.length === 0) {
+      removeUploadedFile(req.file);
       return res.status(401).json({ error: 'Authenticated wallet address required' });
     }
 
-    const { animal_type, count, appraised_value } = req.body as CreateCollateralInput;
+    if (isMultipartRequest(req)) {
+      const validation = multipartCollateralSchema.safeParse(
+        normalizeCollateralBody(req.body)
+      );
+      const details: Record<string, string[]> = validation.success
+        ? {}
+        : toValidationMessagesByField(validation.error.issues);
+      if (!req.file) {
+        details.image = ['image is required'];
+      }
+      if (!validation.success || !req.file) {
+        removeUploadedFile(req.file);
+        return sendCollateralValidationError(res, details);
+      }
+
+      const { animal_type, breed, age, weight } = validation.data;
+      try {
+        const record = insertCollateral({
+          id: randomUUID(),
+          owner,
+          animal_type,
+          count: 1,
+          appraised_value: Math.round(weight * 100),
+          breed,
+          age_years: age,
+          weight_kg: weight,
+          photo_url: `/uploads/${req.file.filename}`,
+        });
+        invalidateCache('/api/collateral');
+        return res.status(201).json(record);
+      } catch (error) {
+        removeUploadedFile(req.file);
+        throw error;
+      }
+    }
+
+    const validation = createCollateralSchema.safeParse(normalizeCollateralBody(req.body));
+    if (!validation.success) {
+      return sendCollateralValidationError(
+        res,
+        toValidationMessagesByField(validation.error.issues)
+      );
+    }
+
+    const { animal_type, count, appraised_value } = validation.data;
     const record = insertCollateral({
       id: randomUUID(),
       owner,
@@ -1333,8 +1483,9 @@ app.post(
       appraised_value,
     });
     invalidateCache('/api/collateral');
-    res.status(201).json(record);
-  })
+    return res.status(201).json(record);
+  }),
+  handleV1CollateralImageError
 );
 
 // PATCH /api/v1/collateral/:id — partially update collateral fields
