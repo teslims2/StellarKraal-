@@ -82,7 +82,7 @@ export default function DashboardClient() {
   const [activeTab, setActiveTab] = useState<TabName>("overview");
   const [helpOpen, setHelpOpen] = useState(false);
   const { showOnboarding, openOnboarding, closeOnboarding } = useOnboarding();
-  const { healthFactor, loading: isHealthLoading, refresh: refreshHealth } = useHealthFactor(loanId);
+  const { healthFactor, loading: isHealthLoading, refresh: refreshHealth, lastUpdatedLabel, hasFetched } = useHealthFactor(loanId);
   
   // Onboarding checklist state
   const [hasCollateral, setHasCollateral] = useState(false);
