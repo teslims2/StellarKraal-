@@ -2379,7 +2379,7 @@
           },
           "weight": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
             "description": "Weight of the animal in kilograms.",
             "example": 450.25
           },
@@ -2413,7 +2413,7 @@
           },
           "appraised_value": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
             "description": "Appraised value in token base units.",
             "example": 5000000
           }
@@ -2438,7 +2438,7 @@
           },
           "appraised_value": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
             "description": "Updated appraised value in token base units.",
             "example": 3500000
           }
