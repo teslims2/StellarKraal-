@@ -340,6 +340,39 @@ fn test_loan_ttl_set_on_create() {
 
 // ── request_loan ──────────────────────────────────────────────────────
 #[test]
+fn test_request_extension_approved_and_limited() {
+    let (env, cid, admin, oracle, token, treasury) = setup();
+    init(&env, &cid, &admin, &oracle, &token, &treasury);
+    let client = StellarKraalClient::new(&env, &cid);
+    let borrower = Address::generate(&env);
+    let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &100_000_000i128);
+    let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &20_000_000i128, &Some(1_000u64));
+    client.set_max_extensions(&admin, &1);
+    assert_eq!(client.get_max_extensions(), 1);
+    assert_eq!(client.request_extension(&borrower, &loan_id, &500u64), 1);
+    assert_eq!(client.get_loan(&loan_id).due_ledger, Some(1_500));
+    let result = client.try_request_extension(&borrower, &loan_id, &500u64);
+    assert_eq!(result, Err(Ok(Error::ExtensionLimitReached)));
+}
+
+#[test]
+fn test_request_extension_denied_when_unsafe() {
+    let (env, cid, admin, oracle, token, treasury) = setup();
+    init(&env, &cid, &admin, &oracle, &token, &treasury);
+    let client = StellarKraalClient::new(&env, &cid);
+    let borrower = Address::generate(&env);
+    let col_id = client.register_livestock(&borrower, &symbol_short!("cattle"), &2u32, &100_000_000i128);
+    let loan_id = client.request_loan(&borrower, &vec![&env, col_id], &20_000_000i128, &Some(1_000u64));
+    env.as_contract(&cid, || {
+        let mut loan: LoanRecord = env.storage().persistent().get(&DataKey::Loan(loan_id)).unwrap();
+        loan.outstanding = 100_000_000;
+        env.storage().persistent().set(&DataKey::Loan(loan_id), &loan);
+    });
+    let result = client.try_request_extension(&borrower, &loan_id, &500u64);
+    assert_eq!(result, Err(Ok(Error::ExtensionDenied)));
+}
+
+#[test]
 fn test_request_loan_within_ltv() {
     let (env, cid, admin, oracle, token, treasury) = setup();
     init(&env, &cid, &admin, &oracle, &token, &treasury);

@@ -19,7 +19,7 @@ import { useToast } from "@/components/toast";
 import { fetchWithRetry } from "@/lib/fetchWithRetry";
 import { useLoans } from "@/hooks/useLoans";
 import { useLiquidationWarning } from "@/hooks/useLiquidationWarning";
-import RiskAlertBanner from "@/components/RiskAlertBanner";
+import LoanPortfolioSummary from "@/components/LoanPortfolioSummary";
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -47,29 +47,19 @@ const RepayPanel = dynamic(() => import("@/components/RepayPanel"), {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── Lazy-loaded heavy components ─────────────────────────────────────────────
-// Using next/dynamic with ssr:false prevents hydration mismatches for
-// canvas/SVG-heavy components. Skeleton fallbacks maintain layout stability.
+type TabName = "overview" | "loans" | "collateral" | "transactions";
+type LoanWithHealth = {
+  id: string;
+  health_factor?: number | null;
+  status?: string;
+};
 
-const HealthGauge = dynamic(() => import("@/components/HealthGauge"), {
-  ssr: false,
-  loading: () => <SkeletonHealthDashboard />,
-});
-
-const LoanRepaymentCalculator = dynamic(
-  () => import("@/components/LoanRepaymentCalculator"),
-  {
-    ssr: false,
-    loading: () => <SkeletonLoanCard />,
-  },
-);
-
-const RepayPanel = dynamic(() => import("@/components/RepayPanel"), {
-  ssr: false,
-  loading: () => <SkeletonLoanCard />,
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
+const TABS: { id: TabName; label: string }[] = [
+  { id: "overview", label: "Overview" },
+  { id: "loans", label: "Loans" },
+  { id: "collateral", label: "Collateral" },
+  { id: "transactions", label: "Transactions" },
+];
 
 type TabName = "overview" | "loans" | "collateral" | "transactions";
 type LoanWithHealth = {
@@ -200,7 +190,7 @@ export default function DashboardClient() {
       </div>
       {wallet && (
         <>
-          <RiskAlertBanner loans={loans as unknown as LoanWithHealth[]} />
+          <LoanPortfolioSummary loans={loans} />
           <OnboardingChecklist
             hasWallet={!!wallet}
             hasCollateral={hasCollateral}

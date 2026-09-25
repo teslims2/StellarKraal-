@@ -717,3 +717,35 @@ export function updateProfile(
   profileTable.set(walletAddress, profile);
   return profile;
 }
+
+// ── Ledger Cursor (event listener replay) ────────────────────────────────────
+
+/**
+ * In-memory ledger cursor store.
+ * Maps a cursor key (e.g. contract ID) to the last processed ledger sequence.
+ * On restart this is initialised from DB-backed storage or defaults to 0.
+ */
+const ledgerCursorTable: Map<string, number> = new Map();
+
+/**
+ * Persist the last processed ledger sequence for a given cursor key.
+ * Called by the contract event listener after successfully processing events
+ * so that on restart the listener can replay from this point.
+ *
+ * @param key   - Identifier for the cursor, typically the contract ID.
+ * @param ledger - Last ledger sequence number that was fully processed.
+ */
+export function setLedgerCursor(key: string, ledger: number): void {
+  ledgerCursorTable.set(key, ledger);
+}
+
+/**
+ * Retrieve the last persisted ledger cursor for a given key.
+ * Returns `0` when no cursor has been recorded (start from the beginning).
+ *
+ * @param key - Identifier for the cursor, typically the contract ID.
+ * @returns The last persisted ledger sequence, or `0` if not yet set.
+ */
+export function getLedgerCursor(key: string): number {
+  return ledgerCursorTable.get(key) ?? 0;
+}

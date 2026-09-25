@@ -11,6 +11,9 @@ interface LoanRecord {
   borrower: string;
   collateral_id: string;
   amount: number;
+  outstanding?: number;
+  collateral_value?: number;
+  health_factor?: number;
   status: string;
   createdAt: string;
 }
@@ -177,7 +180,12 @@ export default function LoanDetailPage() {
       </div>
 
       {loan.status === 'active' && (
-        <LoanRepaymentCalculator loanId={loan.id} onProceed={() => router.push('/dashboard')} />
+        <LoanRepaymentCalculator
+          loanId={loan.id}
+          outstanding={loan.outstanding ?? loan.amount}
+          collateralValue={loan.collateral_value ?? loan.amount}
+          onProceed={() => router.push('/dashboard')}
+        />
       )}
     </main>
   );

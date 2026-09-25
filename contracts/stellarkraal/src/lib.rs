@@ -56,6 +56,7 @@ const WL_COUNT: Symbol = symbol_short!("WLCOUNT");  // number of whitelisted liq
 // ── Issue #700 storage keys ──────────────────────────────────────────────────
 const MIN_LOAN: Symbol = symbol_short!("MINLOAN"); // minimum loan amount in stroops
 const MAX_LOAN: Symbol = symbol_short!("MAXLOAN"); // maximum loan amount in stroops
+const MAX_EXTENSIONS: Symbol = symbol_short!("MAXEXT");
 
 // ── Issue #669 storage keys ──────────────────────────────────────────────────
 const PNDG_WASM: Symbol = symbol_short!("PNDGWASM");
@@ -78,6 +79,9 @@ pub const DEFAULT_MIN_LOAN: i128 = 10_000_000;
 
 /// Default maximum loan amount: 1,000,000,000,000 stroops (100,000 XLM).
 pub const DEFAULT_MAX_LOAN: i128 = 1_000_000_000_000;
+
+/// Default maximum number of extensions allowed for one loan.
+pub const DEFAULT_MAX_EXTENSIONS: u32 = 3;
 
 // ── TTL management ───────────────────────────────────────────────────────────
 
@@ -138,6 +142,10 @@ pub enum Error {
     TimelockNotElapsed = 25,
     /// `remove_oracle` would leave zero oracles while active loans exist.
     OracleRequired = 26,
+    /// The loan health factor is below the safe extension threshold.
+    ExtensionDenied = 29,
+    /// The loan has reached the configured extension limit.
+    ExtensionLimitReached = 30,
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -286,6 +294,8 @@ pub enum DataKey {
     Guard,
     /// Liquidator whitelist entry keyed by address.
     WhitelistEntry(Address),
+    /// Number of extensions already granted for a loan.
+    ExtensionCount(u64),
     /// Per-animal-type maximum appraised value cap.
     AnimalCap(Symbol),
     /// Pending WASM hash for a proposed contract upgrade (issue #669).
@@ -383,6 +393,7 @@ impl StellarKraal {
         // Issue #700: loan amount limits (configurable, defaulting to 1 XLM / 100 000 XLM)
         env.storage().instance().set(&MIN_LOAN, &DEFAULT_MIN_LOAN);
         env.storage().instance().set(&MAX_LOAN, &DEFAULT_MAX_LOAN);
+        env.storage().instance().set(&MAX_EXTENSIONS, &DEFAULT_MAX_EXTENSIONS);
         Ok(())
     }
 
@@ -953,6 +964,84 @@ impl StellarKraal {
         );
 
         Ok(())
+    }
+
+    pub fn set_max_extensions(env: Env, admin: Address, max_extensions: u32) -> Result<(), Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_admin(&env, &admin)?;
+        admin.require_auth();
+        env.storage().instance().set(&MAX_EXTENSIONS, &max_extensions);
+        Ok(())
+    }
+
+    pub fn get_max_extensions(env: Env) -> Result<u32, Error> {
+        Self::assert_initialized(&env)?;
+        Ok(env.storage().instance().get(&MAX_EXTENSIONS).unwrap_or(DEFAULT_MAX_EXTENSIONS))
+    }
+
+    pub fn request_extension(
+        env: Env,
+        borrower: Address,
+        loan_id: u64,
+        extra_ledgers: u64,
+    ) -> Result<u32, Error> {
+        Self::assert_initialized(&env)?;
+        Self::assert_not_paused(&env)?;
+        if extra_ledgers == 0 {
+            return Err(Error::InvalidAmount);
+        }
+        borrower.require_auth();
+
+        let mut loan: LoanRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Loan(loan_id))
+            .ok_or(Error::LoanNotFound)?;
+        if loan.borrower != borrower {
+            return Err(Error::Unauthorized);
+        }
+        if loan.status != LoanStatus::Active {
+            return Err(Error::LoanAlreadyClosed);
+        }
+
+        let extension_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ExtensionCount(loan_id))
+            .unwrap_or(0);
+        let max_extensions: u32 = env
+            .storage()
+            .instance()
+            .get(&MAX_EXTENSIONS)
+            .unwrap_or(DEFAULT_MAX_EXTENSIONS);
+        if extension_count >= max_extensions {
+            return Err(Error::ExtensionLimitReached);
+        }
+
+        let liquidation_threshold: u32 = env.storage().instance().get(&LIQ_THR).unwrap();
+        let health_factor = Self::compute_health_factor_with_thr(&loan, liquidation_threshold)?;
+        if health_factor < 10_000 {
+            return Err(Error::ExtensionDenied);
+        }
+
+        let current_deadline = loan.due_ledger.unwrap_or_else(|| env.ledger().timestamp());
+        let new_deadline = current_deadline
+            .checked_add(extra_ledgers)
+            .ok_or(Error::ArithmeticOverflow)?;
+        let new_count = extension_count + 1;
+        loan.due_ledger = Some(new_deadline);
+        env.storage().persistent().set(&DataKey::Loan(loan_id), &loan);
+        env.storage().persistent().set(&DataKey::ExtensionCount(loan_id), &new_count);
+        env.storage().persistent().extend_ttl(
+            &DataKey::ExtensionCount(loan_id),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_LEDGERS,
+        );
+        env.events().publish(
+            (Symbol::new(&env, "LoanExtended"),),
+            (loan_id, borrower, new_deadline, new_count),
+        );
+        Ok(new_count)
     }
 
     // ── liquidate ─────────────────────────────────────────────────────────
