@@ -5,15 +5,14 @@ import { useParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import ErrorState from '@/components/ErrorState';
 import DetailSkeleton from '@/components/DetailSkeleton';
+import HealthGauge, { SkeletonHealthGauge } from '@/components/HealthGauge';
+import { useHealthFactor } from '@/hooks/useHealthFactor';
 
 // Heavy component — loaded lazily to reduce initial JS bundle (#1070)
-const LoanRepaymentCalculator = dynamic(
-  () => import('@/components/LoanRepaymentCalculator'),
-  {
-    ssr: false,
-    loading: () => <DetailSkeleton />,
-  },
-);
+const LoanRepaymentCalculator = dynamic(() => import('@/components/LoanRepaymentCalculator'), {
+  ssr: false,
+  loading: () => <DetailSkeleton />,
+});
 
 interface LoanRecord {
   id: string;
@@ -38,6 +37,13 @@ export default function LoanDetailPage() {
   const [error, setError] = useState<ErrorType>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+  const activeLoanId = loan?.status === 'active' ? loan.id : '';
+  const {
+    healthFactor,
+    error: healthError,
+    lastUpdated,
+    refresh: refreshHealth,
+  } = useHealthFactor(activeLoanId);
 
   const fetchLoan = async () => {
     try {
@@ -112,10 +118,10 @@ export default function LoanDetailPage() {
     );
   }
 
-  async function copyId() {
-    if (!loan.id) return;
+  async function copyId(loanId: string) {
+    if (!loanId) return;
     try {
-      await navigator.clipboard.writeText(loan.id);
+      await navigator.clipboard.writeText(loanId);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -134,7 +140,7 @@ export default function LoanDetailPage() {
         <div className="flex items-center gap-2 mb-4">
           <span className="text-brown/50 text-sm">Loan ID</span>
           <button
-            onClick={copyId}
+            onClick={() => void copyId(loan.id)}
             aria-label={copied ? 'Loan ID copied' : 'Copy loan ID'}
             title={copied ? 'Copied!' : 'Copy ID'}
             className="shrink-0 text-brown/50 hover:text-brown transition focus:outline-none focus-visible:ring-2 focus-visible:ring-brown rounded"
@@ -187,6 +193,58 @@ export default function LoanDetailPage() {
           </dd>
         </dl>
       </div>
+
+      {loan.status === 'active' && (
+        <section
+          aria-labelledby="loan-health-heading"
+          className="bg-white rounded-2xl p-6 shadow mb-6"
+        >
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div>
+              <h2 id="loan-health-heading" className="text-xl font-semibold text-brown">
+                Loan Health
+              </h2>
+              <p className="text-sm text-brown/60 mt-1">Live collateral health factor</p>
+            </div>
+            {lastUpdated && (
+              <p className="text-xs text-brown/50 whitespace-nowrap">
+                Last updated{' '}
+                <time dateTime={lastUpdated.toISOString()}>
+                  {lastUpdated.toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  })}
+                </time>
+              </p>
+            )}
+          </div>
+
+          {healthFactor !== null ? (
+            <>
+              <HealthGauge value={healthFactor} />
+              {healthError && (
+                <p role="status" className="text-sm text-red-600 text-center mt-3">
+                  Could not refresh health factor. Showing the last known value.
+                </p>
+              )}
+            </>
+          ) : healthError ? (
+            <div role="alert" className="text-center py-4">
+              <p className="text-sm text-red-600 mb-3">Unable to load the loan health factor.</p>
+              <button
+                type="button"
+                onClick={refreshHealth}
+                className="text-sm font-semibold text-brown underline underline-offset-4 hover:text-brown/80 focus:outline-none focus:ring-2 focus:ring-brown rounded px-2 py-1"
+              >
+                Retry health check
+              </button>
+            </div>
+          ) : (
+            <SkeletonHealthGauge />
+          )}
+        </section>
+      )}
 
       {loan.status === 'active' && (
         <LoanRepaymentCalculator
