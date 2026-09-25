@@ -19,9 +19,17 @@ const ANIMAL_EMOJI: Record<string, string> = {
   sheep: '🐑',
 };
 
-function AmountBreakdownTooltip({ principal, originationFee, estimatedFirstInterest }: { principal: number; originationFee: number; estimatedFirstInterest: number }) {
+function AmountBreakdownTooltip({
+  principal,
+  originationFee,
+  estimatedFirstInterest,
+}: {
+  principal: number;
+  originationFee: number;
+  estimatedFirstInterest: number;
+}) {
   const [open, setOpen] = useState(false);
-  const { rates, convert } = useCurrencyConversion();
+  const { rates } = useCurrencyConversion();
   const usdRate = rates?.USD ?? null;
 
   const formatXlm = (stroops: number) => `${(stroops / 1e7).toFixed(2)} XLM`;
@@ -54,8 +62,20 @@ function AmountBreakdownTooltip({ principal, originationFee, estimatedFirstInter
         aria-describedby={open ? 'amount-breakdown-tooltip' : undefined}
         className="text-brown/50 hover:text-brown transition focus:outline-none focus-visible:ring-2 focus-visible:ring-brown rounded"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          className="h-4 w-4"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+          aria-hidden="true"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+          />
         </svg>
       </button>
       {open && (
@@ -78,7 +98,10 @@ function AmountBreakdownTooltip({ principal, originationFee, estimatedFirstInter
               </div>
             ))}
           </div>
-          <div className="absolute left-1/2 -bottom-2 -translate-x-1/2 border-solid border-t-brown-dark border-t-8 border-x-transparent border-x-8 border-b-0" aria-hidden="true" />
+          <div
+            className="absolute left-1/2 -bottom-2 -translate-x-1/2 border-solid border-t-brown-dark border-t-8 border-x-transparent border-x-8 border-b-0"
+            aria-hidden="true"
+          />
         </div>
       )}
     </span>
@@ -86,8 +109,16 @@ function AmountBreakdownTooltip({ principal, originationFee, estimatedFirstInter
 }
 
 export default function StepReview() {
-  const { animalType, count, appraisedValue, loanAmount, loanTermDays, nextStep, prevStep } =
-    useWizard();
+  const {
+    animalType,
+    count,
+    appraisedValue,
+    collateralId,
+    loanAmount,
+    loanTermDays,
+    nextStep,
+    prevStep,
+  } = useWizard();
 
   const [isDetailedView, setIsDetailedView] = useState(false);
 
@@ -98,9 +129,7 @@ export default function StepReview() {
   const estimatedFirstInterest = Math.floor(principal * 0.01);
   const totalRepay = principal + fee;
   const healthFactor =
-    loanAmount && appraisedValue
-      ? (parseInt(appraisedValue) / principal / 1.5).toFixed(2)
-      : '—';
+    loanAmount && appraisedValue ? (parseInt(appraisedValue) / principal / 1.5).toFixed(2) : '—';
 
   const rows = [
     {
@@ -120,13 +149,14 @@ export default function StepReview() {
       ),
       value: `${parseInt(appraisedValue || '0').toLocaleString()} stroops`,
     },
-    { label: <GlossaryTerm termKey="loanAmount">Loan Amount</GlossaryTerm>, value: `${principal.toLocaleString()} stroops` },
+    { label: 'Collateral ID', value: collateralId || '—' },
+    { label: 'Loan Amount', value: `${principal.toLocaleString()} stroops` },
     { label: 'Loan Term', value: `${loanTermDays} days` },
-    { label: <GlossaryTerm termKey="feeRate">Fee Rate</GlossaryTerm>, value: rate },
+    { label: <GlossaryTerm termKey="apr">Fee Rate</GlossaryTerm>, value: rate },
     {
       label: (
         <span className="flex items-center gap-1">
-          <GlossaryTerm termKey="feeRate">Fee Amount</GlossaryTerm>
+          <GlossaryTerm termKey="originationFee">Fee Amount</GlossaryTerm>
           <FieldTooltip
             content="Origination fee is a one-time charge added to your loan when it's issued. It covers the cost of processing your loan application."
             label="What is Origination Fee?"
@@ -139,7 +169,11 @@ export default function StepReview() {
       label: (
         <span className="flex items-center">
           <GlossaryTerm termKey="repayment">Total to Repay</GlossaryTerm>
-          <AmountBreakdownTooltip principal={principal} originationFee={fee} estimatedFirstInterest={estimatedFirstInterest} />
+          <AmountBreakdownTooltip
+            principal={principal}
+            originationFee={fee}
+            estimatedFirstInterest={estimatedFirstInterest}
+          />
         </span>
       ),
       value: `${totalRepay.toLocaleString()} stroops`,
@@ -180,12 +214,27 @@ export default function StepReview() {
         <div className="bg-white border border-brown/20 rounded-2xl p-5 space-y-3 shadow-sm">
           <h3 className="font-semibold text-brown mb-2 text-lg">Loan Summary</h3>
           <ul className="list-disc pl-5 text-brown/80 space-y-2 text-sm">
-            <li>You are borrowing <strong>{principal.toLocaleString()} stroops</strong>.</li>
-            <li>You will use <strong>{count} {animalType}s</strong> as collateral.</li>
-            <li>The loan must be repaid in <strong>{loanTermDays} days</strong>.</li>
             <li>
-              You will owe a total of <strong>{totalRepay.toLocaleString()} stroops</strong> including fees.
-              <AmountBreakdownTooltip principal={principal} originationFee={fee} estimatedFirstInterest={estimatedFirstInterest} />
+              You are borrowing <strong>{principal.toLocaleString()} stroops</strong>.
+            </li>
+            <li>
+              You will use{' '}
+              <strong>
+                {count} {animalType}s
+              </strong>{' '}
+              as collateral.
+            </li>
+            <li>
+              The loan must be repaid in <strong>{loanTermDays} days</strong>.
+            </li>
+            <li>
+              You will owe a total of <strong>{totalRepay.toLocaleString()} stroops</strong>{' '}
+              including fees.
+              <AmountBreakdownTooltip
+                principal={principal}
+                originationFee={fee}
+                estimatedFirstInterest={estimatedFirstInterest}
+              />
             </li>
             <li>If you fail to repay, your collateral may be seized.</li>
           </ul>

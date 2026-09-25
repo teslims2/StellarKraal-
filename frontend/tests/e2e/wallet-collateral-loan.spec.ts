@@ -47,11 +47,19 @@ test.describe("critical borrowing journey", () => {
       { walletAddress: WALLET_ADDRESS }
     );
 
-    await page.route("**/api/v1/collateral/register", async (route) => {
+    await page.route("**/api/collateral/register", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({ xdr: "mock-collateral-xdr" }),
+      });
+    });
+
+    await page.route("**/api/v1/loans/estimate", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ originationFee: 10_000, totalAmount: 210_000 }),
       });
     });
 
@@ -93,20 +101,22 @@ test.describe("critical borrowing journey", () => {
     await page.getByRole("button", { name: /connect freighter wallet/i }).click();
     await expect(page.getByText(WALLET_ADDRESS.slice(0, 8))).toBeVisible();
 
+    await expect(page.getByText("Step 1 of 4")).toBeVisible();
     await page.getByLabel(/animal type/i).selectOption("cattle");
-    await page.getByPlaceholder("Number of animals").fill("5");
-    await page.getByPlaceholder("Average weight per animal").fill("250");
-    await page.getByLabel(/health status/i).selectOption("good");
-    await page.getByPlaceholder("Farm or region name").fill("Kaduna");
-    await page.getByPlaceholder("Total value in stroops").fill("1200000");
-    await page.getByRole("button", { name: /register collateral/i }).click();
+    await page.getByLabel("Count").fill("5");
+    await page.getByLabel(/appraised value/i).fill("1200000");
+    await page.getByRole("button", { name: /register & continue/i }).click();
 
-    await page.getByRole("button", { name: /register$/i }).click();
-    await expect(page.getByText(/Collateral registered successfully!/i)).toContainText(COLLATERAL_ID);
+    await expect(page.getByText("Step 2 of 4")).toBeVisible();
+    await page.getByLabel(/loan amount in stroops/i).fill("200000");
+    await page.getByRole("button", { name: /review terms/i }).click();
 
-    await expect(page.getByRole("heading", { name: /2\. request loan/i })).toBeVisible();
-    await page.getByPlaceholder("Loan amount (stroops)").fill("200000");
-    await page.getByRole("button", { name: /request loan/i }).click();
+    await expect(page.getByText("Step 3 of 4")).toBeVisible();
+    await page.getByRole("button", { name: /confirm & submit/i }).click();
+
+    await expect(page.getByText("Step 4 of 4")).toBeVisible();
+    await expect(page.getByText(COLLATERAL_ID)).toBeVisible();
+    await page.getByRole("button", { name: /submit loan request/i }).click();
     await expect(page.getByText(/Loan disbursed!/i)).toContainText(LOAN_ID);
 
     loans.push({
