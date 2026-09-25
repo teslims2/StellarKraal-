@@ -1,18 +1,27 @@
-"use client";
+'use client';
 
 import {
   getAddress as freighterGetAddress,
+  getNetworkDetails as freighterGetNetworkDetails,
   isAllowed as freighterIsAllowed,
   isConnected as freighterIsConnected,
   setAllowed as freighterSetAllowed,
   signTransaction as freighterSignTransaction,
-} from "@stellar/freighter-api";
+} from '@stellar/freighter-api';
+
+export type FreighterNetworkDetails = {
+  network: string;
+  networkUrl?: string;
+  networkPassphrase?: string;
+  sorobanRpcUrl?: string;
+};
 
 type FreighterTestApi = Partial<{
   isConnected: () => Promise<{ isConnected: boolean }>;
   isAllowed: () => Promise<{ isAllowed: boolean }>;
   setAllowed: () => Promise<{ isAllowed: boolean }>;
   getAddress: () => Promise<{ address: string }>;
+  getNetworkDetails: () => Promise<FreighterNetworkDetails>;
   signTransaction: (xdr: string, opts?: { network?: string }) => Promise<{ signedTxXdr: string }>;
 }>;
 
@@ -25,7 +34,7 @@ declare global {
 }
 
 function getTestApi(): FreighterTestApi | undefined {
-  if (typeof window === "undefined") return undefined;
+  if (typeof window === 'undefined') return undefined;
   return window.__STELLARKRAAL_E2E__;
 }
 
@@ -51,6 +60,12 @@ export async function getAddress() {
   const mock = getTestApi();
   if (mock?.getAddress) return mock.getAddress();
   return freighterGetAddress();
+}
+
+export async function getNetworkDetails() {
+  const mock = getTestApi();
+  if (mock?.getNetworkDetails) return mock.getNetworkDetails();
+  return freighterGetNetworkDetails();
 }
 
 export async function signTransaction(
