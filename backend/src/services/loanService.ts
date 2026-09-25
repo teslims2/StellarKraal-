@@ -369,8 +369,8 @@ export function listLoansPaginated(query: ListLoansQuery): ListLoansResult {
     throw new InvalidPaginationError();
   }
 
-  if (!isPageSize && limitRaw > 100) {
-    throw new InvalidPaginationError();
+  if (limitRaw > 100) {
+    throw new InvalidPaginationError("pageSize must be between 1 and 100");
   }
 
   const maxLimit = Math.min(limitRaw, 100);
