@@ -361,7 +361,9 @@ export default function HealthGauge({ value, history, loading }: Props) {
       aria-live="polite"
       aria-label={`Health factor: ${displayValue}x, ${label}${direction !== 'none' ? `, changed ${direction}` : ''}`}
     >
-      <svg viewBox="20 20 160 90" className="w-full max-w-xs" aria-hidden="true">
+      <svg viewBox="20 20 160 90" className="w-full max-w-xs" role="img" aria-labelledby="hg-title hg-desc">
+        <title id="hg-title">Health factor: {displayValue}x — {label}</title>
+        <desc id="hg-desc">Loan health factor gauge showing {label} status at {displayValue}x</desc>
         {/* Background track */}
         <path
           d={arcPath(180, 0)}

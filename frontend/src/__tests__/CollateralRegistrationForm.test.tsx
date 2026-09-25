@@ -2,6 +2,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import CollateralRegistrationForm from '@/components/CollateralRegistrationForm';
 import { ToastProvider, ToastContainer } from '@/components/toast';
+import ErrorBoundary from '@/components/ErrorBoundary';
 
 // Mock focus-trap-react so JSDOM doesn't throw on ConfirmDialog activation
 jest.mock("focus-trap-react", () => {
@@ -386,5 +387,35 @@ describe('CollateralRegistrationForm', () => {
         expect(localStorage.getItem('stellarkraal_collateral_form')).toBeNull();
       });
     });
+  });
+});
+
+// #494: Error boundary wrapping
+describe('CollateralRegistrationForm error boundary (#494)', () => {
+  function Bomb({ shouldThrow }: { shouldThrow: boolean }) {
+    if (shouldThrow) throw new Error('collateral form explosion');
+    return <span>OK</span>;
+  }
+
+  it('renders the error boundary fallback when a child throws', () => {
+    render(
+      <ToastProvider>
+        <ErrorBoundary section="Collateral Registration">
+          <Bomb shouldThrow={true} />
+        </ErrorBoundary>
+      </ToastProvider>
+    );
+    expect(screen.getByText(/something went wrong/i)).toBeTruthy();
+  });
+
+  it('renders children normally when no error occurs', () => {
+    render(
+      <ToastProvider>
+        <ErrorBoundary section="Collateral Registration">
+          <Bomb shouldThrow={false} />
+        </ErrorBoundary>
+      </ToastProvider>
+    );
+    expect(screen.getByText('OK')).toBeTruthy();
   });
 });

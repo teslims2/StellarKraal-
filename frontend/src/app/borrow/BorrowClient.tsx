@@ -5,6 +5,7 @@ import LoanForm from "@/components/LoanForm";
 import PageTransition from "@/components/PageTransition";
 import { Hero } from "@/components/Hero";
 import Spinner from "@/components/Spinner";
+import ErrorBoundary from "@/components/ErrorBoundary";
 
 // Heavy components loaded lazily to reduce initial JS bundle (#1070)
 const WalletConnect = dynamic(() => import("@/components/WalletConnect"), {
@@ -30,10 +31,12 @@ export default function BorrowClient() {
           <h1 className="text-3xl font-bold text-brown mb-6">Borrow</h1>
           <WalletConnect onConnect={setWallet} />
           {wallet && (
-            <CollateralRegistrationForm
-              walletAddress={wallet}
-              onSuccess={(id) => setCollateralId(id)}
-            />
+            <ErrorBoundary section="Collateral Registration" onRetry={() => {}}>
+              <CollateralRegistrationForm
+                walletAddress={wallet}
+                onSuccess={(id) => setCollateralId(id)}
+              />
+            </ErrorBoundary>
           )}
           {collateralId && (
             <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
