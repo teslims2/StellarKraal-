@@ -1,20 +1,18 @@
-"use client";
-import { useRef } from "react";
-import { useWizard, AnimalType, CollateralItem, makeItem } from "@/context/LoanWizardContext";
-import { signTransaction } from "@/lib/freighterClient";
-import { submitSignedXdr } from "@/lib/stellarUtils";
-import { invalidateCollateral } from "@/lib/api";
-import Spinner from "@/components/Spinner";
-import { FieldTooltip } from "@/components/Tooltip";
-import { WIZARD_FIELD_TOOLTIPS } from "@/lib/wizardFieldTooltips";
+'use client';
+import { useRef } from 'react';
+import { useWizard, AnimalType, CollateralItem, makeItem } from '@/context/LoanWizardContext';
+import { signTransaction } from '@/lib/freighterClient';
+import { submitSignedXdr } from '@/lib/stellarUtils';
+import { invalidateCollateral } from '@/lib/api';
+import Spinner from '@/components/Spinner';
 
 const ANIMAL_TYPES: { value: AnimalType; label: string; emoji: string }[] = [
-  { value: "cattle", label: "Cattle", emoji: "🐄" },
-  { value: "goat", label: "Goat", emoji: "🐐" },
-  { value: "sheep", label: "Sheep", emoji: "🐑" },
+  { value: 'cattle', label: 'Cattle', emoji: '🐄' },
+  { value: 'goat', label: 'Goat', emoji: '🐐' },
+  { value: 'sheep', label: 'Sheep', emoji: '🐑' },
 ];
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 interface Props {
   walletAddress: string;
@@ -50,10 +48,10 @@ export default function StepCollateral({ walletAddress }: Props) {
   // ── Keyboard reorder ────────────────────────────────────────────────────────
 
   function handleKeyDown(e: React.KeyboardEvent, index: number) {
-    if (e.key === "ArrowUp" && index > 0) {
+    if (e.key === 'ArrowUp' && index > 0) {
       e.preventDefault();
       moveItem(index, index - 1);
-    } else if (e.key === "ArrowDown" && index < collaterals.length - 1) {
+    } else if (e.key === 'ArrowDown' && index < collaterals.length - 1) {
       e.preventDefault();
       moveItem(index, index + 1);
     }
@@ -63,17 +61,20 @@ export default function StepCollateral({ walletAddress }: Props) {
 
   function onPointerDown(e: React.PointerEvent<HTMLDivElement>, index: number) {
     dragIndexRef.current = index;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const target = e.currentTarget as HTMLElement;
+    if (typeof target.setPointerCapture === 'function') {
+      target.setPointerCapture(e.pointerId);
+    }
   }
 
   function onDragStart(e: React.DragEvent, index: number) {
     dragIndexRef.current = index;
-    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.effectAllowed = 'move';
   }
 
   function onDragOver(e: React.DragEvent, index: number) {
     e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
+    e.dataTransfer.dropEffect = 'move';
     if (dragIndexRef.current !== null && dragIndexRef.current !== index) {
       moveItem(dragIndexRef.current, index);
       dragIndexRef.current = index;
@@ -98,35 +99,38 @@ export default function StepCollateral({ walletAddress }: Props) {
 
   async function handleRegister() {
     const err = validate();
-    if (err) { setField("error", err); return; }
+    if (err) {
+      setField('error', err);
+      return;
+    }
 
-    setField("loading", true);
-    setField("error", null);
+    setField('loading', true);
+    setField('error', null);
     try {
       const firstItem = collaterals[0];
       const res = await fetch(`${API}/api/collateral/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           owner: walletAddress,
-          animal_type: firstItem?.animalType || "cattle",
-          count: parseInt(firstItem?.count || "1"),
-          appraised_value: parseInt(firstItem?.appraisedValue || "0"),
+          animal_type: firstItem?.animalType || 'cattle',
+          count: parseInt(firstItem?.count || '1'),
+          appraised_value: parseInt(firstItem?.appraisedValue || '0'),
         }),
       });
-      if (!res.ok) throw new Error("Registration failed. Please try again.");
+      if (!res.ok) throw new Error('Registration failed. Please try again.');
       const { xdr } = await res.json();
       const { signedTxXdr } = await signTransaction(xdr, {
-        network: process.env.NEXT_PUBLIC_NETWORK || "TESTNET",
+        network: process.env.NEXT_PUBLIC_NETWORK || 'TESTNET',
       });
       const collateralId = await submitSignedXdr(signedTxXdr);
       invalidateCollateral();
-      setField("collateralId", String(collateralId));
+      setField('collateralId', String(collateralId));
       nextStep();
-    } catch (e: any) {
-      setField("error", e.message || "Something went wrong.");
+    } catch (error) {
+      setField('error', error instanceof Error ? error.message : 'Something went wrong.');
     } finally {
-      setField("loading", false);
+      setField('loading', false);
     }
   }
 
@@ -161,22 +165,37 @@ export default function StepCollateral({ walletAddress }: Props) {
               className="cursor-grab active:cursor-grabbing mt-1 text-brown/30 hover:text-brown/60 select-none focus:outline-none focus:ring-2 focus:ring-gold rounded"
               title="Drag to reorder or use arrow keys"
             >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                <circle cx="5" cy="4" r="1.5" /><circle cx="11" cy="4" r="1.5" />
-                <circle cx="5" cy="8" r="1.5" /><circle cx="11" cy="8" r="1.5" />
-                <circle cx="5" cy="12" r="1.5" /><circle cx="11" cy="12" r="1.5" />
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <circle cx="5" cy="4" r="1.5" />
+                <circle cx="11" cy="4" r="1.5" />
+                <circle cx="5" cy="8" r="1.5" />
+                <circle cx="11" cy="8" r="1.5" />
+                <circle cx="5" cy="12" r="1.5" />
+                <circle cx="11" cy="12" r="1.5" />
               </svg>
             </div>
 
             <div className="flex-1 space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-brown/70 mb-1">
+                  <label
+                    htmlFor={`${item.id}-animal-type`}
+                    className="block text-xs font-semibold text-brown/70 mb-1"
+                  >
                     Animal Type
                   </label>
                   <select
+                    id={`${item.id}-animal-type`}
                     value={item.animalType}
-                    onChange={(e) => updateItem(index, { animalType: e.target.value as AnimalType })}
+                    onChange={(e) =>
+                      updateItem(index, { animalType: e.target.value as AnimalType })
+                    }
                     disabled={loading}
                     className="w-full rounded-lg border border-brown/30 px-3 py-2 text-sm bg-white text-brown focus:outline-none focus:ring-2 focus:ring-gold"
                   >
@@ -189,10 +208,14 @@ export default function StepCollateral({ walletAddress }: Props) {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-brown/70 mb-1">
+                  <label
+                    htmlFor={`${item.id}-count`}
+                    className="block text-xs font-semibold text-brown/70 mb-1"
+                  >
                     Count
                   </label>
                   <input
+                    id={`${item.id}-count`}
                     type="number"
                     min="1"
                     placeholder="Count"
@@ -204,10 +227,14 @@ export default function StepCollateral({ walletAddress }: Props) {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-brown/70 mb-1">
+                  <label
+                    htmlFor={`${item.id}-appraised-value`}
+                    className="block text-xs font-semibold text-brown/70 mb-1"
+                  >
                     Appraised Value (stroops)
                   </label>
                   <input
+                    id={`${item.id}-appraised-value`}
                     type="number"
                     min="1"
                     placeholder="Value in stroops"
@@ -221,7 +248,8 @@ export default function StepCollateral({ walletAddress }: Props) {
 
               {item.count && item.appraisedValue && (
                 <p className="text-xs text-brown/60">
-                  ≈ {(parseInt(item.appraisedValue) / parseInt(item.count) / 10_000_000).toFixed(2)} XLM per head
+                  ≈ {(parseInt(item.appraisedValue) / parseInt(item.count) / 10_000_000).toFixed(2)}{' '}
+                  XLM per head
                 </p>
               )}
             </div>
@@ -251,7 +279,10 @@ export default function StepCollateral({ walletAddress }: Props) {
       </button>
 
       {error && (
-        <div role="alert" className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
+        <div
+          role="alert"
+          className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm"
+        >
           {error}
         </div>
       )}
@@ -268,7 +299,7 @@ export default function StepCollateral({ walletAddress }: Props) {
             Registering on-chain…
           </>
         ) : (
-          "Register & Continue →"
+          'Register & Continue →'
         )}
       </button>
     </div>

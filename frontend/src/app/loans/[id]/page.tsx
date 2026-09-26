@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
@@ -30,6 +30,134 @@ type ErrorType = '404' | 'network' | null;
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
+type StickyLoanActionType = 'repay' | 'liquidate';
+
+interface StickyLoanActionProps {
+  targetRef: RefObject<HTMLElement | null>;
+  action: StickyLoanActionType;
+  onAction: () => void;
+  disabled?: boolean;
+}
+
+const STICKY_ACTION_CONFIG = {
+  repay: {
+    label: 'Repay loan',
+    buttonClass:
+      'bg-[color:var(--token-primary)] text-[color:var(--token-on-primary)] hover:bg-[color:var(--token-primary-hover)]',
+  },
+  liquidate: {
+    label: 'Liquidate loan',
+    buttonClass:
+      'bg-[color:var(--token-danger)] text-white hover:bg-[color:var(--token-danger)]/90',
+  },
+} as const;
+
+function StickyActionIcon({ action }: { action: StickyLoanActionType }) {
+  if (action === 'liquidate') {
+    return (
+      <svg
+        aria-hidden="true"
+        className="h-5 w-5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth={2}
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M12 9v3.75m0 3.75h.008M10.29 3.86L2.82 17a2 2 0 001.73 3h14.9a2 2 0 001.73-3L13.71 3.86a2 2 0 00-3.42 0z"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-5 w-5"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-4-4l4 4 4-4M5 21h14" />
+    </svg>
+  );
+}
+
+export function StickyLoanAction({
+  targetRef,
+  action,
+  onAction,
+  disabled = false,
+}: StickyLoanActionProps) {
+  const [isMounted, setIsMounted] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
+  const config = STICKY_ACTION_CONFIG[action];
+
+  useEffect(() => {
+    const target = targetRef.current;
+    if (!target) return;
+
+    let showTimer: ReturnType<typeof setTimeout> | undefined;
+    let hideTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (showTimer) clearTimeout(showTimer);
+        if (hideTimer) clearTimeout(hideTimer);
+
+        const hasScrolledPast = !entry.isIntersecting && entry.boundingClientRect.bottom < 0;
+
+        if (hasScrolledPast) {
+          setIsMounted(true);
+          showTimer = setTimeout(() => setIsVisible(true), 0);
+        } else {
+          setIsVisible(false);
+          hideTimer = setTimeout(() => setIsMounted(false), 150);
+        }
+      },
+      { threshold: 0 }
+    );
+
+    observer.observe(target);
+
+    return () => {
+      observer.disconnect();
+      if (showTimer) clearTimeout(showTimer);
+      if (hideTimer) clearTimeout(hideTimer);
+    };
+  }, [targetRef]);
+
+  if (!isMounted) return null;
+
+  return (
+    <div
+      role="region"
+      aria-label="Quick loan action"
+      aria-live="polite"
+      aria-atomic="true"
+      aria-hidden={!isVisible}
+      inert={!isVisible}
+      data-visible={isVisible}
+      className={`fixed inset-x-0 bottom-16 z-50 border-t px-4 pb-2 pt-1 shadow-lg transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none sm:hidden ${
+        isVisible ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-2 opacity-0'
+      } border-[color:var(--token-border)] bg-[color:var(--token-surface-raised)]`}
+    >
+      <button
+        type="button"
+        onClick={onAction}
+        disabled={disabled}
+        className={`flex min-h-12 w-full items-center justify-center gap-2 rounded-xl px-5 py-3 font-semibold shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--token-accent)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${config.buttonClass}`}
+      >
+        <StickyActionIcon action={action} />
+        {config.label}
+      </button>
+    </div>
+  );
+}
+
 export default function LoanDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -37,13 +165,8 @@ export default function LoanDetailPage() {
   const [error, setError] = useState<ErrorType>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
-  const activeLoanId = loan?.status === 'active' ? loan.id : '';
-  const {
-    healthFactor,
-    error: healthError,
-    lastUpdated,
-    refresh: refreshHealth,
-  } = useHealthFactor(activeLoanId);
+  const [primaryActionReady, setPrimaryActionReady] = useState(false);
+  const primaryActionRef = useRef<HTMLButtonElement>(null);
 
   const fetchLoan = async () => {
     try {
@@ -118,7 +241,8 @@ export default function LoanDetailPage() {
     );
   }
 
-  async function copyId(loanId: string) {
+  async function copyId() {
+    const loanId = loan?.id;
     if (!loanId) return;
     try {
       await navigator.clipboard.writeText(loanId);
@@ -130,7 +254,9 @@ export default function LoanDetailPage() {
   }
 
   return (
-    <main className="max-w-2xl mx-auto px-4 py-10">
+    <main
+      className={`mx-auto max-w-2xl px-4 py-10 ${loan.status === 'active' ? 'pb-44 sm:pb-10' : ''}`}
+    >
       <Link href="/loans" className="text-brown/60 hover:text-brown text-sm mb-6 inline-block">
         ← Back to Loans
       </Link>
@@ -195,64 +321,23 @@ export default function LoanDetailPage() {
       </div>
 
       {loan.status === 'active' && (
-        <section
-          aria-labelledby="loan-health-heading"
-          className="bg-white rounded-2xl p-6 shadow mb-6"
-        >
-          <div className="flex items-start justify-between gap-4 mb-4">
-            <div>
-              <h2 id="loan-health-heading" className="text-xl font-semibold text-brown">
-                Loan Health
-              </h2>
-              <p className="text-sm text-brown/60 mt-1">Live collateral health factor</p>
-            </div>
-            {lastUpdated && (
-              <p className="text-xs text-brown/50 whitespace-nowrap">
-                Last updated{' '}
-                <time dateTime={lastUpdated.toISOString()}>
-                  {lastUpdated.toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                  })}
-                </time>
-              </p>
-            )}
-          </div>
-
-          {healthFactor !== null ? (
-            <>
-              <HealthGauge value={healthFactor} />
-              {healthError && (
-                <p role="status" className="text-sm text-red-600 text-center mt-3">
-                  Could not refresh health factor. Showing the last known value.
-                </p>
-              )}
-            </>
-          ) : healthError ? (
-            <div role="alert" className="text-center py-4">
-              <p className="text-sm text-red-600 mb-3">Unable to load the loan health factor.</p>
-              <button
-                type="button"
-                onClick={refreshHealth}
-                className="text-sm font-semibold text-brown underline underline-offset-4 hover:text-brown/80 focus:outline-none focus:ring-2 focus:ring-brown rounded px-2 py-1"
-              >
-                Retry health check
-              </button>
-            </div>
-          ) : (
-            <SkeletonHealthGauge />
+        <>
+          <LoanRepaymentCalculator
+            loanId={loan.id}
+            outstanding={loan.outstanding ?? loan.amount}
+            collateralValue={loan.collateral_value ?? loan.amount}
+            actionButtonRef={primaryActionRef}
+            onPrimaryActionReady={setPrimaryActionReady}
+            onProceed={() => router.push('/dashboard')}
+          />
+          {primaryActionReady && (
+            <StickyLoanAction
+              targetRef={primaryActionRef}
+              action="repay"
+              onAction={() => primaryActionRef.current?.click()}
+            />
           )}
-        </section>
-      )}
-
-      {loan.status === 'active' && (
-        <LoanRepaymentCalculator
-          loanId={loan.id}
-          outstanding={loan.outstanding ?? loan.amount}
-          collateralValue={loan.collateral_value ?? loan.amount}
-          onProceed={() => router.push('/dashboard')}
-        />
+        </>
       )}
     </main>
   );

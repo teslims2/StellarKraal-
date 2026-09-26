@@ -1,7 +1,10 @@
 import React from 'react';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
-import LoanDetailPage from '@/app/loans/[id]/page';
-import { useHealthFactor } from '@/hooks/useHealthFactor';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { axe, toHaveNoViolations } from 'jest-axe';
+import LoanDetailPage, { StickyLoanAction } from '@/app/loans/[id]/page';
+
+expect.extend(toHaveNoViolations);
 
 jest.mock('next/navigation', () => ({
   useParams: () => ({ id: 'loan-001' }),
@@ -48,14 +51,86 @@ const mockLoan = {
   onChainStatus: null,
 };
 
+let intersectionCallback: IntersectionObserverCallback | null = null;
+const mockObserve = jest.fn();
+const mockUnobserve = jest.fn();
+const mockDisconnect = jest.fn();
+const originalIntersectionObserver = window.IntersectionObserver;
+
+class MockIntersectionObserver {
+  readonly root = null;
+  readonly rootMargin = '';
+  readonly thresholds = [];
+  observe = mockObserve;
+  unobserve = mockUnobserve;
+  disconnect = mockDisconnect;
+  takeRecords = () => [];
+
+  constructor(callback: IntersectionObserverCallback) {
+    intersectionCallback = callback;
+  }
+}
+
+function StickyActionHarness({
+  action,
+  onAction,
+  disabled = false,
+}: {
+  action: 'repay' | 'liquidate';
+  onAction: () => void;
+  disabled?: boolean;
+}) {
+  const targetRef = React.useRef<HTMLButtonElement>(null);
+
+  return (
+    <>
+      <button ref={targetRef} type="button">
+        Main action
+      </button>
+      <StickyLoanAction
+        targetRef={targetRef}
+        action={action}
+        onAction={onAction}
+        disabled={disabled}
+      />
+    </>
+  );
+}
+
+function setIntersection(isIntersecting: boolean, bottom: number) {
+  act(() => {
+    intersectionCallback?.(
+      [
+        {
+          isIntersecting,
+          boundingClientRect: { bottom },
+        } as IntersectionObserverEntry,
+      ],
+      {} as IntersectionObserver
+    );
+  });
+}
+
 beforeEach(() => {
   jest.resetAllMocks();
-  jest.mocked(useHealthFactor).mockReturnValue({
-    healthFactor: 15_000,
-    loading: false,
-    error: null,
-    lastUpdated: new Date('2026-01-01T12:00:00.000Z'),
-    refresh: jest.fn(),
+  intersectionCallback = null;
+  Object.defineProperty(window, 'IntersectionObserver', {
+    configurable: true,
+    writable: true,
+    value: MockIntersectionObserver,
+  });
+  Object.defineProperty(global, 'IntersectionObserver', {
+    configurable: true,
+    writable: true,
+    value: MockIntersectionObserver,
+  });
+});
+
+afterAll(() => {
+  Object.defineProperty(window, 'IntersectionObserver', {
+    configurable: true,
+    writable: true,
+    value: originalIntersectionObserver,
   });
 });
 
@@ -224,9 +299,102 @@ describe('LoanDetailPage', () => {
       fireEvent.click(copyBtn);
 
       expect(clipboardMock).toHaveBeenCalledWith('loan-001');
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /loan id copied/i })).toBeInTheDocument();
-      });
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /loan id copied/i })).toBeInTheDocument()
+      );
+    });
+  });
+
+  describe('StickyLoanAction (#827)', () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('appears only after the main CTA scrolls above the viewport', () => {
+      jest.useFakeTimers();
+      const onAction = jest.fn();
+      render(<StickyActionHarness action="repay" onAction={onAction} />);
+
+      expect(mockObserve).toHaveBeenCalledWith(screen.getByRole('button', { name: 'Main action' }));
+      expect(screen.queryByRole('region', { name: 'Quick loan action' })).not.toBeInTheDocument();
+
+      setIntersection(false, 600);
+      act(() => jest.advanceTimersByTime(150));
+      expect(screen.queryByRole('region', { name: 'Quick loan action' })).not.toBeInTheDocument();
+
+      setIntersection(false, -1);
+      act(() => jest.advanceTimersByTime(0));
+
+      const region = screen.getByRole('region', { name: 'Quick loan action' });
+      expect(region).toHaveAttribute('data-visible', 'true');
+      expect(region).toHaveClass('bottom-16', 'duration-150', 'sm:hidden');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Repay loan' }));
+      expect(onAction).toHaveBeenCalledTimes(1);
+
+      setIntersection(true, 100);
+      expect(region).toHaveAttribute('data-visible', 'false');
+      act(() => jest.advanceTimersByTime(150));
+      expect(screen.queryByRole('region', { name: 'Quick loan action' })).not.toBeInTheDocument();
+    });
+
+    it.each([
+      ['repay', 'Repay loan'],
+      ['liquidate', 'Liquidate loan'],
+    ] as const)('renders the %s role action', (action, label) => {
+      jest.useFakeTimers();
+      render(<StickyActionHarness action={action} onAction={jest.fn()} />);
+
+      setIntersection(false, -1);
+      act(() => jest.advanceTimersByTime(0));
+
+      expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
+    });
+
+    it('supports keyboard focus and activation', async () => {
+      const user = userEvent.setup();
+      const onAction = jest.fn();
+      render(<StickyActionHarness action="repay" onAction={onAction} />);
+
+      await user.tab();
+      expect(screen.getByRole('button', { name: 'Main action' })).toHaveFocus();
+
+      setIntersection(false, -1);
+      expect(await screen.findByRole('region', { name: 'Quick loan action' })).toBeInTheDocument();
+
+      await user.tab();
+      const stickyButton = screen.getByRole('button', { name: 'Repay loan' });
+      expect(stickyButton).toHaveFocus();
+
+      await user.keyboard('{Enter}');
+      expect(onAction).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the action disabled when requested', () => {
+      jest.useFakeTimers();
+      render(<StickyActionHarness action="repay" onAction={jest.fn()} disabled />);
+
+      setIntersection(false, -1);
+      act(() => jest.advanceTimersByTime(0));
+
+      expect(screen.getByRole('button', { name: 'Repay loan' })).toBeDisabled();
+    });
+
+    it('has no detectable accessibility violations when visible', async () => {
+      const { container } = render(<StickyActionHarness action="liquidate" onAction={jest.fn()} />);
+
+      setIntersection(false, -1);
+      expect(await screen.findByRole('region', { name: 'Quick loan action' })).toBeInTheDocument();
+
+      expect(await axe(container)).toHaveNoViolations();
+    });
+
+    it('disconnects the observer on unmount', () => {
+      const { unmount } = render(<StickyActionHarness action="repay" onAction={jest.fn()} />);
+
+      expect(mockObserve).toHaveBeenCalledTimes(1);
+      unmount();
+      expect(mockDisconnect).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -245,6 +413,7 @@ describe('LoanDetailPage', () => {
       });
 
       expect(screen.getByText(/repayment calculator/i)).toBeInTheDocument();
+      expect(screen.getByRole('main')).toHaveClass('pb-44', 'sm:pb-10');
       // Loan is already known from the page context — no separate loan ID input.
       expect(screen.queryByPlaceholderText('Enter loan ID')).not.toBeInTheDocument();
       expect(screen.getByPlaceholderText('Enter repayment amount')).toBeInTheDocument();

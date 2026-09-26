@@ -12,6 +12,13 @@ export interface CollateralItem {
   collateralId: string; // returned after on-chain register
 }
 
+export interface SubmittedLoan {
+  loanId: string;
+  amount: number;
+  termDays: string;
+  totalRepay: number;
+}
+
 export interface WizardState {
   // Step 1 – Collateral (multi-item, ordered)
   collaterals: CollateralItem[];
@@ -50,10 +57,10 @@ interface WizardCtx extends WizardState {
 export function makeItem(overrides?: Partial<CollateralItem>): CollateralItem {
   return {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    animalType: "cattle",
-    count: "",
-    appraisedValue: "",
-    collateralId: "",
+    animalType: 'cattle',
+    count: '',
+    appraisedValue: '',
+    collateralId: '',
     ...overrides,
   };
 }
@@ -71,6 +78,39 @@ const defaults: WizardState = {
   error: null,
 };
 
+function createInitialState(): WizardState {
+  return { ...defaults, collaterals: [makeItem()] };
+}
+
+function hasDraftData(state: WizardState): boolean {
+  return (
+    state.collaterals.some(
+      (item) =>
+        item.count.trim().length > 0 ||
+        item.appraisedValue.trim().length > 0 ||
+        item.collateralId.trim().length > 0
+    ) || state.loanAmount.trim().length > 0
+  );
+}
+
+function withPrimaryItem(state: WizardState): WizardState {
+  if (state.collaterals && state.collaterals.length > 0) return state;
+  if (!state.count && !state.appraisedValue) {
+    return { ...state, collaterals: [makeItem()] };
+  }
+  return {
+    ...state,
+    collaterals: [
+      makeItem({
+        animalType: state.animalType,
+        count: state.count,
+        appraisedValue: state.appraisedValue,
+        collateralId: state.collateralId,
+      }),
+    ],
+  };
+}
+
 const STORAGE_KEY = 'loan_wizard_state';
 // Persisted wizard state older than this is treated as gone rather than
 // restored (#523) — a form left mid-fill for a day is more likely stale
@@ -86,7 +126,7 @@ export function LoanWizardProvider({
   children: ReactNode;
   walletAddress?: string;
 }) {
-  const [state, setState] = useState<WizardState>(defaults);
+  const [state, setState] = useState<WizardState>(createInitialState);
   const restoredRef = useRef(false);
 
   // Autosaves `state` to localStorage as the wizard is filled in, and gives
@@ -95,6 +135,7 @@ export function LoanWizardProvider({
   const { restoreSavedData, clearSavedData } = useFormAutoSave<WizardState>({
     storageKey: STORAGE_KEY,
     data: state,
+    enabled: hasDraftData(state),
     walletAddress,
     interval: 1000,
     expiryMs: SAVE_EXPIRY_MS,
@@ -106,7 +147,7 @@ export function LoanWizardProvider({
     restoredRef.current = true;
     const restored = restoreSavedData();
     if (restored) {
-      setState(restored);
+      setState(withPrimaryItem(restored));
     }
     // Intentionally run once — restoreSavedData reads storage synchronously
     // and re-running it on every render would fight the autosave interval.
@@ -117,7 +158,20 @@ export function LoanWizardProvider({
   }
 
   function setCollaterals(items: CollateralItem[]) {
-    setState((s) => ({ ...s, collaterals: items }));
+    setState((s) => {
+      const primary = items[0];
+      return {
+        ...s,
+        collaterals: items,
+        ...(primary
+          ? {
+              animalType: primary.animalType,
+              count: primary.count,
+              appraisedValue: primary.appraisedValue,
+            }
+          : {}),
+      };
+    });
   }
 
   function canProceed(): boolean {
@@ -146,7 +200,7 @@ export function LoanWizardProvider({
   }
 
   function reset() {
-    setState(defaults);
+    setState(createInitialState());
     clearSavedData();
   }
 

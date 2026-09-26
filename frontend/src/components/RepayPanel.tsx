@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { signTransaction } from "@/lib/freighterClient";
 import { submitSignedXdr } from "@/lib/stellarUtils";
 import { invalidateLoans, throwIfNotOk } from "@/lib/api";
@@ -10,6 +11,7 @@ import Card from "@/components/Card";
 import Spinner from "@/components/Spinner";
 import { useToast } from "@/components/toast";
 import { useNetworkMismatch } from "@/hooks/useNetworkMismatch";
+import { useTransactionStatus } from "@/hooks/useTransactionStatus";
 
 interface Props {
   walletAddress: string;
@@ -41,13 +43,13 @@ const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 const inputCls =
   "w-full border border-brown/30 dark:border-gold/40 rounded-lg px-3 py-2 bg-white dark:bg-[#2A1A08] text-brown dark:text-cream placeholder:text-brown/40 dark:placeholder:text-cream/40 focus:outline-none focus:ring-2 focus:ring-gold dark:focus:ring-[#F5D060]";
 
-import { useEffect, useRef } from "react";
-
 export default function RepayPanel({ walletAddress }: Props) {
   const router = useRouter();
   const [loanId, setLoanId] = useState("");
   const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
+  const [pendingHash, setPendingHash] = useState<string | null>(null);
+  const [pendingError, setPendingError] = useState<string | null>(null);
   const [isStickyVisible, setIsStickyVisible] = useState(false);
   const toast = useToast();
   const networkMismatch = useNetworkMismatch(walletAddress);
@@ -71,8 +73,7 @@ export default function RepayPanel({ walletAddress }: Props) {
 
   async function repay() {
     setLoading(true);
-    setStatusMsg(null);
-    setOptimisticMsg('⏳ Repayment recorded — awaiting confirmation…');
+    setPendingError(null);
     try {
       const idempotencyKey =
         typeof crypto !== 'undefined' && crypto.randomUUID
@@ -96,20 +97,34 @@ export default function RepayPanel({ walletAddress }: Props) {
       const { signedTxXdr } = await signTransaction(xdr, {
         network: process.env.NEXT_PUBLIC_NETWORK || 'TESTNET',
       });
-      await submitSignedXdr(signedTxXdr);
-      // Loan state changed — drop cached loan lists so they revalidate.
+      const hash = await submitSignedXdr(signedTxXdr);
+      setPendingHash(hash);
       invalidateLoans();
-      toast.success("Repayment submitted successfully!");
-      setLoanId("");
-      setAmount("");
     } catch (e) {
-      // #532: classify network / 4xx / 5xx failures into the right toast.
       const { variant, message } = classifyApiError(e);
       toast[variant](message);
     } finally {
       setLoading(false);
     }
   }
+
+  function handleTxTerminal(status: "confirmed" | "failed", errorCode?: string) {
+    if (status === "confirmed") {
+      toast.success("Repayment submitted successfully!");
+      setLoanId("");
+      setAmount("");
+    } else if (status === "failed") {
+      const msg = errorCode ? `Transaction failed: ${errorCode}` : 'Transaction failed';
+      setPendingError(msg);
+      toast.error(msg);
+    }
+    setPendingHash(null);
+  }
+
+  useTransactionStatus(pendingHash, {
+    interval: 3000,
+    onTerminal: handleTxTerminal,
+  });
 
   function scrollToForm() {
     mainButtonRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -151,6 +166,13 @@ export default function RepayPanel({ walletAddress }: Props) {
               ) : "Repay"}
             </button>
           </Tooltip>
+          {pendingHash && (
+            <div className="p-3 rounded-xl text-sm bg-amber-50 border border-amber-200 text-amber-800" role="status" aria-live="polite">
+              <p className="font-medium">Transaction pending confirmation...</p>
+              <p className="font-mono text-xs mt-1 break-all">{pendingHash}</p>
+              {pendingError && <p className="text-red-600 mt-1">{pendingError}</p>}
+            </div>
+          )}
         </div>
       </Card>
 
