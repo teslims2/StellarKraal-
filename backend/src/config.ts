@@ -98,6 +98,9 @@ const envSchema = z.object({
   LOG_MAX_FILES: z.string().regex(/^\d+$/, 'LOG_MAX_FILES must be a number').default('7'),
   // Log rotation: maximum size of a single log file before rotation (e.g., "10m")
   LOG_MAX_SIZE: z.string().default('10m'),
+  /** Optional bearer token protecting the Prometheus `/metrics` endpoint.
+   *  When unset, `/metrics` remains unauthenticated (dev/local only). */
+  METRICS_TOKEN: z.string().optional(),
   // Optional PostgreSQL connection URL; falls back to SQLite when unset.
   DATABASE_URL: z
     .string()

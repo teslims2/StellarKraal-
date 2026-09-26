@@ -9,6 +9,7 @@ import SkeletonHealthDashboard from "@/components/SkeletonHealthDashboard";
 import SkeletonLoanCard from "@/components/SkeletonLoanCard";
 import HelpMenu from "@/components/HelpMenu";
 import OnboardingChecklist from "@/components/OnboardingChecklist";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import { useHealthFactor } from "@/hooks/useHealthFactor";
 import { useOnboarding } from "@/hooks/useOnboarding";
 import { Hero } from "@/components/Hero";
@@ -203,7 +204,9 @@ export default function DashboardClient() {
             />
           </div>
           <div className="mt-4">
-            <RepayPanel walletAddress={wallet} />
+            <ErrorBoundary section="Repay Loan" onRetry={() => {}}>
+              <RepayPanel walletAddress={wallet} />
+            </ErrorBoundary>
           </div>
           <div className="mt-4">
             <TransactionHistory walletAddress={wallet} />

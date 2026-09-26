@@ -40,4 +40,28 @@ describe('Accessibility Tests', () => {
     });
     expect(results).toHaveNoViolations();
   });
+
+  test('HealthGauge SVG has accessible title, description, and role', async () => {
+    const { container } = render(<HealthGauge value={15000} />);
+    const svg = container.querySelector('svg');
+    expect(svg).toHaveAttribute('role', 'img');
+    expect(svg).toHaveAttribute('aria-labelledby', 'hg-title hg-desc');
+    expect(svg).toHaveTextContent('Health factor: 1.50x — Safe');
+    const title = svg?.querySelector('title');
+    expect(title).toHaveTextContent(/Health factor: 1\.50x — Safe/);
+    const desc = svg?.querySelector('desc');
+    expect(desc).toHaveTextContent(/Loan health factor gauge/);
+  });
+
+  test('HealthGauge with history data points has aria-labels', async () => {
+    const history = [
+      { date: '2026-01-01', value: 15000 },
+      { date: '2026-01-02', value: 12000 },
+    ];
+    const { container } = render(<HealthGauge value={15000} history={history} />);
+    const circles = container.querySelectorAll('circle[aria-label]');
+    expect(circles.length).toBeGreaterThanOrEqual(2);
+    expect(circles[0]).toHaveAttribute('aria-label');
+    expect(circles[1]).toHaveAttribute('aria-label');
+  });
 });

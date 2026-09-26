@@ -104,6 +104,7 @@ import { registry, httpActiveConnections, httpRequestDurationSeconds, httpReques
 import { fireAlert } from './utils/alerting';
 import { rules } from './utils/alertRules';
 import { healthRouter } from './routes/health';
+import { metricsAuthMiddleware } from './middleware/metricsAuth';
 
 // ── 5xx spike tracking (rolling 60s window) ───────────────────────────────────
 const fivexxTimestamps: number[] = [];
@@ -187,10 +188,11 @@ app.use('/api/v1/health', healthRouter);
  * application-specific counters and histograms (HTTP requests, duration,
  * DB pool acquired/available/wait).
  *
- * Intentionally unauthenticated — metrics should be restricted at the
- * network/ingress layer (e.g., only accessible from the Prometheus scrape subnet).
+ * When METRICS_TOKEN is configured, requires Authorization: Bearer <token>.
+ * Otherwise, metrics are accessible without authentication (intended for
+ * local/dev only).
  */
-app.get('/metrics', async (_req: Request, res: Response) => {
+app.get('/metrics', metricsAuthMiddleware, async (_req: Request, res: Response) => {
   try {
     res.set('Content-Type', registry.contentType);
     res.end(await registry.metrics());
