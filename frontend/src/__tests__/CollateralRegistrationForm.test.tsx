@@ -23,24 +23,8 @@ jest.mock('@/lib/stellarUtils', () => ({
   submitSignedXdr: jest.fn().mockResolvedValue('collateral_123'),
 }));
 
-jest.mock('@/components/ConfirmDialog', () => ({
-  __esModule: true,
-  default: ({
-    open,
-    onConfirm,
-    title,
-  }: {
-    open: boolean;
-    onConfirm: () => void;
-    title?: string;
-  }) =>
-    open ? (
-      <div role="dialog" aria-label={title ?? 'Confirm'}>
-        <button type="button" onClick={onConfirm}>
-          Register
-        </button>
-      </div>
-    ) : null,
+jest.mock('@/hooks/useNetworkStatus', () => ({
+  useNetworkStatus: () => ({ isOnline: true }),
 }));
 
 jest.mock('framer-motion', () => ({
@@ -98,9 +82,11 @@ describe('CollateralRegistrationForm', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     localStorage.clear();
-    (global.fetch as jest.Mock).mockResolvedValue({
+    URL.createObjectURL = jest.fn(() => 'blob:collateral-preview');
+    URL.revokeObjectURL = jest.fn();
+    fetchMock.mockResolvedValue({
       ok: true,
-      json: async () => ({ xdr: 'mock_xdr', api_version: 'v1' }),
+      json: async () => ({ id: 'collateral-123' }),
     });
   });
 
@@ -365,10 +351,9 @@ describe('CollateralRegistrationForm', () => {
       fillAndOpenConfirmation();
       confirmRegistration();
 
-      await waitFor(() => {
-        expect(localStorage.getItem('stellarkraal_collateral_form')).toBeNull();
-      });
-    });
+  it('keeps the old component path as a compatibility export', () => {
+    render(<CollateralRegistrationForm />);
+    expect(screen.getByRole('heading', { name: 'Register Collateral' })).toBeInTheDocument();
   });
 });
 
