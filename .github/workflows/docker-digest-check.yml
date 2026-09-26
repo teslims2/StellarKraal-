@@ -1,0 +1,93 @@
+name: Docker Digest Validation
+
+# Validates that all Dockerfile FROM instructions and docker-compose image
+# references use pinned digest SHAs, preventing silent drift from floating tags.
+#
+# Closes #1262
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/Dockerfile"
+      - "frontend/Dockerfile"
+      - "docker-compose*.yml"
+      - ".github/workflows/docker-digest-check.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "backend/Dockerfile"
+      - "frontend/Dockerfile"
+      - "docker-compose*.yml"
+      - ".github/workflows/docker-digest-check.yml"
+
+jobs:
+  validate-digests:
+    name: Check all images are digest-pinned
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check backend Dockerfile for digest pins
+        run: |
+          echo "=== backend/Dockerfile ==="
+          # Every FROM line must include @sha256:
+          FLOATING=$(grep -E '^FROM ' backend/Dockerfile | grep -v '@sha256:' || true)
+          if [ -n "$FLOATING" ]; then
+            echo "❌ The following FROM lines in backend/Dockerfile are NOT pinned to a digest:"
+            echo "$FLOATING"
+            exit 1
+          fi
+          echo "✅ All backend FROM lines are digest-pinned."
+
+      - name: Check frontend Dockerfile for digest pins
+        run: |
+          echo "=== frontend/Dockerfile ==="
+          FLOATING=$(grep -E '^FROM ' frontend/Dockerfile | grep -v '@sha256:' || true)
+          if [ -n "$FLOATING" ]; then
+            echo "❌ The following FROM lines in frontend/Dockerfile are NOT pinned to a digest:"
+            echo "$FLOATING"
+            exit 1
+          fi
+          echo "✅ All frontend FROM lines are digest-pinned."
+
+      - name: Check docker-compose.yml for digest pins
+        run: |
+          echo "=== docker-compose.yml ==="
+          # Extract image: lines (excluding built services that have a build: key)
+          # A service that only specifies build: with no explicit image: is fine.
+          # We look for plain `image:` values (pulled from a registry) that lack @sha256:
+          FLOATING=$(grep -E '^\s+image:\s+' docker-compose.yml | grep -v '@sha256:' || true)
+          if [ -n "$FLOATING" ]; then
+            echo "❌ The following image references in docker-compose.yml are NOT digest-pinned:"
+            echo "$FLOATING"
+            exit 1
+          fi
+          echo "✅ All docker-compose.yml images are digest-pinned."
+
+      - name: Check docker-compose.prod.yml for digest pins (if exists)
+        run: |
+          if [ -f docker-compose.prod.yml ]; then
+            echo "=== docker-compose.prod.yml ==="
+            FLOATING=$(grep -E '^\s+image:\s+' docker-compose.prod.yml | grep -v '@sha256:' || true)
+            if [ -n "$FLOATING" ]; then
+              echo "❌ Floating image references found in docker-compose.prod.yml:"
+              echo "$FLOATING"
+              exit 1
+            fi
+            echo "✅ All docker-compose.prod.yml images are digest-pinned."
+          else
+            echo "ℹ️  docker-compose.prod.yml not found — skipping."
+          fi
+
+      - name: Summary
+        if: success()
+        run: |
+          echo "### ✅ Docker Digest Validation Passed" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "All Dockerfile FROM instructions and docker-compose image references" >> "$GITHUB_STEP_SUMMARY"
+          echo "are pinned to immutable digest SHAs." >> "$GITHUB_STEP_SUMMARY"

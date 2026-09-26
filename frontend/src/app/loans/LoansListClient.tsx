@@ -1,25 +1,24 @@
 'use client';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { motion, useReducedMotion } from 'framer-motion';
 import SearchFilterBar from '@/components/SearchFilterBar';
 import PageTransition from '@/components/PageTransition';
 import Card from '@/components/Card';
 import ScrollToTopButton from '@/components/ScrollToTopButton';
+import LoansEmptyState from '@/components/LoansEmptyState';
+import SkeletonLoansPage from '@/components/SkeletonLoansPage';
 import { badgeVariants } from '@/lib/animations';
 import { useScrollPosition } from '@/hooks/useScrollPosition';
+import { useLoans } from '@/hooks/useLoans';
+import Link from 'next/link';
 
-interface Loan {
-  id: string;
-  borrower: string;
-  amount: number;
-  status: string;
-  createdAt: string;
-}
+// Closes #526 — integrated useLoans SWR hook, amount range filter, and collateral ID search.
 
 const STATUS_OPTIONS = ['active', 'repaid', 'liquidated', 'pending'];
 const TYPE_OPTIONS: string[] = [];
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+/** Max XLM slider bound — adjust if portfolio amounts grow beyond 100k */
+const MAX_AMOUNT = 100_000;
 
 /** Maps loan status to design-token badge classes (WCAG AA compliant). */
 function statusBadgeClasses(status: string): string {
@@ -52,43 +51,69 @@ function LoanStatusBadge({ status, reduced }: { status: string; reduced: boolean
 
 function LoanListContent() {
   const searchParams = useSearchParams();
-  const [loans, setLoans] = useState<Loan[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { loans, isLoading, error } = useLoans();
   const reduced = useReducedMotion();
 
-  useEffect(() => {
-    setLoading(true);
-    fetch(`${API}/api/loans`)
-      .then((r) => r.json())
-      .then((data) => setLoans(Array.isArray(data) ? data : []))
-      .catch(() => setLoans([]))
-      .finally(() => setLoading(false));
-  }, []);
-
+  // Read filter state from URL (synced by useSearchFilter inside SearchFilterBar)
   const q = (searchParams.get('q') ?? '').toLowerCase();
   const statuses = searchParams.getAll('status');
+  const amountMin = searchParams.get('amountMin') ? Number(searchParams.get('amountMin')) : null;
+  const amountMax = searchParams.get('amountMax') ? Number(searchParams.get('amountMax')) : null;
+  const dateFrom = searchParams.get('dateFrom') ?? '';
+  const dateTo = searchParams.get('dateTo') ?? '';
 
   const filtered = loans.filter((loan) => {
+    // Text search: loan ID, collateral ID (if present), or borrower address (case-insensitive)
+    const collateralId = ('collateralId' in loan ? (loan as { collateralId?: string }).collateralId : '') ?? '';
     const matchesQuery =
       !q ||
       loan.id.toLowerCase().includes(q) ||
       loan.borrower.toLowerCase().includes(q) ||
-      loan.status.toLowerCase().includes(q);
+      loan.status.toLowerCase().includes(q) ||
+      collateralId.toLowerCase().includes(q);
+
+    // Status chip filter
     const matchesStatus = statuses.length === 0 || statuses.includes(loan.status);
-    return matchesQuery && matchesStatus;
+
+    // Amount range filter
+    const matchesAmountMin = amountMin === null || loan.amount >= amountMin;
+    const matchesAmountMax = amountMax === null || loan.amount <= amountMax;
+
+    // Date range filter — compare against loan.createdAt
+    const loanDate = loan.createdAt ? loan.createdAt.slice(0, 10) : '';
+    const matchesDateFrom = !dateFrom || loanDate >= dateFrom;
+    const matchesDateTo = !dateTo || loanDate <= dateTo;
+
+    return (
+      matchesQuery &&
+      matchesStatus &&
+      matchesAmountMin &&
+      matchesAmountMax &&
+      matchesDateFrom &&
+      matchesDateTo
+    );
   });
+
+  if (error) {
+    return (
+      <p className="text-error-dark text-sm" role="alert">
+        Failed to load loans: {error}
+      </p>
+    );
+  }
 
   return (
     <div className="space-y-4">
       <SearchFilterBar
         statusOptions={STATUS_OPTIONS}
         typeOptions={TYPE_OPTIONS}
-        searchPlaceholder="Search by loan ID, borrower, or status…"
+        searchPlaceholder="Search by loan ID, collateral ID, or borrower…"
+        maxAmount={MAX_AMOUNT}
       />
-      {loading ? (
-        <p className="text-brown/60 text-sm" role="status" aria-live="polite">
-          Loading…
-        </p>
+      {isLoading ? (
+        <SkeletonLoansPage />
+      ) : loans.length === 0 ? (
+        <LoansEmptyState />
       ) : filtered.length === 0 ? (
         <p className="text-brown/60 text-sm" role="status" aria-live="polite">
           No loans match your filters.
@@ -97,17 +122,19 @@ function LoanListContent() {
         <ul className="space-y-2" aria-label="Loans list">
           {filtered.map((loan) => (
             <li key={loan.id}>
-              <Card
-                title={`Loan #${loan.id}`}
-                subtitle={loan.borrower}
-                badge={<LoanStatusBadge status={loan.status} reduced={reduced} />}
-                action={
-                  <span className="text-sm font-medium text-brown-700 dark:text-cream-100">
-                    {loan.amount.toLocaleString()} XLM
-                  </span>
-                }
-                aria-label={`Loan ${loan.id}, ${loan.status}, ${loan.amount.toLocaleString()} XLM`}
-              />
+              <Link href={`/loans/${loan.id}`} className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-gold rounded-xl">
+                <Card
+                  title={`Loan #${loan.id}`}
+                  subtitle={loan.borrower}
+                  badge={<LoanStatusBadge status={loan.status} reduced={reduced} />}
+                  action={
+                    <span className="text-sm font-medium text-brown-700 dark:text-cream-100">
+                      {loan.amount.toLocaleString()} XLM
+                    </span>
+                  }
+                  aria-label={`Loan ${loan.id}, ${loan.status}, ${loan.amount.toLocaleString()} XLM`}
+                />
+              </Link>
             </li>
           ))}
         </ul>
@@ -123,28 +150,7 @@ export default function LoansListClient() {
     <PageTransition>
       <main className="max-w-3xl mx-auto px-4 py-10">
         <h1 className="text-3xl font-bold text-brown mb-6">Loans</h1>
-        <Suspense
-          fallback={
-            <ul className="space-y-3 mt-4" aria-busy="true" aria-label="Loading loans">
-              {[...Array(5)].map((_, i) => (
-                <li
-                  key={i}
-                  className="bg-white dark:bg-brown-900 rounded-xl p-4 shadow-sm border border-brown/10 flex justify-between items-center"
-                  aria-hidden="true"
-                >
-                  <div className="space-y-2">
-                    <div className="skeleton-shimmer rounded h-4 w-24" />
-                    <div className="skeleton-shimmer rounded h-3 w-44" />
-                  </div>
-                  <div className="text-right space-y-2">
-                    <div className="skeleton-shimmer rounded h-4 w-20" />
-                    <div className="skeleton-shimmer rounded h-5 w-16 rounded-full" />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          }
-        >
+        <Suspense fallback={<SkeletonLoansPage />}>
           <LoanListContent />
         </Suspense>
       </main>

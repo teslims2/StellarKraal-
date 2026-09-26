@@ -63,3 +63,29 @@ updates:
       # soroban-sdk major bumps require contract re-audit
       - dependency-name: "soroban-sdk"
         update-types: ["version-update:semver-major"]
+
+  # Docker base image digests — backend
+  - package-ecosystem: "docker"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    reviewers:
+      - "teslims2"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "security"
+
+  # Docker base image digests — frontend
+  - package-ecosystem: "docker"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    reviewers:
+      - "teslims2"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "security"

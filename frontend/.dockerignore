@@ -1,0 +1,70 @@
+# ── Frontend .dockerignore ────────────────────────────────────────────────────
+# Keep the build context lean: exclude anything that is not needed to compile
+# the Next.js application or run the standalone server.
+
+# Dependencies — installed fresh inside the image
+node_modules/
+
+# Next.js output — rebuilt inside the image
+.next/
+
+# Test directories and files
+tests/
+__tests__/
+src/**/*.test.ts
+src/**/*.test.tsx
+src/**/*.spec.ts
+src/**/*.spec.tsx
+coverage/
+jest.config.*
+playwright*.config.*
+.jest*
+
+# Storybook
+.storybook/
+*.stories.tsx
+*.stories.ts
+
+# Documentation
+*.md
+!package.json
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# Editor / IDE config
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# CI / local tooling
+.github/
+.husky/
+.eslintcache
+.prettierrc*
+eslint.config.*
+.eslintrc*
+
+# Local env overrides
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+
+# Dev scripts
+scripts/
+
+# Lighthouse / perf reports
+lighthouse-report*
+.lighthouseci/
+lighthouserc.*

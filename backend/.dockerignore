@@ -1,0 +1,62 @@
+# ── Backend .dockerignore ─────────────────────────────────────────────────────
+# Keep the build context lean: exclude anything that is not needed to compile
+# or run the production backend bundle.
+
+# Dependencies — installed fresh inside the image
+node_modules/
+
+# Compiled output — rebuilt inside the image
+dist/
+
+# Test files — not needed in production image
+src/**/*.test.ts
+src/**/*.spec.ts
+src/**/*.test.js
+src/**/*.spec.js
+coverage/
+jest.config.*
+.jest*
+
+# Documentation
+docs/
+*.md
+!package.json
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# Editor / IDE config
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# CI / local tooling
+.github/
+.husky/
+.eslintcache
+.prettierrc*
+eslint.config.*
+
+# Local env overrides
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+
+# Performance benchmarks / dev scripts
+performance/
+scripts/
+
+# TypeDoc / generated docs
+typedoc.json
