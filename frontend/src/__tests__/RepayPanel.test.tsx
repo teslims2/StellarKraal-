@@ -2,6 +2,7 @@ import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import RepayPanel from "../components/RepayPanel";
 import { ToastProvider, ToastContainer } from "../components/toast";
+import ErrorBoundary from "../components/ErrorBoundary";
 
 jest.mock('@stellar/freighter-api', () => ({
   signTransaction: jest.fn(),
@@ -229,5 +230,35 @@ describe("RepayPanel", () => {
     // aria-hidden skeleton shimmers should be in the document
     const skeletons = document.querySelectorAll('[aria-hidden="true"]');
     expect(skeletons.length).toBeGreaterThan(0);
+  });
+});
+
+// #494: Error boundary wrapping
+describe('RepayPanel error boundary (#494)', () => {
+  function Bomb({ shouldThrow }: { shouldThrow: boolean }) {
+    if (shouldThrow) throw new Error('repay panel explosion');
+    return <span>OK</span>;
+  }
+
+  it('renders the error boundary fallback when a child throws', () => {
+    render(
+      <ToastProvider>
+        <ErrorBoundary section="Repay Loan">
+          <Bomb shouldThrow={true} />
+        </ErrorBoundary>
+      </ToastProvider>
+    );
+    expect(screen.getByText(/something went wrong/i)).toBeTruthy();
+  });
+
+  it('renders children normally when no error occurs', () => {
+    render(
+      <ToastProvider>
+        <ErrorBoundary section="Repay Loan">
+          <Bomb shouldThrow={false} />
+        </ErrorBoundary>
+      </ToastProvider>
+    );
+    expect(screen.getByText('OK')).toBeTruthy();
   });
 });

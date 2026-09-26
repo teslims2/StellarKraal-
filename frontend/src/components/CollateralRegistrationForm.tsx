@@ -9,9 +9,7 @@ import { classifyApiError } from '@/lib/apiErrorToast';
 import { throwIfNotOk } from '@/lib/api';
 import { signTransaction } from '@/lib/freighterClient';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
-import { submitSignedXdr } from '@/lib/stellarUtils';
-import { useToast } from '@/components/toast';
-import { Button, ErrorSummary, FieldError, Input, Select, toSummaryErrors } from '@/components/ui';
+import { useTransactionStatus } from '@/hooks/useTransactionStatus';
 
 interface Props {
   walletAddress: string;
@@ -63,6 +61,13 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [successId, setSuccessId] = useState<string | null>(null);
+  const [pendingHash, setPendingHash] = useState<string | null>(null);
+  const [pendingError, setPendingError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Image upload state
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0);
   const stepHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -245,10 +250,9 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
 
   const registerCollateral = async () => {
     setLoading(true);
-    setStatus(null);
-
+    setPendingError(null);
     try {
-      const response = await fetch(`${API}/api/v1/collateral/register`, {
+      const res = await fetch(`${API}/api/v1/collateral/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -263,20 +267,14 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
       const { signedTxXdr } = await signTransaction(xdr, {
         network: process.env.NEXT_PUBLIC_NETWORK || 'TESTNET',
       });
-      const collateralId = await submitSignedXdr(signedTxXdr);
-
+      const hash = await submitSignedXdr(signedTxXdr);
+      setPendingHash(hash);
       localStorage.removeItem(STORAGE_KEY);
       setLastSaved(null);
       setErrors({});
       setSubmitAttempted(false);
-      setImagePreview(null);
-      setFileInputKey((key) => key + 1);
-      setFormData(INITIAL_FORM_DATA);
-      setCurrentStep(1);
-      toast.success('Collateral registered successfully');
-      onSuccess?.(collateralId);
-    } catch (error) {
-      const { variant, message } = classifyApiError(error);
+    } catch (e) {
+      const { variant, message } = classifyApiError(e);
       toast[variant](message);
       setStatus(`error:${message}`);
     } finally {
@@ -284,10 +282,22 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
     }
   };
 
-  const visibleErrors =
-    currentStep === 1
-      ? { animalType: errors.animalType, quantity: errors.quantity }
-      : { appraisedValue: errors.appraisedValue, image: errors.image };
+  function handleTxTerminal(status: "confirmed" | "failed", errorCode?: string) {
+    if (status === "confirmed" && pendingHash) {
+      setSuccessId(pendingHash);
+      onSuccess?.(pendingHash);
+    } else if (status === "failed") {
+      setPendingError(errorCode ? `Transaction failed: ${errorCode}` : 'Transaction failed');
+      toast.error(pendingError);
+    }
+    setPendingHash(null);
+  }
+
+  useTransactionStatus(pendingHash, {
+    interval: 3000,
+    onTerminal: handleTxTerminal,
+  });
+
   const isError = status?.startsWith('error:');
 
   return (
@@ -533,6 +543,14 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
           }`}
         >
           {isError ? status.replace('error:', '') : status}
+        </div>
+      )}
+
+      {pendingHash && (
+        <div className="p-3 rounded-xl text-sm bg-amber-50 border border-amber-200 text-amber-800" role="status" aria-live="polite">
+          <p className="font-medium">Transaction pending confirmation...</p>
+          <p className="font-mono text-xs mt-1 break-all">{pendingHash}</p>
+          {pendingError && <p className="text-red-600 mt-1">{pendingError}</p>}
         </div>
       )}
 

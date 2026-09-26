@@ -25,7 +25,7 @@ import {
   batchRegisterCollateral,
   getCollateralById,
 } from '../services/collateralService';
-import { getProfile, updateProfile, insertAuditEntry, listCollateral, listLoans } from '../db/store';
+import { getProfile, updateProfile, insertAuditEntry, listCollateral, listLoans, getTransaction } from '../db/store';
 import { updateProfileSchema } from '../validators/profile';
 import { validate } from '../middleware/validate';
 import { auditMiddleware, redact, auditLogger } from '../middleware/audit';
@@ -551,6 +551,20 @@ v1Router.get(
     }
     // NOT_FOUND → still pending (in mempool or not yet confirmed)
     return res.json({ status: 'pending' });
+  })
+);
+
+// GET /api/v1/transactions/:id — get transaction details by local DB ID
+v1Router.get(
+  '/transactions/:id',
+  readLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params as { id: string };
+    const tx = getTransaction(id);
+    if (!tx) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+    res.json(tx);
   })
 );
 

@@ -18,7 +18,13 @@ export function healthColor(bps: number): string {
   return '#dc2626'; // red
 }
 
-/** Submit a signed XDR transaction and return the result value */
+/** Submit a signed XDR transaction and return the transaction hash immediately.
+ *
+ * The previous implementation polled the RPC for up to ~30s waiting for
+ * on-chain confirmation. That blocked the UI and prevented optimistic updates.
+ * Callers that need to track confirmation should use `useTransactionStatus`
+ * against `GET /api/v1/transactions/:hash/status` instead.
+ */
 export async function submitSignedXdr(signedXdr: string): Promise<string> {
   if (typeof window !== 'undefined' && window.__STELLARKRAAL_E2E__?.submitSignedXdr) {
     return Promise.resolve(window.__STELLARKRAAL_E2E__.submitSignedXdr(signedXdr));
@@ -30,16 +36,5 @@ export async function submitSignedXdr(signedXdr: string): Promise<string> {
   if (result.status === 'ERROR') {
     throw new Error(`Transaction failed: ${result.errorResult}`);
   }
-  // Poll for completion
-  let getResult = await server.getTransaction(result.hash);
-  let attempts = 0;
-  while (getResult.status === 'NOT_FOUND' && attempts < 20) {
-    await new Promise((r) => setTimeout(r, 1500));
-    getResult = await server.getTransaction(result.hash);
-    attempts++;
-  }
-  if (getResult.status === 'SUCCESS') {
-    return result.hash;
-  }
-  throw new Error(`Transaction status: ${getResult.status}`);
+  return result.hash;
 }
