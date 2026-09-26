@@ -34,6 +34,10 @@ jest.mock('@/components/ErrorState', () => ({
   ),
 }));
 
+jest.mock('@/hooks/useHealthFactor', () => ({
+  useHealthFactor: jest.fn(),
+}));
+
 const mockLoan = {
   loan: {
     id: 'loan-001',
@@ -146,6 +150,84 @@ describe('LoanDetailPage', () => {
 
     expect(screen.getByText(/active/i)).toBeInTheDocument();
     expect(screen.getByText(/col-001/)).toBeInTheDocument();
+  });
+
+  it('renders the health gauge with the loaded loan ID and mocked health state', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => mockLoan,
+    } as Response);
+
+    render(<LoanDetailPage />);
+
+    expect(useHealthFactor).toHaveBeenNthCalledWith(1, '');
+    await waitFor(() => {
+      expect(useHealthFactor).toHaveBeenLastCalledWith('loan-001');
+    });
+
+    expect(screen.getByRole('heading', { name: 'Loan Health' })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Health factor: 1.50x, Safe' })).toBeInTheDocument();
+    expect(screen.getByText('1.50x')).toBeInTheDocument();
+    expect(screen.getByText(/Last updated/)).toBeInTheDocument();
+  });
+
+  it('shows a loading state until health data is available', async () => {
+    jest.mocked(useHealthFactor).mockReturnValue({
+      healthFactor: null,
+      loading: true,
+      error: null,
+      lastUpdated: null,
+      refresh: jest.fn(),
+    });
+    global.fetch = jest.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => mockLoan,
+    } as Response);
+
+    const { rerender } = render(<LoanDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Loan Health' })).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('health-gauge-skeleton')).toBeInTheDocument();
+
+    jest.mocked(useHealthFactor).mockReturnValue({
+      healthFactor: 15_000,
+      loading: false,
+      error: null,
+      lastUpdated: new Date('2026-01-01T12:00:00.000Z'),
+      refresh: jest.fn(),
+    });
+    rerender(<LoanDetailPage />);
+
+    expect(screen.queryByTestId('health-gauge-skeleton')).not.toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Health factor: 1.50x, Safe' })).toBeInTheDocument();
+  });
+
+  it('shows a health error with a retry action', async () => {
+    const refreshHealth = jest.fn().mockResolvedValue(undefined);
+    jest.mocked(useHealthFactor).mockReturnValue({
+      healthFactor: null,
+      loading: false,
+      error: 'Server error: 500',
+      lastUpdated: null,
+      refresh: refreshHealth,
+    });
+    global.fetch = jest.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => mockLoan,
+    } as Response);
+
+    render(<LoanDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Unable to load the loan health factor.')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry health check' }));
+    expect(refreshHealth).toHaveBeenCalledTimes(1);
   });
 
   it('renders 404 error when loan is not found', async () => {
@@ -353,6 +435,7 @@ describe('LoanDetailPage', () => {
         });
 
         expect(screen.queryByText(/repayment calculator/i)).not.toBeInTheDocument();
+        expect(screen.queryByRole('heading', { name: 'Loan Health' })).not.toBeInTheDocument();
       }
     );
   });

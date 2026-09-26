@@ -5,6 +5,8 @@ import { useParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import ErrorState from '@/components/ErrorState';
 import DetailSkeleton from '@/components/DetailSkeleton';
+import HealthGauge, { SkeletonHealthGauge } from '@/components/HealthGauge';
+import { useHealthFactor } from '@/hooks/useHealthFactor';
 
 // Heavy component — loaded lazily to reduce initial JS bundle (#1070)
 const LoanRepaymentCalculator = dynamic(() => import('@/components/LoanRepaymentCalculator'), {
@@ -264,7 +266,7 @@ export default function LoanDetailPage() {
         <div className="flex items-center gap-2 mb-4">
           <span className="text-brown/50 text-sm">Loan ID</span>
           <button
-            onClick={copyId}
+            onClick={() => void copyId(loan.id)}
             aria-label={copied ? 'Loan ID copied' : 'Copy loan ID'}
             title={copied ? 'Copied!' : 'Copy ID'}
             className="shrink-0 text-brown/50 hover:text-brown transition focus:outline-none focus-visible:ring-2 focus-visible:ring-brown rounded"
