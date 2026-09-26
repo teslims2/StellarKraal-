@@ -1,85 +1,202 @@
-import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
-import StepReview from "../components/wizard/steps/StepReview";
-import { LoanWizardProvider } from "@/context/LoanWizardContext";
+import React from 'react';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { axe, toHaveNoViolations } from 'jest-axe';
+import StepReview from '@/components/wizard/steps/StepReview';
+import { glossaryTerms } from '@/lib/glossary';
 
-function renderWithWizard(ui: React.ReactElement) {
-  return render(<LoanWizardProvider>{ui}</LoanWizardProvider>);
-}
+expect.extend(toHaveNoViolations);
 
-describe("StepReview", () => {
-  const defaultState = {
-    animalType: "cattle" as const,
-    count: "2",
-    appraisedValue: "20000000",
-    collateralId: "col-001",
-    loanAmount: "10000000",
-    loanTermDays: "30",
-    step: 3,
-    loading: false,
-    error: null,
-    collaterals: [],
-  };
+const mockUseWizard = jest.fn();
+const mockNextStep = jest.fn();
+const mockPrevStep = jest.fn();
 
+jest.mock('@/context/LoanWizardContext', () => ({
+  useWizard: () => mockUseWizard(),
+}));
+
+jest.mock('@/hooks/useCurrencyConversion', () => ({
+  useCurrencyConversion: () => ({
+    rates: { USD: 1 },
+    convert: jest.fn(),
+  }),
+}));
+
+const defaultState = {
+  animalType: 'cattle' as const,
+  count: '2',
+  appraisedValue: '20000000',
+  collateralId: 'col-001',
+  collaterals: [],
+  loanAmount: '10000000',
+  loanTermDays: '30',
+  step: 3,
+  loading: false,
+  error: null,
+  nextStep: mockNextStep,
+  prevStep: mockPrevStep,
+};
+
+describe('StepReview', () => {
   beforeEach(() => {
-    localStorage.clear();
+    jest.clearAllMocks();
+    mockUseWizard.mockReturnValue(defaultState);
   });
 
-  it("renders loan summary with total amount", () => {
-    renderWithWizard(<StepReview />);
-    expect(screen.getByText("Review Loan Terms")).toBeTruthy();
-    expect(screen.getByText(/You are borrowing/)).toBeTruthy();
+  it('shows the simplified summary with reading time and complexity', () => {
+    render(<StepReview />);
+
+    expect(screen.getByRole('heading', { name: 'Review Loan Terms' })).toBeInTheDocument();
+    expect(screen.getByText('About 1 minute read')).toBeInTheDocument();
+    expect(screen.getByText('Low complexity')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Loan Summary' })).toBeInTheDocument();
+    expect(screen.getAllByRole('listitem')).toHaveLength(5);
+    expect(screen.getByText(/You are borrowing/)).toBeInTheDocument();
   });
 
-  it("shows amount breakdown tooltip when info icon is clicked", () => {
-    renderWithWizard(<StepReview />);
-    const infoBtn = screen.getByRole("button", { name: /amount breakdown/i });
-    fireEvent.click(infoBtn);
-    expect(screen.getByRole("tooltip")).toBeTruthy();
-    expect(screen.getByText("Principal")).toBeTruthy();
-    expect(screen.getByText("Origination Fee")).toBeTruthy();
-    expect(screen.getByText("Est. First Interest")).toBeTruthy();
+  it('reveals detailed terms behind Show full terms', () => {
+    render(<StepReview />);
+
+    const toggle = screen.getByRole('button', { name: 'Show full terms' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveAttribute('aria-controls', 'loan-terms-content');
+
+    fireEvent.click(toggle);
+
+    expect(screen.getByRole('region', { name: 'Full Loan Terms' })).toBeInTheDocument();
+    expect(screen.getByText('About 2 minute read')).toBeInTheDocument();
+    expect(screen.getByText('High complexity')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show simplified view' })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    );
   });
 
-  it("calculates breakdown values correctly", () => {
-    renderWithWizard(<StepReview />);
-    const infoBtn = screen.getByRole("button", { name: /amount breakdown/i });
-    fireEvent.click(infoBtn);
-    const tooltip = screen.getByRole("tooltip");
-    expect(tooltip).toHaveTextContent("1.00 XLM"); // principal 10_000_000 / 1e7
-    expect(tooltip).toHaveTextContent("0.50 XLM"); // fee 500_000 / 1e7 (5% of 10M)
-    expect(tooltip).toHaveTextContent("0.10 XLM"); // est interest 100_000 / 1e7 (1% of 10M)
+  it('returns to the simplified view without duplicating the panel', () => {
+    render(<StepReview />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show full terms' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show simplified view' }));
+
+    expect(screen.getByRole('region', { name: 'Loan Summary' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Full Loan Terms' })).not.toBeInTheDocument();
   });
 
-  it("toggles tooltip on Enter key", () => {
-    renderWithWizard(<StepReview />);
-    const infoBtn = screen.getByRole("button", { name: /amount breakdown/i });
-    fireEvent.keyDown(infoBtn, { key: "Enter" });
-    expect(screen.getByRole("tooltip")).toBeTruthy();
+  it('shows a GlossaryTerm tooltip on hover and connects it to the term', () => {
+    render(<StepReview />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show full terms' }));
+
+    const term = screen.getByRole('button', { name: 'Loan Amount' });
+    fireEvent.mouseEnter(term);
+
+    const tooltip = screen.getByRole('tooltip');
+    expect(tooltip).toHaveTextContent(glossaryTerms.loanAmount.term);
+    expect(tooltip).toHaveTextContent(glossaryTerms.loanAmount.definition);
+    expect(term).toHaveAttribute('aria-describedby', tooltip.id);
+    expect(term).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it("toggles tooltip on Space key", () => {
-    renderWithWizard(<StepReview />);
-    const infoBtn = screen.getByRole("button", { name: /amount breakdown/i });
-    fireEvent.keyDown(infoBtn, { key: " " });
-    expect(screen.getByRole("tooltip")).toBeTruthy();
+  it('shows GlossaryTerm tooltips on keyboard focus and closes on Escape', () => {
+    render(<StepReview />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show full terms' }));
+
+    const term = screen.getByRole('button', { name: 'Health Factor' });
+    fireEvent.focus(term);
+
+    expect(screen.getByRole('tooltip')).toHaveTextContent(glossaryTerms.healthFactor.definition);
+
+    fireEvent.keyDown(term, { key: 'Escape' });
+
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    expect(term).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it("closes tooltip on Escape key", () => {
-    renderWithWizard(<StepReview />);
-    const infoBtn = screen.getByRole("button", { name: /amount breakdown/i });
-    fireEvent.click(infoBtn);
-    expect(screen.getByRole("tooltip")).toBeTruthy();
-    fireEvent.keyDown(infoBtn, { key: "Escape" });
-    expect(screen.queryByRole("tooltip")).toBeNull();
+  it('renders valid glossary definitions for all highlighted terms', () => {
+    render(<StepReview />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show full terms' }));
+
+    [
+      'Collateral Type',
+      'Appraised Value',
+      'Loan Amount',
+      'Fee Rate',
+      'Fee Amount',
+      'Total to Repay',
+      'Health Factor',
+    ].forEach((name) => {
+      expect(screen.getByRole('button', { name })).toBeInTheDocument();
+    });
+
+    expect(glossaryTerms.loanAmount.definition).toBeTruthy();
+    expect(glossaryTerms.feeRate.definition).toBeTruthy();
   });
 
-  it("shows simplified and detailed views", () => {
-    renderWithWizard(<StepReview />);
-    const toggleBtn = screen.getByRole("button", { name: /show full terms/i });
-    fireEvent.click(toggleBtn);
-    expect(screen.getByText("Fee Amount")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /show simplified view/i }));
-    expect(screen.getByText(/You are borrowing/)).toBeTruthy();
+  it('shows amount breakdown values on click', () => {
+    render(<StepReview />);
+
+    const infoButton = screen.getByRole('button', { name: 'Amount breakdown' });
+    fireEvent.click(infoButton);
+
+    const tooltip = screen.getByRole('tooltip');
+    expect(tooltip).toHaveTextContent('Principal');
+    expect(tooltip).toHaveTextContent('Origination Fee');
+    expect(tooltip).toHaveTextContent('Est. First Interest');
+    expect(tooltip).toHaveTextContent('1.00 XLM');
+    expect(tooltip).toHaveTextContent('0.05 XLM');
+    expect(tooltip).toHaveTextContent('0.01 XLM');
+  });
+
+  it.each(['Enter', ' '])('toggles the amount breakdown with %s', (key) => {
+    render(<StepReview />);
+    const infoButton = screen.getByRole('button', { name: 'Amount breakdown' });
+
+    fireEvent.keyDown(infoButton, { key });
+
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+  });
+
+  it('closes the amount breakdown on Escape', () => {
+    render(<StepReview />);
+    const infoButton = screen.getByRole('button', { name: 'Amount breakdown' });
+
+    fireEvent.click(infoButton);
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+
+    fireEvent.keyDown(infoButton, { key: 'Escape' });
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+  });
+
+  it('uses mobile-first layouts for both views', () => {
+    render(<StepReview />);
+
+    const summary = screen.getByRole('region', { name: 'Loan Summary' });
+    expect(summary.querySelector('ul')).toHaveClass('list-disc', 'pl-5');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show full terms' }));
+    const detailedTerms = screen.getByRole('region', { name: 'Full Loan Terms' });
+    const firstRow = detailedTerms.querySelector('dl > div');
+
+    expect(firstRow).toHaveClass('grid-cols-1', 'sm:grid-cols-[minmax(0,1fr)_auto]');
+    expect(detailedTerms.querySelector('dt')).toHaveClass('break-words');
+    expect(detailedTerms.querySelector('dd')).toHaveClass('break-words');
+  });
+
+  it('navigates to previous and next steps', () => {
+    render(<StepReview />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm and submit' }));
+
+    expect(mockPrevStep).toHaveBeenCalledTimes(1);
+    expect(mockNextStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('has no detectable accessibility violations in either view', async () => {
+    const { container } = render(<StepReview />);
+
+    expect(await axe(container)).toHaveNoViolations();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show full terms' }));
+
+    expect(await axe(container)).toHaveNoViolations();
   });
 });
