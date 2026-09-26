@@ -13,7 +13,7 @@ describe('LoanRepaymentCalculator', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     fetchMock.mockReset();
-    (global as any).fetch = fetchMock;
+    global.fetch = fetchMock;
 
     fetchMock.mockResolvedValueOnce({
       ok: true,
@@ -169,6 +169,36 @@ describe('LoanRepaymentCalculator', () => {
       });
       // Only the preview request fired — no separate loan-list fetch for a fixed loan.
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('forwards the primary action ref and reports when it is ready', async () => {
+      const actionButtonRef = React.createRef<HTMLButtonElement>();
+      const onPrimaryActionReady = jest.fn();
+      const { unmount } = render(
+        <LoanRepaymentCalculator
+          loanId={7}
+          outstanding={1000}
+          collateralValue={2000}
+          actionButtonRef={actionButtonRef}
+          onPrimaryActionReady={onPrimaryActionReady}
+          onProceed={jest.fn()}
+        />
+      );
+
+      fireEvent.change(screen.getByPlaceholderText('Enter repayment amount'), {
+        target: { value: '250' },
+      });
+
+      await act(async () => {
+        jest.advanceTimersByTime(300);
+      });
+
+      const primaryAction = await screen.findByRole('button', { name: 'Proceed to Repay' });
+      expect(actionButtonRef.current).toBe(primaryAction);
+      expect(onPrimaryActionReady).toHaveBeenLastCalledWith(true);
+
+      unmount();
+      expect(onPrimaryActionReady).toHaveBeenLastCalledWith(false);
     });
   });
 });
