@@ -1,7 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { axe, toHaveNoViolations } from 'jest-axe';
-import StatusBadge from '../components/StatusBadge';
-import type { BadgeStatus } from '../components/StatusBadge';
+import StatusBadge, { STATUS_TOOLTIPS, type BadgeStatus } from '../components/StatusBadge';
 
 expect.extend(toHaveNoViolations);
 
@@ -10,7 +9,7 @@ expect.extend(toHaveNoViolations);
 let mockReducedMotion = false;
 
 jest.mock('framer-motion', () => {
-  const React = require('react');
+  const React = jest.requireActual<typeof import('react')>('react');
   return {
     ...jest.requireActual('framer-motion'),
     useReducedMotion: () => mockReducedMotion,
@@ -20,13 +19,8 @@ jest.mock('framer-motion', () => {
       span: React.forwardRef(
         (
           { children, className, ...rest }: React.HTMLAttributes<HTMLSpanElement>,
-          ref: React.Ref<HTMLSpanElement>,
-        ) =>
-          React.createElement(
-            'span',
-            { ...rest, className, ref },
-            children,
-          ),
+          ref: React.Ref<HTMLSpanElement>
+        ) => React.createElement('span', { ...rest, className, ref }, children)
       ),
     },
   };
@@ -74,6 +68,50 @@ describe('StatusBadge', () => {
     render(<StatusBadge status="active" />);
     const badge = screen.getByRole('status');
     expect(badge).toHaveAttribute('aria-label', 'Status: Active');
+  });
+
+  describe('tooltips (#824)', () => {
+    test.each(ALL_STATUSES)('shows the %s explanation on hover', (status) => {
+      render(<StatusBadge status={status} />);
+      const badge = screen.getByRole('status');
+
+      fireEvent.mouseEnter(badge);
+
+      const tooltip = screen.getByRole('tooltip');
+      expect(tooltip).toHaveTextContent(STATUS_TOOLTIPS[status]);
+
+      fireEvent.mouseLeave(badge);
+      expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    });
+
+    test.each(ALL_STATUSES)('shows the %s explanation on focus', (status) => {
+      render(<StatusBadge status={status} />);
+      const badge = screen.getByRole('status');
+
+      expect(badge).toHaveAttribute('tabindex', '0');
+      fireEvent.focus(badge);
+
+      expect(screen.getByRole('tooltip')).toHaveTextContent(STATUS_TOOLTIPS[status]);
+    });
+
+    test.each([
+      ['active', 'This loan is currently active with an outstanding balance'],
+      ['repaid', 'This loan has been fully repaid'],
+      ['liquidated', 'This loan was liquidated due to insufficient collateral'],
+    ] as const)('uses the required %s copy', (status, expected) => {
+      expect(STATUS_TOOLTIPS[status]).toBe(expected);
+    });
+
+    test('does not add a tooltip to an unknown status', () => {
+      render(<StatusBadge status="unknown-state" />);
+      const badge = screen.getByText('unknown-state');
+
+      fireEvent.mouseEnter(badge);
+      fireEvent.focus(badge);
+
+      expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+      expect(badge).not.toHaveAttribute('tabindex');
+    });
   });
 
   // ── #539: Design token colour tests ─────────────────────────────────────────

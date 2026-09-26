@@ -452,6 +452,31 @@ To export the updated dashboard JSON back to the repo:
 | `observability/grafana-dashboards.yml` | `/etc/grafana/provisioning/dashboards/dashboards.yml` | Dashboard file provider |
 | `grafana/dashboards/*.json` | `/var/lib/grafana/dashboards/` | Dashboard definitions |
 
+### Prometheus scrape configuration
+
+The `/metrics` endpoint is protected by an optional bearer token. Set
+`METRICS_TOKEN` in the backend environment to enable authentication:
+
+```bash
+METRICS_TOKEN=$(openssl rand -hex 32)
+```
+
+In `prometheus.yml`:
+
+```yaml
+scrape_configs:
+  - job_name: 'stellarkraal-backend'
+    static_configs:
+      - targets: ['backend:3001']
+    authorization:
+      type: Bearer
+      credentials: ${METRICS_TOKEN}
+```
+
+When `METRICS_TOKEN` is unset, `/metrics` remains unauthenticated. This is
+intended for local development only; always set the token in staging and
+production.
+
 ### Environment variables
 
 | Variable | Default | Description |
@@ -459,6 +484,7 @@ To export the updated dashboard JSON back to the repo:
 | `SLACK_WEBHOOK_URL` | — | Slack incoming webhook URL for alert notifications |
 | `PAGERDUTY_ROUTING_KEY` | — | PagerDuty integration key for critical alerts |
 | `RUNBOOK_BASE_URL` | `https://github.com/teslims2/StellarKraal-/blob/main/docs/runbooks` | Base URL for runbook links in alerts |
+| `METRICS_TOKEN` | — | Optional bearer token to protect `GET /metrics` |
 
 ---
 

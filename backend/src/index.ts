@@ -105,6 +105,7 @@ import { registry, httpActiveConnections, httpRequestDurationSeconds, httpReques
 import { fireAlert } from './utils/alerting';
 import { rules } from './utils/alertRules';
 import { healthRouter } from './routes/health';
+import { metricsAuthMiddleware } from './middleware/metricsAuth';
 
 // ── 5xx spike tracking (rolling 60s window) ───────────────────────────────────
 const fivexxTimestamps: number[] = [];
@@ -188,10 +189,11 @@ app.use('/api/v1/health', healthRouter);
  * application-specific counters and histograms (HTTP requests, duration,
  * DB pool acquired/available/wait).
  *
- * Intentionally unauthenticated — metrics should be restricted at the
- * network/ingress layer (e.g., only accessible from the Prometheus scrape subnet).
+ * When METRICS_TOKEN is configured, requires Authorization: Bearer <token>.
+ * Otherwise, metrics are accessible without authentication (intended for
+ * local/dev only).
  */
-app.get('/metrics', async (_req: Request, res: Response) => {
+app.get('/metrics', metricsAuthMiddleware, async (_req: Request, res: Response) => {
   try {
     res.set('Content-Type', registry.contentType);
     res.end(await registry.metrics());
@@ -742,6 +744,7 @@ app.post(
         collateral_id: collateralId,
         amount: loanAmount,
       });
+      invalidateCache('/api/loans');
 
       return res.status(201).json({ loan, xdr: xdrTx });
     } finally {
@@ -1191,6 +1194,7 @@ app.get('/api/admin/deleted/collateral', (req: Request, res: Response) => {
 app.post('/api/admin/restore/collateral/:id', (req: Request, res: Response) => {
   const ok = restoreCollateral(req.params.id as string);
   if (!ok) return res.status(404).json({ error: 'Record not found or not deleted' });
+  invalidateCache('/api/collateral');
   res.json({ restored: true, id: req.params.id });
 });
 
@@ -1231,6 +1235,7 @@ const handleDeleteCollateral = (req: Request, res: Response) => {
 
   const ok = softDeleteCollateral(id);
   if (!ok) return res.status(404).json({ error: 'Record not found' });
+  invalidateCache('/api/collateral');
   res.json({ deleted: true, id });
 };
 
@@ -1652,7 +1657,7 @@ app.patch(
       userId: user?.publicKey,
       updates: redact(updates),
     });
-
+    invalidateCache('/api/collateral');
     res.json(updated);
   })
 );
@@ -1786,6 +1791,7 @@ app.get('/api/admin/deleted/loans', (req: Request, res: Response) => {
 app.post('/api/admin/restore/loans/:id', (req: Request, res: Response) => {
   const ok = restoreLoan(req.params.id as string);
   if (!ok) return res.status(404).json({ error: 'Record not found or not deleted' });
+  invalidateCache('/api/loans');
   res.json({ restored: true, id: req.params.id });
 });
 
@@ -1793,6 +1799,7 @@ app.post('/api/admin/restore/loans/:id', (req: Request, res: Response) => {
 app.delete('/api/loan/:id', (req: Request, res: Response) => {
   const ok = softDeleteLoan(req.params.id as string);
   if (!ok) return res.status(404).json({ error: 'Record not found' });
+  invalidateCache('/api/loans');
   res.json({ deleted: true, id: req.params.id });
 });
 

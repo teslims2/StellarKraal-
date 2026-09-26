@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { usePolling } from './usePolling';
 
 const POLL_INTERVAL = 30_000;
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
@@ -9,7 +10,7 @@ export function useHealthFactor(loanId: string) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [hasFetched, setHasFetched] = useState(false);
 
   const fetch_ = useCallback(async () => {
     if (!loanId) return;
@@ -21,6 +22,7 @@ export function useHealthFactor(loanId: string) {
       const data = await res.json();
       setHealthFactor(Number(data.health_factor ?? 0));
       setLastUpdated(new Date());
+      setHasFetched(true);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to fetch health factor');
     } finally {
@@ -28,28 +30,14 @@ export function useHealthFactor(loanId: string) {
     }
   }, [loanId]);
 
-  const startPolling = useCallback(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      if (document.visibilityState === 'visible') fetch_();
-    }, POLL_INTERVAL);
-  }, [fetch_]);
+  usePolling(fetch_, POLL_INTERVAL);
 
-  useEffect(() => {
-    if (!loanId) return;
-    fetch_();
-    startPolling();
+  const lastUpdatedLabel = lastUpdated
+    ? new Intl.RelativeTimeFormat('en', { numeric: 'auto' }).format(
+        -Math.floor((Date.now() - lastUpdated.getTime()) / 1000),
+        'second'
+      )
+    : null;
 
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') fetch_();
-    };
-    document.addEventListener('visibilitychange', onVisibility);
-
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, [loanId, fetch_, startPolling]);
-
-  return { healthFactor, loading, error, lastUpdated, refresh: fetch_ };
+  return { healthFactor, loading, error, lastUpdated, lastUpdatedLabel, hasFetched, refresh: fetch_ };
 }

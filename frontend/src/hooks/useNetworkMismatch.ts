@@ -1,15 +1,17 @@
-"use client";
-import { useEffect, useState } from "react";
+'use client';
+import { useEffect, useState } from 'react';
+import { getNetworkDetails } from '@/lib/freighterClient';
 
-// Freighter's getNetworkDetails returns { network, networkUrl, networkPassphrase }
-type FreighterNetworkDetails = { network: string; networkUrl: string; networkPassphrase: string };
+function normalizeNetwork(network: string | null | undefined): string | null {
+  const normalized = network?.trim().toLowerCase();
+  if (!normalized) return null;
+  return normalized === 'public' ? 'mainnet' : normalized;
+}
 
 async function getFreighterNetwork(): Promise<string | null> {
   try {
-    // Dynamic import to avoid SSR issues
-    const { getNetworkDetails } = await import("@stellar/freighter-api");
-    const result = (await getNetworkDetails()) as FreighterNetworkDetails;
-    return result.network?.toLowerCase() ?? null;
+    const result = await getNetworkDetails();
+    return normalizeNetwork(result.network);
   } catch {
     return null;
   }
@@ -30,7 +32,8 @@ export function useNetworkMismatch(walletAddress: string | null): boolean {
 
     getFreighterNetwork().then((walletNetwork) => {
       if (!walletNetwork) return;
-      const appNetwork = (process.env.NEXT_PUBLIC_NETWORK ?? "testnet").toLowerCase();
+      const appNetwork =
+        normalizeNetwork(process.env.NEXT_PUBLIC_NETWORK ?? 'testnet') ?? 'testnet';
       setMismatch(walletNetwork !== appNetwork);
     });
   }, [walletAddress]);

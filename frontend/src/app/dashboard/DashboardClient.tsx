@@ -9,6 +9,7 @@ import SkeletonHealthDashboard from "@/components/SkeletonHealthDashboard";
 import SkeletonLoanCard from "@/components/SkeletonLoanCard";
 import HelpMenu from "@/components/HelpMenu";
 import OnboardingChecklist from "@/components/OnboardingChecklist";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import { useHealthFactor } from "@/hooks/useHealthFactor";
 import { useOnboarding } from "@/hooks/useOnboarding";
 import { Hero } from "@/components/Hero";
@@ -82,7 +83,7 @@ export default function DashboardClient() {
   const [activeTab, setActiveTab] = useState<TabName>("overview");
   const [helpOpen, setHelpOpen] = useState(false);
   const { showOnboarding, openOnboarding, closeOnboarding } = useOnboarding();
-  const { healthFactor, loading: isHealthLoading, refresh: refreshHealth } = useHealthFactor(loanId);
+  const { healthFactor, loading: isHealthLoading, refresh: refreshHealth, lastUpdatedLabel, hasFetched } = useHealthFactor(loanId);
   
   // Onboarding checklist state
   const [hasCollateral, setHasCollateral] = useState(false);
@@ -203,7 +204,9 @@ export default function DashboardClient() {
             />
           </div>
           <div className="mt-4">
-            <RepayPanel walletAddress={wallet} />
+            <ErrorBoundary section="Repay Loan" onRetry={() => {}}>
+              <RepayPanel walletAddress={wallet} />
+            </ErrorBoundary>
           </div>
           <div className="mt-4">
             <TransactionHistory walletAddress={wallet} />

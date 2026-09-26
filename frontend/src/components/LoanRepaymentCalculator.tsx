@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+'use client';
+
+import { useEffect, useMemo, useState, type Ref } from 'react';
 import HealthGauge from '@/components/HealthGauge';
 import EmptyState from '@/components/EmptyState';
 import { EmptyLoansIllustration } from '@/components/illustrations';
@@ -16,6 +18,8 @@ interface Props {
   loanId?: number | string;
   outstanding?: number;
   collateralValue?: number;
+  actionButtonRef?: Ref<HTMLButtonElement>;
+  onPrimaryActionReady?: (ready: boolean) => void;
 }
 
 interface RepaymentPreview {
@@ -39,6 +43,8 @@ export default function LoanRepaymentCalculator({
   loanId: fixedLoanId,
   outstanding,
   collateralValue,
+  actionButtonRef,
+  onPrimaryActionReady,
 }: Props) {
   const isFixedLoan = fixedLoanId !== undefined && fixedLoanId !== null;
   const [loanId, setLoanId] = useState(isFixedLoan ? String(fixedLoanId) : '');
@@ -48,6 +54,12 @@ export default function LoanRepaymentCalculator({
   const [preview, setPreview] = useState<RepaymentPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onPrimaryActionReady?.(preview !== null);
+
+    return () => onPrimaryActionReady?.(false);
+  }, [onPrimaryActionReady, preview]);
 
   const parsedLoanId = useMemo(
     () => (isFixedLoan ? Number(fixedLoanId) : Number(loanId)),
@@ -160,6 +172,7 @@ export default function LoanRepaymentCalculator({
       {!isFixedLoan && loansLoaded && loanOptions.length === 0 && (
         <EmptyState
           illustration={<EmptyLoansIllustration />}
+          heading="No active loans"
           message="You have no active loans"
           ctaLabel="Apply for a Loan"
           onCta={() => onApplyForLoan?.()}
@@ -205,11 +218,14 @@ export default function LoanRepaymentCalculator({
             type="number"
           />
         </div>
-        {localPreview && localPreview.breakdown.remaining_balance === 0 && parsedAmount > (outstanding ?? 0) && (
-          <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-300">
-            Repayment exceeds the outstanding balance; only the outstanding amount will be applied.
-          </p>
-        )}
+        {localPreview &&
+          localPreview.breakdown.remaining_balance === 0 &&
+          parsedAmount > (outstanding ?? 0) && (
+            <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-300">
+              Repayment exceeds the outstanding balance; only the outstanding amount will be
+              applied.
+            </p>
+          )}
       </div>
 
       {loading && (
@@ -267,6 +283,7 @@ export default function LoanRepaymentCalculator({
           </div>
 
           <button
+            ref={actionButtonRef}
             type="button"
             className="mt-4 w-full bg-brown text-cream py-2.5 rounded-xl font-semibold hover:bg-brown/80 transition min-h-[44px] dark:bg-gold dark:text-brown"
             onClick={() => onProceed?.(String(preview.loan_id), String(preview.repayment_amount))}
