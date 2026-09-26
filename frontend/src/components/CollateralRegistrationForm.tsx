@@ -1,15 +1,13 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
-import { signTransaction } from '@/lib/freighterClient';
-import { submitSignedXdr } from '@/lib/stellarUtils';
+
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import Spinner from '@/components/Spinner';
-import { motion, useReducedMotion } from 'framer-motion';
 import { submitVariants } from '@/lib/animations';
-import { Input, Select, Button, ErrorSummary, FieldError, toSummaryErrors } from '@/components/ui';
-import { useToast } from '@/components/toast';
-import { throwIfNotOk } from '@/lib/api';
 import { classifyApiError } from '@/lib/apiErrorToast';
+import { throwIfNotOk } from '@/lib/api';
+import { signTransaction } from '@/lib/freighterClient';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { useTransactionStatus } from '@/hooks/useTransactionStatus';
 
@@ -21,60 +19,41 @@ interface Props {
 interface FormData {
   animalType: string;
   quantity: string;
-  weight: string;
-  healthStatus: string;
-  location: string;
   appraisedValue: string;
-  breed: string;
-  age: string;
   image: File | null;
 }
 
-interface FormErrors {
-  animalType?: string;
-  quantity?: string;
-  weight?: string;
-  healthStatus?: string;
-  location?: string;
-  appraisedValue?: string;
-  breed?: string;
-  age?: string;
-  image?: string;
-}
+type FormErrors = Partial<Record<keyof FormData, string>>;
+type Step = 1 | 2;
 
 const ANIMAL_TYPES = ['cattle', 'goat', 'sheep'];
-const HEALTH_STATUSES = ['excellent', 'good', 'fair', 'poor'];
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 const AUTO_SAVE_INTERVAL = 5000;
 const STORAGE_KEY = 'stellarkraal_collateral_form';
-
-const FIELD_IDS: Record<keyof FormErrors, string> = {
+const STEP_HEADING_ID = 'collateral-step-heading';
+const STEP_LABELS = ['Basic Info', 'Valuation & Photo'] as const;
+const INITIAL_FORM_DATA: FormData = {
+  animalType: 'cattle',
+  quantity: '',
+  appraisedValue: '',
+  image: null,
+};
+const FIELD_IDS: Record<keyof FormData, string> = {
   animalType: 'reg-animal-type',
   quantity: 'reg-quantity',
-  weight: 'reg-weight',
-  healthStatus: 'reg-health-status',
-  location: 'reg-location',
   appraisedValue: 'reg-appraised-value',
-  breed: 'reg-breed',
-  age: 'reg-age',
   image: 'reg-image',
 };
+const BASIC_FIELDS: Array<keyof FormData> = ['animalType', 'quantity'];
+const VALUATION_FIELDS: Array<keyof FormData> = ['appraisedValue', 'image'];
+const ALL_FIELDS: Array<keyof FormData> = [...BASIC_FIELDS, ...VALUATION_FIELDS];
 
 export default function CollateralRegistrationForm({ walletAddress, onSuccess }: Props) {
   const reduced = useReducedMotion();
   const toast = useToast();
   const { isOnline } = useNetworkStatus();
-  const [formData, setFormData] = useState<FormData>({
-    animalType: 'cattle',
-    quantity: '',
-    weight: '',
-    healthStatus: 'good',
-    location: '',
-    appraisedValue: '',
-    breed: '',
-    age: '',
-    image: null,
-  });
+  const [currentStep, setCurrentStep] = useState<Step>(1);
+  const [formData, setFormData] = useState<FormData>(INITIAL_FORM_DATA);
   const [errors, setErrors] = useState<FormErrors>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -90,36 +69,55 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
   // Image upload state
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [imageError, setImageError] = useState<string | undefined>(undefined);
+  const [fileInputKey, setFileInputKey] = useState(0);
+  const stepHeadingRef = useRef<HTMLHeadingElement>(null);
+  const previousStepRef = useRef(currentStep);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed.walletAddress === walletAddress && parsed.data) {
-          setShowRestorePrompt(true);
-        }
-      } catch {
-        // ignore
+    if (!saved) return;
+
+    try {
+      const parsed = JSON.parse(saved);
+      if (parsed.walletAddress === walletAddress && parsed.data) {
+        setShowRestorePrompt(true);
       }
+    } catch {
+      localStorage.removeItem(STORAGE_KEY);
     }
   }, [walletAddress]);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      if (formData.quantity || formData.weight || formData.location || formData.appraisedValue) {
-        localStorage.setItem(
-          STORAGE_KEY,
-          JSON.stringify({ walletAddress, data: formData, timestamp: new Date().toISOString() })
-        );
-        setLastSaved(new Date());
-      }
-    }, AUTO_SAVE_INTERVAL);
-    return () => clearInterval(interval);
-  }, [formData, walletAddress]);
+      if (!formData.quantity && !formData.appraisedValue) return;
 
-  // Revoke object URL on unmount to avoid memory leaks
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          walletAddress,
+          step: currentStep,
+          data: {
+            animalType: formData.animalType,
+            quantity: formData.quantity,
+            appraisedValue: formData.appraisedValue,
+          },
+          timestamp: new Date().toISOString(),
+        })
+      );
+      setLastSaved(new Date());
+    }, AUTO_SAVE_INTERVAL);
+
+    return () => clearInterval(interval);
+  }, [currentStep, formData, walletAddress]);
+
+  useEffect(() => {
+    if (previousStepRef.current !== currentStep) {
+      stepHeadingRef.current?.focus();
+    }
+    previousStepRef.current = currentStep;
+  }, [currentStep]);
+
   useEffect(() => {
     return () => {
       if (imagePreview) URL.revokeObjectURL(imagePreview);
@@ -128,16 +126,23 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
 
   const restoreSavedData = () => {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed.data) {
-          setFormData(parsed.data);
-          setShowRestorePrompt(false);
-        }
-      } catch {
-        /* ignore */
-      }
+    if (!saved) return;
+
+    try {
+      const parsed = JSON.parse(saved);
+      const data = parsed.data ?? {};
+      setFormData({
+        animalType: ANIMAL_TYPES.includes(data.animalType)
+          ? data.animalType
+          : INITIAL_FORM_DATA.animalType,
+        quantity: typeof data.quantity === 'string' ? data.quantity : '',
+        appraisedValue: typeof data.appraisedValue === 'string' ? data.appraisedValue : '',
+        image: null,
+      });
+      setCurrentStep(parsed.step === 2 ? 2 : 1);
+      setShowRestorePrompt(false);
+    } catch {
+      localStorage.removeItem(STORAGE_KEY);
     }
   };
 
@@ -148,107 +153,99 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
 
   const validateField = useCallback(
     (name: keyof FormData, value: string | File | null): string | undefined => {
-      switch (name) {
-        case 'animalType':
-          if (!value || !ANIMAL_TYPES.includes(String(value))) return 'Animal type is required';
-          break;
-        case 'healthStatus':
-          if (!value || !HEALTH_STATUSES.includes(String(value))) return 'Health status is required';
-          break;
-        case 'breed':
-          if (!value || (typeof value === 'string' && value.trim().length === 0))
-            return 'Breed is required';
-          if (typeof value === 'string' && value.trim().length < 2)
-            return 'Breed must be at least 2 characters';
-          break;
-        case 'age': {
-          if (!value || (typeof value === 'string' && value.trim().length === 0))
-            return 'Age is required';
-          const ageNum = parseInt(value as string);
-          if (isNaN(ageNum) || ageNum < 0) return 'Age must be a valid number';
-          break;
-        }
-        case 'image': {
-          if (!value) return 'Image is required';
-          if (value instanceof File) {
-            const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-            if (!validTypes.includes(value.type))
-              return 'Only image files are allowed (JPEG, PNG, WebP, GIF)';
-            if (value.size > 5 * 1024 * 1024) return 'Image must be smaller than 5MB';
-          }
-          break;
-        }
-        case 'quantity': {
-          if (!value) return 'Quantity is required';
-          const qty = parseInt(value as string);
-          if (isNaN(qty) || qty <= 0) return 'Quantity must be a positive number';
-          break;
-        }
-        case 'weight': {
-          if (!value) return 'Estimated weight is required';
-          const wt = parseFloat(value as string);
-          if (isNaN(wt) || wt <= 0) return 'Weight must be a positive number';
-          break;
-        }
-        case 'location':
-          if (!value || (typeof value === 'string' && value.trim().length === 0))
-            return 'Location is required';
-          if (typeof value === 'string' && value.trim().length < 3)
-            return 'Location must be at least 3 characters';
-          break;
-        case 'appraisedValue': {
-          if (!value) return 'Appraised value is required';
-          const val = parseInt(value as string);
-          if (isNaN(val) || val <= 0) return 'Appraised value must be a positive number';
-          break;
-        }
+      if (name === 'animalType') {
+        return !value || !ANIMAL_TYPES.includes(String(value))
+          ? 'Animal type is required'
+          : undefined;
       }
+
+      if (name === 'quantity') {
+        const quantity = Number(value);
+        return !value || !Number.isInteger(quantity) || quantity <= 0
+          ? 'Quantity must be a positive whole number'
+          : undefined;
+      }
+
+      if (name === 'appraisedValue') {
+        const appraisedValue = Number(value);
+        return !value || !Number.isInteger(appraisedValue) || appraisedValue <= 0
+          ? 'Appraised value must be a positive whole number'
+          : undefined;
+      }
+
+      if (!value) return 'Animal photo is required';
+      if (!(value instanceof File)) return 'Animal photo is required';
+
+      const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+      if (!validTypes.includes(value.type)) {
+        return 'Only JPEG, PNG, WebP, or GIF images are allowed';
+      }
+      if (value.size > 5 * 1024 * 1024) return 'Animal photo must be smaller than 5MB';
+
       return undefined;
     },
     []
   );
 
   const handleChange = (name: keyof FormData, value: string | File | null) => {
-    setFormData((prev) => ({ ...prev, [name]: value }));
-    setErrors((prev) => ({ ...prev, [name]: validateField(name, value) }));
+    setFormData((previous) => ({ ...previous, [name]: value }));
+    setErrors((previous) => ({ ...previous, [name]: validateField(name, value) }));
   };
 
   const handleBlur = (name: keyof FormData) => {
-    setErrors((prev) => ({ ...prev, [name]: validateField(name, formData[name]) }));
+    setErrors((previous) => ({
+      ...previous,
+      [name]: validateField(name, formData[name]),
+    }));
   };
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0] || null;
+  const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0] ?? null;
     handleChange('image', file);
 
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        setImagePreview(event.target?.result as string);
-      };
-      reader.readAsDataURL(file);
-    } else {
+    if (!file || validateField('image', file)) {
       setImagePreview(null);
+      return;
     }
+
+    setImagePreview(URL.createObjectURL(file));
   };
 
-  const validateForm = (): boolean => {
-    const newErrors: FormErrors = {};
-    (Object.keys(formData) as Array<keyof FormData>).forEach((key) => {
-      const error = validateField(key, formData[key]);
-      if (error) newErrors[key] = error;
+  const validateFields = (fields: Array<keyof FormData>) => {
+    const fieldErrors: FormErrors = {};
+    fields.forEach((field) => {
+      const error = validateField(field, formData[field]);
+      if (error) fieldErrors[field] = error;
     });
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+
+    setErrors((previous) => {
+      const nextErrors = { ...previous };
+      fields.forEach((field) => {
+        const error = fieldErrors[field];
+        if (error) nextErrors[field] = error;
+        else delete nextErrors[field];
+      });
+      return nextErrors;
+    });
+
+    return Object.keys(fieldErrors).length === 0;
   };
 
-  const hasErrors = Object.values(errors).some(Boolean);
+  const moveBack = () => {
+    setSubmitAttempted(false);
+    setCurrentStep(1);
+  };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     setSubmitAttempted(true);
-    if (!validateForm()) return;
-    setShowConfirm(true);
+
+    if (currentStep === 1) {
+      if (validateFields(BASIC_FIELDS)) setCurrentStep(2);
+      return;
+    }
+
+    if (validateFields(ALL_FIELDS)) setShowConfirm(true);
   };
 
   const registerCollateral = async () => {
@@ -261,12 +258,12 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
         body: JSON.stringify({
           owner: walletAddress,
           animal_type: formData.animalType,
-          count: parseInt(formData.quantity),
-          appraised_value: parseInt(formData.appraisedValue),
+          count: parseInt(formData.quantity, 10),
+          appraised_value: parseInt(formData.appraisedValue, 10),
         }),
       });
-      await throwIfNotOk(res);
-      const { xdr } = await res.json();
+      await throwIfNotOk(response);
+      const { xdr } = await response.json();
       const { signedTxXdr } = await signTransaction(xdr, {
         network: process.env.NEXT_PUBLIC_NETWORK || 'TESTNET',
       });
@@ -303,50 +300,14 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
 
   const isError = status?.startsWith('error:');
 
-  const handleCopy = () => {
-    if (!successId) return;
-    navigator.clipboard.writeText(successId).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
-
-  // ── Success screen ──────────────────────────────────────────────────────────
-  if (successId) {
-    return (
-      <FormSuccess
-        title="Collateral Registered!"
-        summary={
-          <div className="flex flex-col items-center gap-2">
-            <p>
-              <span className="font-medium">Collateral ID:</span>{' '}
-              <span data-testid="success-collateral-id">{successId}</span>
-            </p>
-            <button
-              type="button"
-              onClick={handleCopy}
-              aria-label={copied ? 'Collateral ID copied' : 'Copy collateral ID'}
-              className="text-xs underline hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--token-success,#16a34a)] rounded"
-            >
-              {copied ? 'Copied!' : 'Copy ID'}
-            </button>
-          </div>
-        }
-        onSubmitAnother={resetForm}
-        viewDetailsHref={`/collateral/${successId}`}
-        viewDetailsLabel="View Collateral"
-      />
-    );
-  }
-
   return (
-    <div className="bg-white rounded-2xl p-6 shadow space-y-4">
+    <div className="space-y-4 rounded-2xl bg-white p-6 text-brown-700 shadow dark:bg-brown-900 dark:text-cream-50">
       {showRestorePrompt && (
-        <div className="bg-gold-100 border border-gold-300 rounded-xl p-4">
-          <p className="text-sm text-brown-700 mb-2">
+        <div className="rounded-xl border border-gold-300 bg-gold-100 p-4 dark:border-gold-700 dark:bg-gold-950">
+          <p className="mb-3 text-sm text-brown-700 dark:text-cream-100">
             You have unsaved progress. Would you like to restore it?
           </p>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="secondary" onClick={restoreSavedData}>
               Restore
             </Button>
@@ -357,7 +318,51 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
         </div>
       )}
 
-      <h2 className="text-xl font-semibold text-brown-700">Register Livestock Collateral</h2>
+      <div>
+        <h2 className="text-xl font-semibold text-brown-700 dark:text-cream-50">
+          Register Livestock Collateral
+        </h2>
+        <p className="mt-1 text-sm text-brown-600 dark:text-brown-200">
+          Complete both steps to register your collateral.
+        </p>
+      </div>
+
+      <nav aria-label="Collateral registration progress">
+        <ol className="grid grid-cols-2 gap-3" aria-label="Registration steps">
+          {STEP_LABELS.map((label, index) => {
+            const step = (index + 1) as Step;
+            const isCurrent = currentStep === step;
+            const isComplete = currentStep > step;
+
+            return (
+              <li
+                key={label}
+                aria-current={isCurrent ? 'step' : undefined}
+                className="flex min-w-0 items-center gap-2"
+              >
+                <span
+                  aria-hidden="true"
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold focus:outline-none ${
+                    isComplete
+                      ? 'bg-success text-white'
+                      : isCurrent
+                        ? 'border-2 border-brown-600 bg-brown-600 text-white dark:border-gold-500 dark:bg-gold-500 dark:text-brown-900'
+                        : 'border-2 border-brown-300 bg-white text-brown-500 dark:border-brown-600 dark:bg-brown-900 dark:text-brown-300'
+                  }`}
+                >
+                  {isComplete ? '✓' : step}
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium">{label}</span>
+                  <span className="block text-xs text-brown-600 dark:text-brown-300">
+                    {isComplete ? 'Completed' : isCurrent ? 'Current step' : 'Not started'}
+                  </span>
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      </nav>
 
       <form
         data-onboarding-target="collateral"
@@ -365,187 +370,165 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
         className="space-y-4"
         noValidate
       >
-        <ErrorSummary errors={submitAttempted ? toSummaryErrors(errors, FIELD_IDS) : []} />
-        <Select
-          id={FIELD_IDS.animalType}
-          label="Animal Type"
-          required
-          value={formData.animalType}
-          onChange={(e) => handleChange('animalType', e.target.value)}
-          onBlur={() => handleBlur('animalType')}
-          error={errors.animalType}
-          disabled={loading}
+        <h3
+          id={STEP_HEADING_ID}
+          ref={stepHeadingRef}
+          tabIndex={-1}
+          className="text-lg font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
         >
-          {ANIMAL_TYPES.map((type) => (
-            <option key={type} value={type}>
-              {type.charAt(0).toUpperCase() + type.slice(1)}
-            </option>
-          ))}
-        </Select>
+          {currentStep === 1 ? 'Basic Info' : 'Valuation & Photo'}
+        </h3>
 
-        <Input
-          id={FIELD_IDS.quantity}
-          label="Quantity"
-          required
-          type="number"
-          placeholder="Number of animals"
-          value={formData.quantity}
-          onChange={(e) => handleChange('quantity', e.target.value)}
-          onBlur={() => handleBlur('quantity')}
-          error={errors.quantity}
-          disabled={loading}
-        />
+        <ErrorSummary errors={submitAttempted ? toSummaryErrors(visibleErrors, FIELD_IDS) : []} />
 
-        <Input
-          id={FIELD_IDS.weight}
-          label="Estimated Weight (kg)"
-          required
-          type="number"
-          step="0.1"
-          placeholder="Average weight per animal"
-          value={formData.weight}
-          onChange={(e) => handleChange('weight', e.target.value)}
-          onBlur={() => handleBlur('weight')}
-          error={errors.weight}
-          disabled={loading}
-        />
+        {currentStep === 1 ? (
+          <section aria-labelledby={STEP_HEADING_ID} className="space-y-4">
+            <Select
+              id={FIELD_IDS.animalType}
+              label="Animal Type"
+              required
+              value={formData.animalType}
+              onChange={(event) => handleChange('animalType', event.target.value)}
+              onBlur={() => handleBlur('animalType')}
+              error={errors.animalType}
+              disabled={loading}
+            >
+              {ANIMAL_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {type.charAt(0).toUpperCase() + type.slice(1)}
+                </option>
+              ))}
+            </Select>
 
-        <Select
-          id={FIELD_IDS.healthStatus}
-          label="Health Status"
-          required
-          value={formData.healthStatus}
-          onChange={(e) => handleChange('healthStatus', e.target.value)}
-          onBlur={() => handleBlur('healthStatus')}
-          error={errors.healthStatus}
-          disabled={loading}
-        >
-          {HEALTH_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s.charAt(0).toUpperCase() + s.slice(1)}
-            </option>
-          ))}
-        </Select>
+            <Input
+              id={FIELD_IDS.quantity}
+              label="Count"
+              required
+              type="number"
+              min="1"
+              step="1"
+              placeholder="Number of animals"
+              value={formData.quantity}
+              onChange={(event) => handleChange('quantity', event.target.value)}
+              onBlur={() => handleBlur('quantity')}
+              error={errors.quantity}
+              disabled={loading}
+            />
+          </section>
+        ) : (
+          <section aria-labelledby={STEP_HEADING_ID} className="space-y-4">
+            <Input
+              id={FIELD_IDS.appraisedValue}
+              label="Appraised Value (stroops)"
+              required
+              type="number"
+              min="1"
+              step="1"
+              placeholder="Total value in stroops"
+              value={formData.appraisedValue}
+              onChange={(event) => handleChange('appraisedValue', event.target.value)}
+              onBlur={() => handleBlur('appraisedValue')}
+              error={errors.appraisedValue}
+              disabled={loading}
+            />
 
-        <Input
-          id={FIELD_IDS.location}
-          label="Location"
-          required
-          type="text"
-          placeholder="Farm or region name"
-          value={formData.location}
-          onChange={(e) => handleChange('location', e.target.value)}
-          onBlur={() => handleBlur('location')}
-          error={errors.location}
-          disabled={loading}
-        />
-
-        <Input
-          id={FIELD_IDS.appraisedValue}
-          label="Appraised Value (stroops)"
-          required
-          type="number"
-          placeholder="Total value in stroops"
-          value={formData.appraisedValue}
-          onChange={(e) => handleChange('appraisedValue', e.target.value)}
-          onBlur={() => handleBlur('appraisedValue')}
-          error={errors.appraisedValue}
-          disabled={loading}
-        />
-
-        <Input
-          id={FIELD_IDS.breed}
-          label="Breed"
-          required
-          type="text"
-          placeholder="e.g., Holstein, Boer, Merino"
-          value={formData.breed}
-          onChange={(e) => handleChange('breed', e.target.value)}
-          onBlur={() => handleBlur('breed')}
-          error={errors.breed}
-          disabled={loading}
-        />
-
-        <Input
-          id={FIELD_IDS.age}
-          label="Age (years)"
-          required
-          type="number"
-          placeholder="Age of the animal"
-          value={formData.age}
-          onChange={(e) => handleChange('age', e.target.value)}
-          onBlur={() => handleBlur('age')}
-          error={errors.age}
-          disabled={loading}
-        />
-
-        <div className="space-y-2">
-          <label
-            htmlFor={FIELD_IDS.image}
-            className="block text-sm font-medium text-brown-700 dark:text-cream-50"
-          >
-            Animal Photo <span className="text-error">*</span>
-          </label>
-          <input
-            id={FIELD_IDS.image}
-            type="file"
-            accept="image/*"
-            onChange={handleImageChange}
-            onBlur={() => handleBlur('image')}
-            disabled={loading}
-            className="block w-full text-sm text-brown-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-gold file:text-brown hover:file:bg-gold/80 disabled:opacity-50"
-            aria-label="Upload animal photo"
-            aria-invalid={!!errors.image}
-            aria-describedby={errors.image ? `${FIELD_IDS.image}-error` : undefined}
-          />
-          <FieldError id={`${FIELD_IDS.image}-error`} message={errors.image} />
-          {imagePreview && (
-            <div className="mt-3 relative">
-              <img
-                src={imagePreview}
-                alt="Preview"
-                className="max-h-48 rounded-lg border border-brown/10"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  setFormData((prev) => ({ ...prev, image: null }));
-                  setImagePreview(null);
-                  setErrors((prev) => ({ ...prev, image: undefined }));
-                }}
-                className="absolute top-2 right-2 bg-error text-white rounded-full p-1 hover:bg-error/80"
-                aria-label="Remove image"
+            <div className="space-y-2">
+              <label
+                htmlFor={FIELD_IDS.image}
+                className="block text-sm font-medium text-brown-700 dark:text-cream-50"
               >
-                ✕
-              </button>
+                Animal Photo <span className="text-error">*</span>
+              </label>
+              <input
+                key={fileInputKey}
+                ref={imageInputRef}
+                id={FIELD_IDS.image}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                required
+                onChange={handleImageChange}
+                onBlur={() => handleBlur('image')}
+                disabled={loading}
+                className="block w-full rounded-xl border border-brown-300 text-sm text-brown-700 file:mr-4 file:rounded-lg file:border-0 file:bg-gold file:px-4 file:py-2.5 file:text-sm file:font-semibold file:text-brown hover:file:bg-gold/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500 disabled:opacity-50 dark:border-brown-600 dark:text-cream-50"
+                aria-invalid={!!errors.image}
+                aria-describedby={errors.image ? `${FIELD_IDS.image}-error` : undefined}
+              />
+              <FieldError id={`${FIELD_IDS.image}-error`} message={errors.image} />
+
+              {imagePreview && (
+                <div className="relative mt-3 w-fit">
+                  <img
+                    src={imagePreview}
+                    alt={`${formData.animalType} animal photo preview`}
+                    className="max-h-48 rounded-lg border border-brown-200 dark:border-brown-600"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (imageInputRef.current) imageInputRef.current.value = '';
+                      handleChange('image', null);
+                      setImagePreview(null);
+                      setFileInputKey((key) => key + 1);
+                    }}
+                    className="absolute right-2 top-2 rounded-full bg-error p-2 text-white hover:bg-error/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-error focus-visible:ring-offset-2"
+                    aria-label="Remove animal photo"
+                  >
+                    <span aria-hidden="true">✕</span>
+                  </button>
+                </div>
+              )}
             </div>
+          </section>
+        )}
+
+        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
+          {currentStep === 2 && (
+            <button
+              type="button"
+              onClick={moveBack}
+              disabled={loading}
+              className="min-h-11 rounded-xl border-2 border-brown-300 px-5 py-2.5 font-semibold text-brown-700 transition hover:border-brown-500 hover:bg-brown-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:border-brown-600 dark:text-cream-50 dark:hover:bg-brown-800"
+            >
+              Back
+            </button>
+          )}
+
+          {currentStep === 1 ? (
+            <motion.button
+              type="submit"
+              variants={reduced ? undefined : submitVariants}
+              animate="idle"
+              className="min-h-11 rounded-xl bg-brown-600 px-5 py-2.5 font-semibold text-cream-50 transition hover:bg-brown-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 sm:ml-auto"
+            >
+              Continue
+            </motion.button>
+          ) : (
+            <motion.button
+              type="submit"
+              variants={reduced ? undefined : submitVariants}
+              animate={loading ? 'loading' : 'idle'}
+              className="min-h-11 rounded-xl bg-brown-600 px-5 py-2.5 font-semibold text-cream-50 transition hover:bg-brown-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:ml-auto"
+              disabled={loading || !isOnline}
+              aria-disabled={loading || !isOnline}
+              title={!isOnline ? "You're offline" : undefined}
+            >
+              {loading ? (
+                <>
+                  <Spinner />
+                  Processing…
+                </>
+              ) : !isOnline ? (
+                "You're offline"
+              ) : (
+                'Register Collateral'
+              )}
+            </motion.button>
           )}
         </div>
-
-        <motion.button
-          type="submit"
-          variants={reduced ? undefined : submitVariants}
-          animate={loading ? 'loading' : 'idle'}
-          className="w-full bg-brown text-cream py-2.5 rounded-xl font-semibold hover:bg-brown/80 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          disabled={loading || !isOnline}
-          aria-disabled={loading || !isOnline}
-          title={!isOnline ? "You're offline" : undefined}
-        >
-          {loading ? (
-            <>
-              <Spinner />
-              Processing…
-            </>
-          ) : !isOnline ? (
-            "You're offline"
-          ) : (
-            'Register Collateral'
-          )}
-        </motion.button>
       </form>
 
       {lastSaved && !loading && (
-        <p className="text-xs text-brown-400 text-center">
+        <p className="text-center text-xs text-brown-500 dark:text-brown-300">
           Auto-saved at {lastSaved.toLocaleTimeString()}
         </p>
       )}
@@ -553,8 +536,10 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
       {status && (
         <div
           role="status"
-          className={`p-3 rounded-xl text-sm ${
-            isError ? 'bg-error-light text-error-dark' : 'bg-success-light text-success-dark'
+          className={`rounded-xl p-3 text-sm ${
+            isError
+              ? 'bg-error-light text-error-dark dark:bg-red-950 dark:text-red-200'
+              : 'bg-success-light text-success-dark dark:bg-green-950 dark:text-green-200'
           }`}
         >
           {isError ? status.replace('error:', '') : status}
@@ -572,11 +557,11 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
       <ConfirmDialog
         open={showConfirm}
         title="Register Collateral"
-        message={`Register ${formData.quantity} ${formData.animalType}(s) with appraised value of ${formData.appraisedValue} stroops as on-chain collateral? This action cannot be undone.`}
+        message={`Register ${formData.quantity} ${formData.animalType}(s) with an appraised value of ${formData.appraisedValue} stroops as on-chain collateral? This action cannot be undone.`}
         confirmLabel="Register"
         onConfirm={() => {
           setShowConfirm(false);
-          registerCollateral();
+          void registerCollateral();
         }}
         onCancel={() => setShowConfirm(false)}
       />
