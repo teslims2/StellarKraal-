@@ -26,7 +26,14 @@ const DRAFT_SAVED_DEBOUNCE_MS = 1000;
 /** How long the indicator stays visible before fading out (ms). */
 const DRAFT_SAVED_VISIBLE_MS = 3000;
 
-export function useFormAutoSave<T extends Record<string, unknown>>({
+function isExpired(parsed: { timestamp?: string }, expiryMs?: number): boolean {
+  if (!expiryMs) return false;
+  const savedAt = Date.parse(parsed.timestamp ?? '');
+  if (Number.isNaN(savedAt)) return true;
+  return Date.now() - savedAt > expiryMs;
+}
+
+export function useFormAutoSave<T extends object>({
   storageKey,
   data,
   enabled = true,
@@ -153,6 +160,7 @@ export function useFormAutoSave<T extends Record<string, unknown>>({
     localStorage.removeItem(storageKey);
     setHasSavedData(false);
     setLastSaved(null);
+    setDraftSaved(false);
   };
 
   return {

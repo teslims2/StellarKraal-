@@ -9,6 +9,7 @@ import { useTransactionStatus } from '@/hooks/useTransactionStatus';
 import { Button } from '@/components/ui';
 import Spinner from '@/components/Spinner';
 import XlmAmount from '@/components/XlmAmount';
+import { useToast } from '@/components/toast';
 import { useCurrencySettings } from '@/hooks/useCurrencySettings';
 import { useCurrencyConversion } from '@/hooks/useCurrencyConversion';
 import { formatXlmFromStroops } from '@/lib/formatMoney';
@@ -27,16 +28,15 @@ const FEE_WARNING_THRESHOLD_XLM = 0.1;
 
 interface Props {
   walletAddress: string;
+  onSubmitted?: (loan: SubmittedLoan) => void;
 }
 
 interface FeeEstimate {
-  principal: number;
   originationFee: number;
   totalAmount: number;
-  interestRate: number;
 }
 
-export default function StepConfirm({ walletAddress }: Props) {
+export default function StepConfirm({ walletAddress, onSubmitted }: Props) {
   const {
     animalType,
     count,
@@ -47,7 +47,6 @@ export default function StepConfirm({ walletAddress }: Props) {
     setField,
     prevStep,
     reset,
-    clearSavedProgress,
   } = useWizard();
 
   const [loanId, setLoanId] = useState<string | null>(null);
@@ -75,23 +74,25 @@ export default function StepConfirm({ walletAddress }: Props) {
       setFeeLoading(true);
       setFeeError(null);
       setFeeXlm(null);
+      setFeeEstimate(null);
 
       try {
         const res = await fetch(`${API}/api/v1/loans/estimate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            collateral_id: parseInt(collateralId),
-            amount: parseInt(loanAmount || '0'),
-            term_days: parseInt(loanTermDays),
-          }),
+          body: JSON.stringify({ principal: parseInt(loanAmount || '0') }),
         });
 
         if (!res.ok) throw new Error('Estimate request failed');
-        const data = await res.json();
+        const data = (await res.json()) as Partial<FeeEstimate>;
 
-        if (!cancelled) {
-          setFeeXlm(typeof data.estimatedFee === 'number' ? data.estimatedFee : null);
+        if (!cancelled && typeof data.originationFee === 'number') {
+          const estimatedFeeXlm = data.originationFee / 10_000_000;
+          setFeeEstimate({
+            originationFee: data.originationFee,
+            totalAmount: typeof data.totalAmount === 'number' ? data.totalAmount : 0,
+          });
+          setFeeXlm(estimatedFeeXlm);
         }
       } catch {
         if (!cancelled) {
@@ -109,12 +110,15 @@ export default function StepConfirm({ walletAddress }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [collateralId, loanAmount, loanTermDays]);
+  }, [loanAmount]);
 
   // ── Origination fee / repayment totals (existing logic) ──────────────────
   const rate = TERM_RATES[loanTermDays] || '5%';
   const fee = Math.floor((parseInt(loanAmount || '0') * parseFloat(rate)) / 100);
   const totalRepay = parseInt(loanAmount || '0') + fee;
+  const displayedFee = feeEstimate?.originationFee ?? fee;
+  const displayedTotal = feeEstimate?.totalAmount || totalRepay;
+  const feeWarning = feeXlm !== null && feeXlm > FEE_WARNING_THRESHOLD_XLM;
 
   // ── Submit handler (optimistic — returns hash immediately) ────────────────
   async function handleSubmit() {
@@ -131,7 +135,6 @@ export default function StepConfirm({ walletAddress }: Props) {
           borrower: walletAddress,
           collateral_id: parseInt(collateralId),
           amount: parseInt(loanAmount),
-          term_days: parseInt(loanTermDays),
         }),
       });
       if (!res.ok) throw new Error('Loan request failed. Please try again.');
@@ -237,8 +240,7 @@ export default function StepConfirm({ walletAddress }: Props) {
   }
 
   // ── Helper: fiat conversion of the estimated fee ──────────────────────────
-  const fiatFee =
-    currencyEnabled && feeXlm !== null ? convert(feeXlm, currency) : null;
+  const fiatFee = currencyEnabled && feeXlm !== null ? convert(feeXlm, currency) : null;
 
   const CURRENCY_SYMBOLS: Record<string, string> = {
     KES: 'KSh',
@@ -316,14 +318,14 @@ export default function StepConfirm({ walletAddress }: Props) {
             ) : feeError ? (
               <p className="font-semibold text-red-600">Unable to estimate fee</p>
             ) : (
-              <p className="font-semibold text-brown">{xlmFee} XLM</p>
+              <p className="font-semibold text-brown">{feeXlm} XLM</p>
             )}
             <p className="text-xs text-brown/50">Fee</p>
-            <p className="font-semibold text-brown">{formatXlmFromStroops(fee)}</p>
+            <p className="font-semibold text-brown">{formatXlmFromStroops(displayedFee)}</p>
           </div>
           <div>
             <p className="text-xs text-brown/50">Repay total</p>
-            <p className="font-semibold text-brown">{formatXlmFromStroops(totalRepay)}</p>
+            <p className="font-semibold text-brown">{formatXlmFromStroops(displayedTotal)}</p>
           </div>
         </div>
 
@@ -358,7 +360,8 @@ export default function StepConfirm({ walletAddress }: Props) {
             <XlmAmount xlm={feeXlm} />
             {currencyEnabled && fiatFee !== null && (
               <span className="text-brown/60 font-normal ml-1">
-                ({CURRENCY_SYMBOLS[currency] ?? ''}{fiatFee.toLocaleString(undefined, { maximumFractionDigits: 2 })})
+                ({CURRENCY_SYMBOLS[currency] ?? ''}
+                {fiatFee.toLocaleString(undefined, { maximumFractionDigits: 2 })})
               </span>
             )}
           </p>
@@ -366,13 +369,15 @@ export default function StepConfirm({ walletAddress }: Props) {
       </div>
 
       {/* ── High-fee warning ─────────────────────────────────────────────── */}
-      {feeXlm !== null && feeXlm > FEE_WARNING_THRESHOLD_XLM && (
+      {feeWarning && (
         <div
           className="flex items-start gap-3 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3"
           data-testid="fee-warning"
           role="alert"
         >
-          <span className="text-amber-500 text-lg" aria-hidden="true">⚠️</span>
+          <span className="text-amber-500 text-lg" aria-hidden="true">
+            ⚠️
+          </span>
           <p className="text-amber-700 text-sm">
             The estimated network fee is unusually high ({feeXlm} XLM). Please review before
             submitting.
@@ -382,7 +387,9 @@ export default function StepConfirm({ walletAddress }: Props) {
 
       {/* Wallet note */}
       <div className="flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
-        <span className="text-blue-500 text-lg" aria-hidden="true">🔐</span>
+        <span className="text-blue-500 text-lg" aria-hidden="true">
+          🔐
+        </span>
         <p className="text-blue-700 text-sm">
           Clicking submit will open Freighter to sign the transaction. Make sure your wallet is
           unlocked.
@@ -409,7 +416,6 @@ export default function StepConfirm({ walletAddress }: Props) {
           className="flex-[2]"
           onClick={handleSubmit}
           state={submitButton.state}
-          disabled={!!feeError}
         >
           🚀 Submit Loan Request
         </Button>

@@ -1,6 +1,7 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import StepConfirm from '../components/wizard/steps/StepConfirm';
+import { ToastProvider } from '../components/toast';
 
 // ── Module mocks ────────────────────────────────────────────────────────────
 
@@ -27,9 +28,7 @@ jest.mock('../lib/api', () => ({
 // Stub XlmAmount so we can assert on its `xlm` prop without currency fetch noise
 jest.mock('../components/XlmAmount', () => ({
   __esModule: true,
-  default: ({ xlm }: { xlm: number }) => (
-    <span data-testid="xlm-amount">{xlm} XLM</span>
-  ),
+  default: ({ xlm }: { xlm: number }) => <span data-testid="xlm-amount">{xlm} XLM</span>,
 }));
 
 // Stub hooks used for fiat conversion — kept simple so fee-display tests
@@ -79,21 +78,21 @@ const defaultButtonState = {
 };
 
 function setupFetch(resolveValue: unknown) {
-  (global as any).fetch = jest.fn().mockResolvedValue({
+  global.fetch = jest.fn().mockResolvedValue({
     ok: true,
     json: async () => resolveValue,
-  });
+  }) as unknown as typeof fetch;
 }
 
 function setupFetchReject(error = new Error('Network error')) {
-  (global as any).fetch = jest.fn().mockRejectedValue(error);
+  global.fetch = jest.fn().mockRejectedValue(error) as unknown as typeof fetch;
 }
 
 function setupFetchNotOk() {
-  (global as any).fetch = jest.fn().mockResolvedValue({
+  global.fetch = jest.fn().mockResolvedValue({
     ok: false,
     json: async () => ({}),
-  });
+  }) as unknown as typeof fetch;
 }
 
 // ── Test helpers ────────────────────────────────────────────────────────────
@@ -101,7 +100,11 @@ function setupFetchNotOk() {
 function renderComponent() {
   mockUseWizard.mockReturnValue(defaultWizard);
   mockUseButtonState.mockReturnValue(defaultButtonState);
-  return render(<StepConfirm walletAddress="GTEST" />);
+  return render(
+    <ToastProvider>
+      <StepConfirm walletAddress="GTEST" />
+    </ToastProvider>
+  );
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -113,9 +116,7 @@ describe('StepConfirm – fee estimation', () => {
 
   it('shows a spinner while the fee estimate is loading', () => {
     // Make fetch never resolve so we stay in the loading state
-    (global as any).fetch = jest.fn(
-      () => new Promise<never>(() => undefined),
-    );
+    global.fetch = jest.fn(() => new Promise<never>(() => undefined)) as unknown as typeof fetch;
 
     renderComponent();
 
@@ -123,37 +124,29 @@ describe('StepConfirm – fee estimation', () => {
   });
 
   it('renders the fee amount after a successful estimate', async () => {
-    setupFetch({ estimatedFee: 0.00001 });
+    setupFetch({ originationFee: 100, totalAmount: 1100 });
 
     renderComponent();
 
     // Spinner should disappear and the amount should appear
-    await waitFor(() =>
-      expect(screen.queryByTestId('fee-spinner')).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByTestId('fee-spinner')).not.toBeInTheDocument());
     expect(screen.getByTestId('fee-amount')).toBeInTheDocument();
     expect(screen.getByTestId('fee-amount').textContent).toContain('0.00001');
   });
 
   it('calls POST /api/v1/loans/estimate with the correct payload', async () => {
-    setupFetch({ estimatedFee: 0.00001 });
+    setupFetch({ originationFee: 100, totalAmount: 1100 });
 
     renderComponent();
 
-    await waitFor(() =>
-      expect(screen.queryByTestId('fee-spinner')).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByTestId('fee-spinner')).not.toBeInTheDocument());
 
-    expect((global as any).fetch).toHaveBeenCalledWith(
+    expect(global.fetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/v1/loans/estimate'),
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({
-          collateral_id: 42,
-          amount: 1000,
-          term_days: 30,
-        }),
-      }),
+        body: JSON.stringify({ principal: 1000 }),
+      })
     );
   });
 
@@ -162,12 +155,8 @@ describe('StepConfirm – fee estimation', () => {
 
     renderComponent();
 
-    await waitFor(() =>
-      expect(screen.getByTestId('fee-error')).toBeInTheDocument(),
-    );
-    expect(screen.getByTestId('fee-error').textContent).toBe(
-      'Unable to estimate fee',
-    );
+    await waitFor(() => expect(screen.getByTestId('fee-error')).toBeInTheDocument());
+    expect(screen.getByTestId('fee-error').textContent).toBe('Unable to estimate fee');
   });
 
   it('shows "Unable to estimate fee" when the server returns a non-ok response', async () => {
@@ -175,55 +164,41 @@ describe('StepConfirm – fee estimation', () => {
 
     renderComponent();
 
-    await waitFor(() =>
-      expect(screen.getByTestId('fee-error')).toBeInTheDocument(),
-    );
-    expect(screen.getByTestId('fee-error').textContent).toBe(
-      'Unable to estimate fee',
-    );
+    await waitFor(() => expect(screen.getByTestId('fee-error')).toBeInTheDocument());
+    expect(screen.getByTestId('fee-error').textContent).toBe('Unable to estimate fee');
   });
 
   it('does NOT show a fee warning when the estimate is below 0.1 XLM', async () => {
-    setupFetch({ estimatedFee: 0.00001 });
+    setupFetch({ originationFee: 100, totalAmount: 1100 });
 
     renderComponent();
 
-    await waitFor(() =>
-      expect(screen.queryByTestId('fee-spinner')).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByTestId('fee-spinner')).not.toBeInTheDocument());
     expect(screen.queryByTestId('fee-warning')).not.toBeInTheDocument();
   });
 
   it('shows the amber fee warning when the estimate exceeds 0.1 XLM', async () => {
-    setupFetch({ estimatedFee: 0.5 }); // 0.5 XLM > 0.1 threshold
+    setupFetch({ originationFee: 5_000_000, totalAmount: 5_500_000 });
 
     renderComponent();
 
-    await waitFor(() =>
-      expect(screen.getByTestId('fee-warning')).toBeInTheDocument(),
-    );
-    expect(screen.getByTestId('fee-warning').textContent).toMatch(
-      /unusually high/i,
-    );
+    await waitFor(() => expect(screen.getByTestId('fee-warning')).toBeInTheDocument());
+    expect(screen.getByTestId('fee-warning').textContent).toMatch(/unusually high/i);
   });
 
   it('shows the amber fee warning exactly at the boundary (> 0.1, not >=)', async () => {
     // 0.1 XLM should NOT trigger the warning (threshold is strictly >)
-    setupFetch({ estimatedFee: 0.1 });
+    setupFetch({ originationFee: 1_000_000, totalAmount: 1_100_000 });
 
     renderComponent();
 
-    await waitFor(() =>
-      expect(screen.queryByTestId('fee-spinner')).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByTestId('fee-spinner')).not.toBeInTheDocument());
     expect(screen.queryByTestId('fee-warning')).not.toBeInTheDocument();
 
     // 0.1000001 should trigger it
-    setupFetch({ estimatedFee: 0.1000001 });
+    setupFetch({ originationFee: 1_000_001, totalAmount: 1_100_001 });
     const { unmount } = renderComponent();
-    await waitFor(() =>
-      expect(screen.getByTestId('fee-warning')).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByTestId('fee-warning')).toBeInTheDocument());
     unmount();
   });
 });
@@ -232,7 +207,7 @@ describe('StepConfirm – existing submit flow preserved', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     // Default to a fee that resolves quickly and doesn't produce a warning
-    setupFetch({ estimatedFee: 0.00001 });
+    setupFetch({ originationFee: 100, totalAmount: 1100 });
   });
 
   it('renders the final summary heading', async () => {
@@ -254,7 +229,11 @@ describe('StepConfirm – existing submit flow preserved', () => {
   it('displays the wizard error when one is set', async () => {
     mockUseWizard.mockReturnValue({ ...defaultWizard, error: 'Some error occurred' });
     mockUseButtonState.mockReturnValue(defaultButtonState);
-    render(<StepConfirm walletAddress="GTEST" />);
+    render(
+      <ToastProvider>
+        <StepConfirm walletAddress="GTEST" />
+      </ToastProvider>
+    );
     expect(screen.getByText('Some error occurred')).toBeInTheDocument();
   });
 });
