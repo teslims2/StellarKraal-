@@ -34,10 +34,20 @@
 
 import React from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import Tooltip from './Tooltip';
 
 export type LoanStatus = 'active' | 'repaid' | 'defaulted' | 'liquidated';
 export type CollateralStatus = 'available' | 'pledged';
 export type BadgeStatus = LoanStatus | CollateralStatus;
+
+export const STATUS_TOOLTIPS = {
+  active: 'This loan is currently active with an outstanding balance',
+  repaid: 'This loan has been fully repaid',
+  defaulted: 'This loan is in default and requires immediate attention',
+  liquidated: 'This loan was liquidated due to insufficient collateral',
+  available: 'This collateral is available to pledge',
+  pledged: 'This collateral is pledged against a loan',
+} as const satisfies Record<BadgeStatus, string>;
 
 interface Config {
   label: string;
@@ -45,6 +55,7 @@ interface Config {
   classes: string;
   icon: string;
   ariaLabel: string;
+  tooltip: (typeof STATUS_TOOLTIPS)[BadgeStatus];
 }
 
 const STATUS_CONFIG: Record<BadgeStatus, Config> = {
@@ -53,36 +64,42 @@ const STATUS_CONFIG: Record<BadgeStatus, Config> = {
     classes: 'bg-color-success-subtle text-color-success',
     icon: '●',
     ariaLabel: 'Status: Active',
+    tooltip: STATUS_TOOLTIPS.active,
   },
   repaid: {
     label: 'Repaid',
     classes: 'bg-color-primary/10 text-color-primary',
     icon: '✓',
     ariaLabel: 'Status: Repaid',
+    tooltip: STATUS_TOOLTIPS.repaid,
   },
   defaulted: {
     label: 'Defaulted',
     classes: 'bg-color-warning-subtle text-color-warning',
     icon: '⚠',
     ariaLabel: 'Status: Defaulted',
+    tooltip: STATUS_TOOLTIPS.defaulted,
   },
   liquidated: {
     label: 'Liquidated',
     classes: 'bg-color-danger-subtle text-color-danger',
     icon: '✕',
     ariaLabel: 'Status: Liquidated',
+    tooltip: STATUS_TOOLTIPS.liquidated,
   },
   available: {
     label: 'Available',
     classes: 'bg-color-success-subtle text-color-success',
     icon: '◆',
     ariaLabel: 'Status: Available',
+    tooltip: STATUS_TOOLTIPS.available,
   },
   pledged: {
     label: 'Pledged',
     classes: 'bg-color-secondary/15 text-color-secondary',
     icon: '⬡',
     ariaLabel: 'Status: Pledged',
+    tooltip: STATUS_TOOLTIPS.pledged,
   },
 };
 
@@ -100,15 +117,11 @@ export default function StatusBadge({ status }: Props) {
    * immediately (duration: 0) so the badge snaps without any movement.
    */
   const variants = {
-    initial: reducedMotion
-      ? { opacity: 1, scale: 1 }
-      : { opacity: 0, scale: 0.85 },
+    initial: reducedMotion ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.85 },
     animate: {
       opacity: 1,
       scale: 1,
-      transition: reducedMotion
-        ? { duration: 0 }
-        : { duration: 0.2, ease: 'easeOut' as const },
+      transition: reducedMotion ? { duration: 0 } : { duration: 0.2, ease: 'easeOut' as const },
     },
     exit: reducedMotion
       ? { opacity: 1, scale: 1 }
@@ -146,22 +159,28 @@ export default function StatusBadge({ status }: Props) {
      * The outer <span> is a plain inline-flex container so the surrounding
      * layout never reflows — the animated child fills the same space.
      */
-    <span className="inline-flex items-center" data-testid="status-badge-wrapper">
-      <AnimatePresence mode="wait" initial={false}>
-        <motion.span
-          key={status}
-          role="status"
-          aria-label={config.ariaLabel}
-          variants={variants}
-          initial="initial"
-          animate="animate"
-          exit="exit"
-          className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${config.classes}`}
-        >
-          <span aria-hidden="true">{config.icon}</span>
-          {config.label}
-        </motion.span>
-      </AnimatePresence>
-    </span>
+    <Tooltip hint={config.tooltip}>
+      <span
+        className={`inline-flex items-center rounded-full font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-color-primary focus-visible:ring-offset-2 ${config.classes}`}
+        data-testid="status-badge-wrapper"
+        role="status"
+        tabIndex={0}
+        aria-label={config.ariaLabel}
+      >
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span
+            key={status}
+            variants={variants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            className="inline-flex items-center gap-1 text-xs px-2 py-0.5"
+          >
+            <span aria-hidden="true">{config.icon}</span>
+            {config.label}
+          </motion.span>
+        </AnimatePresence>
+      </span>
+    </Tooltip>
   );
 }

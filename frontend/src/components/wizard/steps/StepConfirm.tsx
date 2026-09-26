@@ -1,10 +1,11 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { useWizard, type SubmittedLoan } from '@/context/LoanWizardContext';
+import { useWizard } from '@/context/LoanWizardContext';
 import { useButtonState } from '@/hooks/useButtonState';
 import { signTransaction } from '@/lib/freighterClient';
 import { submitSignedXdr } from '@/lib/stellarUtils';
 import { invalidateLoans } from '@/lib/api';
+import { useTransactionStatus } from '@/hooks/useTransactionStatus';
 import { Button } from '@/components/ui';
 import Spinner from '@/components/Spinner';
 import XlmAmount from '@/components/XlmAmount';
@@ -48,10 +49,13 @@ export default function StepConfirm({ walletAddress, onSubmitted }: Props) {
     reset,
   } = useWizard();
 
-  const submittingRef = useRef(false);
+  const [loanId, setLoanId] = useState<string | null>(null);
+  const [pendingHash, setPendingHash] = useState<string | null>(null);
+  const [pendingError, setPendingError] = useState<string | null>(null);
   const [feeEstimate, setFeeEstimate] = useState<FeeEstimate | null>(null);
   const submitButton = useButtonState();
   const toast = useToast();
+  const submittingRef = useRef(false);
 
   // ── Fee estimation state ──────────────────────────────────────────────────
   const [feeXlm, setFeeXlm] = useState<number | null>(null);
@@ -116,12 +120,13 @@ export default function StepConfirm({ walletAddress, onSubmitted }: Props) {
   const displayedTotal = feeEstimate?.totalAmount || totalRepay;
   const feeWarning = feeXlm !== null && feeXlm > FEE_WARNING_THRESHOLD_XLM;
 
-  // ── Submit handler (unchanged) ────────────────────────────────────────────
+  // ── Submit handler (optimistic — returns hash immediately) ────────────────
   async function handleSubmit() {
     if (submittingRef.current) return;
     submittingRef.current = true;
     submitButton.setLoading();
     setField('error', null);
+    setPendingError(null);
     try {
       const res = await fetch(`${API}/api/loan/request`, {
         method: 'POST',
@@ -137,16 +142,10 @@ export default function StepConfirm({ walletAddress, onSubmitted }: Props) {
       const { signedTxXdr } = await signTransaction(xdr, {
         network: process.env.NEXT_PUBLIC_NETWORK || 'TESTNET',
       });
-      const result = await submitSignedXdr(signedTxXdr);
+      const hash = await submitSignedXdr(signedTxXdr);
+      setPendingHash(hash);
       invalidateLoans();
-      onSubmitted?.({
-        loanId: String(result),
-        amount: parseInt(loanAmount || '0'),
-        termDays: loanTermDays,
-        totalRepay: displayedTotal,
-      });
-      reset();
-      submitButton.setSuccess();
+      clearSavedProgress();
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Something went wrong.';
       setField('error', message);
@@ -154,6 +153,90 @@ export default function StepConfirm({ walletAddress, onSubmitted }: Props) {
       submittingRef.current = false;
       submitButton.setError();
     }
+  }
+
+  function handleTxTerminal(status: "confirmed" | "failed", errorCode?: string) {
+    if (status === "confirmed" && pendingHash) {
+      setLoanId(pendingHash);
+    } else if (status === "failed") {
+      setPendingError(errorCode ? `Transaction failed: ${errorCode}` : 'Transaction failed');
+      submittingRef.current = false;
+      submitButton.setError();
+    }
+    setPendingHash(null);
+  }
+
+  useTransactionStatus(pendingHash, {
+    interval: 3000,
+    onTerminal: handleTxTerminal,
+  });
+
+  // ── Success / Pending state ─────────────────────────────────────────────
+  if (loanId) {
+    return (
+      <div className="space-y-6 text-center">
+        <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto text-4xl">
+          ✅
+        </div>
+        <div>
+          <h2 className="text-2xl font-bold text-brown">Loan Disbursed!</h2>
+          <p className="text-brown/60 mt-2 text-sm">
+            Your loan has been approved and disbursed to your wallet.
+          </p>
+        </div>
+        <div className="bg-green-50 border border-green-200 rounded-xl px-5 py-4 text-left">
+          <p className="text-sm text-green-700 font-medium">Loan ID</p>
+          <p className="font-mono text-brown break-all mt-1">{loanId}</p>
+        </div>
+        <div className="bg-white border border-brown/20 rounded-xl px-5 py-4 text-left space-y-2">
+          <div className="flex justify-between text-sm">
+            <span className="text-brown/60">Amount received</span>
+            <span className="font-semibold text-brown">
+              {formatXlmFromStroops(parseInt(loanAmount))}
+            </span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-brown/60">Due in</span>
+            <span className="font-semibold text-brown">{loanTermDays} days</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-brown/60">Total to repay</span>
+            <span className="font-bold text-brown">{formatXlmFromStroops(totalRepay)}</span>
+          </div>
+        </div>
+        <Button variant="ghost" fullWidth onClick={reset}>
+          Request Another Loan
+        </Button>
+      </div>
+    );
+  }
+
+  if (pendingHash) {
+    return (
+      <div className="space-y-6 text-center" role="status" aria-live="polite">
+        <div className="w-20 h-20 bg-gold-100 rounded-full flex items-center justify-center mx-auto text-4xl">
+          ⏳
+        </div>
+        <div>
+          <h2 className="text-2xl font-bold text-brown">Transaction Pending</h2>
+          <p className="text-brown/60 mt-2 text-sm">
+            Your loan request has been submitted to the Stellar network. We&apos;re waiting for confirmation...
+          </p>
+        </div>
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-4 text-left">
+          <p className="text-sm text-amber-700 font-medium">Transaction Hash</p>
+          <p className="font-mono text-brown break-all mt-1">{pendingHash}</p>
+        </div>
+        {pendingError && (
+          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-600 text-sm">
+            {pendingError}
+          </div>
+        )}
+        <p className="text-xs text-brown/40">
+          You can safely navigate away. We&apos;ll confirm this transaction shortly.
+        </p>
+      </div>
+    );
   }
 
   // ── Helper: fiat conversion of the estimated fee ──────────────────────────

@@ -1,9 +1,9 @@
 'use client';
-import { useState } from 'react';
-import { useWizard } from '@/context/LoanWizardContext';
+
+import { useId, useState, type ReactNode } from 'react';
 import { GlossaryTerm } from '@/components/GlossaryTerm';
-import FieldTooltip from '@/components/FieldTooltip';
 import { Button } from '@/components/ui';
+import { useWizard } from '@/context/LoanWizardContext';
 import { useCurrencyConversion } from '@/hooks/useCurrencyConversion';
 
 const TERM_RATES: Record<string, string> = {
@@ -13,30 +13,32 @@ const TERM_RATES: Record<string, string> = {
   '180': '20%',
 };
 
-const ANIMAL_EMOJI: Record<string, string> = {
-  cattle: '🐄',
-  goat: '🐐',
-  sheep: '🐑',
-};
+interface ReviewRow {
+  label: ReactNode;
+  value: ReactNode;
+  emphasis?: boolean;
+}
+
+interface AmountBreakdownTooltipProps {
+  principal: number;
+  originationFee: number;
+  estimatedFirstInterest: number;
+}
 
 function AmountBreakdownTooltip({
   principal,
   originationFee,
   estimatedFirstInterest,
-}: {
-  principal: number;
-  originationFee: number;
-  estimatedFirstInterest: number;
-}) {
+}: AmountBreakdownTooltipProps) {
   const [open, setOpen] = useState(false);
+  const tooltipId = useId();
   const { rates } = useCurrencyConversion();
   const usdRate = rates?.USD ?? null;
 
   const formatXlm = (stroops: number) => `${(stroops / 1e7).toFixed(2)} XLM`;
   const formatFiat = (stroops: number) => {
     if (!usdRate) return null;
-    const usd = (stroops / 1e7) * usdRate;
-    return `$${usd.toFixed(2)} USD`;
+    return `$${((stroops / 1e7) * usdRate).toFixed(2)} USD`;
   };
 
   const items = [
@@ -46,30 +48,30 @@ function AmountBreakdownTooltip({
   ];
 
   return (
-    <span className="relative inline-flex items-center ml-1">
+    <span className="relative ml-1 inline-flex items-center align-middle">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            setOpen((v) => !v);
+        onClick={() => setOpen((visible) => !visible)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            setOpen((visible) => !visible);
           }
-          if (e.key === 'Escape') setOpen(false);
+          if (event.key === 'Escape') setOpen(false);
         }}
         aria-label="Amount breakdown"
         aria-expanded={open}
-        aria-describedby={open ? 'amount-breakdown-tooltip' : undefined}
-        className="text-brown/50 hover:text-brown transition focus:outline-none focus-visible:ring-2 focus-visible:ring-brown rounded"
+        aria-controls={tooltipId}
+        aria-describedby={open ? tooltipId : undefined}
+        className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gold-700 transition hover:bg-gold/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold focus-visible:ring-offset-2 dark:text-gold-300"
       >
         <svg
-          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
           className="h-4 w-4"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
           strokeWidth={2}
-          aria-hidden="true"
         >
           <path
             strokeLinecap="round"
@@ -78,30 +80,27 @@ function AmountBreakdownTooltip({
           />
         </svg>
       </button>
+
       {open && (
         <div
-          id="amount-breakdown-tooltip"
+          id={tooltipId}
           role="tooltip"
-          className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-3 bg-brown-dark text-sand-light text-sm rounded-lg shadow-lg"
+          className="absolute bottom-full left-1/2 z-50 mb-2 w-64 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-lg bg-brown-900 p-3 text-left text-sm text-cream-50 shadow-lg dark:bg-cream-50 dark:text-brown-900"
         >
-          <div className="font-semibold mb-2 text-white">Amount Breakdown</div>
-          <div className="space-y-1">
+          <div className="mb-2 font-semibold">Amount Breakdown</div>
+          <div className="space-y-2">
             {items.map((item) => (
-              <div key={item.label} className="flex justify-between items-center">
-                <span className="opacity-90">{item.label}</span>
-                <div className="text-right">
-                  <span className="font-mono">{formatXlm(item.value)}</span>
+              <div key={item.label} className="flex items-start justify-between gap-3">
+                <span>{item.label}</span>
+                <span className="shrink-0 text-right font-mono">
+                  {formatXlm(item.value)}
                   {formatFiat(item.value) && (
                     <span className="block text-xs opacity-75">{formatFiat(item.value)}</span>
                   )}
-                </div>
+                </span>
               </div>
             ))}
           </div>
-          <div
-            className="absolute left-1/2 -bottom-2 -translate-x-1/2 border-solid border-t-brown-dark border-t-8 border-x-transparent border-x-8 border-b-0"
-            aria-hidden="true"
-          />
         </div>
       )}
     </span>
@@ -109,111 +108,178 @@ function AmountBreakdownTooltip({
 }
 
 export default function StepReview() {
-  const {
-    animalType,
-    count,
-    appraisedValue,
-    collateralId,
-    loanAmount,
-    loanTermDays,
-    nextStep,
-    prevStep,
-  } = useWizard();
-
+  const { animalType, count, appraisedValue, loanAmount, loanTermDays, nextStep, prevStep } =
+    useWizard();
   const [isDetailedView, setIsDetailedView] = useState(false);
 
   const rate = TERM_RATES[loanTermDays] || '5%';
-  const rateNum = parseFloat(rate) / 100;
-  const principal = parseInt(loanAmount || '0');
-  const fee = Math.floor(principal * rateNum);
+  const principal = Number.parseInt(loanAmount || '0', 10);
+  const fee = Math.floor(principal * (Number.parseFloat(rate) / 100));
   const estimatedFirstInterest = Math.floor(principal * 0.01);
   const totalRepay = principal + fee;
   const healthFactor =
-    loanAmount && appraisedValue ? (parseInt(appraisedValue) / principal / 1.5).toFixed(2) : '—';
+    principal > 0 && appraisedValue
+      ? (Number.parseInt(appraisedValue, 10) / principal / 1.5).toFixed(2)
+      : '—';
+  const animalLabel = `${animalType.charAt(0).toUpperCase()}${animalType.slice(1)}`;
+  const breakdown = (
+    <AmountBreakdownTooltip
+      principal={principal}
+      originationFee={fee}
+      estimatedFirstInterest={estimatedFirstInterest}
+    />
+  );
 
-  const rows = [
+  const rows: ReviewRow[] = [
     {
-      label: 'Collateral Type',
-      value: `${ANIMAL_EMOJI[animalType]} ${animalType.charAt(0).toUpperCase() + animalType.slice(1)}`,
+      label: <GlossaryTerm termKey="collateral">Collateral Type</GlossaryTerm>,
+      value: animalLabel,
     },
     { label: 'Animal Count', value: count },
     {
-      label: (
-        <span className="flex items-center gap-1">
-          Appraised Value
-          <FieldTooltip
-            content="Collateral value is the total worth of your animals as determined by the appraiser. Your maximum loan is 70% of this amount."
-            label="What is Collateral Value?"
-          />
-        </span>
-      ),
-      value: `${parseInt(appraisedValue || '0').toLocaleString()} stroops`,
+      label: <GlossaryTerm termKey="appraisal">Appraised Value</GlossaryTerm>,
+      value: `${Number.parseInt(appraisedValue || '0', 10).toLocaleString()} stroops`,
     },
-    { label: 'Collateral ID', value: collateralId || '—' },
-    { label: 'Loan Amount', value: `${principal.toLocaleString()} stroops` },
-    { label: 'Loan Term', value: `${loanTermDays} days` },
-    { label: <GlossaryTerm termKey="apr">Fee Rate</GlossaryTerm>, value: rate },
     {
-      label: (
-        <span className="flex items-center gap-1">
-          <GlossaryTerm termKey="originationFee">Fee Amount</GlossaryTerm>
-          <FieldTooltip
-            content="Origination fee is a one-time charge added to your loan when it's issued. It covers the cost of processing your loan application."
-            label="What is Origination Fee?"
-          />
-        </span>
-      ),
+      label: <GlossaryTerm termKey="loanAmount">Loan Amount</GlossaryTerm>,
+      value: `${principal.toLocaleString()} stroops`,
+    },
+    { label: 'Loan Term', value: `${loanTermDays} days` },
+    {
+      label: <GlossaryTerm termKey="feeRate">Fee Rate</GlossaryTerm>,
+      value: rate,
+    },
+    {
+      label: <GlossaryTerm termKey="originationFee">Fee Amount</GlossaryTerm>,
       value: `${fee.toLocaleString()} stroops`,
     },
     {
-      label: (
-        <span className="flex items-center">
-          <GlossaryTerm termKey="repayment">Total to Repay</GlossaryTerm>
-          <AmountBreakdownTooltip
-            principal={principal}
-            originationFee={fee}
-            estimatedFirstInterest={estimatedFirstInterest}
-          />
+      label: <GlossaryTerm termKey="repayment">Total to Repay</GlossaryTerm>,
+      value: (
+        <span className="inline-flex flex-wrap items-center justify-end gap-1">
+          {totalRepay.toLocaleString()} stroops
+          {breakdown}
         </span>
       ),
-      value: `${totalRepay.toLocaleString()} stroops`,
-      bold: true,
+      emphasis: true,
     },
     {
       label: <GlossaryTerm termKey="healthFactor">Health Factor</GlossaryTerm>,
       value: healthFactor,
-      bold: true,
+      emphasis: true,
     },
   ];
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-brown">Review Loan Terms</h2>
-        <div className="flex items-center gap-3 mt-2 text-sm text-brown/70 bg-brown/5 inline-flex px-3 py-1.5 rounded-full border border-brown/10">
-          <span className="flex items-center gap-1">
-            ⏱ {isDetailedView ? 'About 2 minute read' : 'About 1 minute read'}
+        <h2 className="text-2xl font-bold text-brown-800 dark:text-cream-50">Review Loan Terms</h2>
+        <div
+          aria-live="polite"
+          className="mt-2 inline-flex flex-wrap items-center gap-2 rounded-full border border-gold/30 bg-gold/10 px-3 py-1.5 text-xs font-medium text-brown-700 dark:border-gold-700 dark:bg-brown-800 dark:text-cream-100"
+        >
+          <span className="flex items-center gap-1.5">
+            <svg
+              aria-hidden="true"
+              className="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            {isDetailedView ? 'About 2 minute read' : 'About 1 minute read'}
           </span>
-          <span className="w-1 h-1 rounded-full bg-brown/30" />
-          <span className="flex items-center gap-1">
-            📊 {isDetailedView ? 'High complexity' : 'Low complexity'}
+          <span aria-hidden="true" className="h-1 w-1 rounded-full bg-gold" />
+          <span className="flex items-center gap-1.5">
+            <span aria-hidden="true" className="flex items-end gap-0.5">
+              <span
+                className={`h-2 w-1 rounded-sm ${isDetailedView ? 'bg-gold-700' : 'bg-gold'}`}
+              />
+              <span
+                className={`h-3 w-1 rounded-sm ${isDetailedView ? 'bg-gold-700' : 'bg-gold'}`}
+              />
+              <span
+                className={`h-4 w-1 rounded-sm ${isDetailedView ? 'bg-gold-700' : 'bg-gold/40'}`}
+              />
+            </span>
+            {isDetailedView ? 'High complexity' : 'Low complexity'}
           </span>
         </div>
       </div>
 
       <div className="flex justify-end">
         <button
-          onClick={() => setIsDetailedView(!isDetailedView)}
-          className="text-sm font-semibold text-gold hover:text-gold/80 transition underline underline-offset-2"
+          type="button"
+          onClick={() => setIsDetailedView((detailed) => !detailed)}
+          aria-expanded={isDetailedView}
+          aria-controls="loan-terms-content"
+          className="rounded-md text-sm font-semibold text-gold-700 underline underline-offset-2 transition hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold focus-visible:ring-offset-2 dark:text-gold-300"
         >
           {isDetailedView ? 'Show simplified view' : 'Show full terms'}
         </button>
       </div>
 
-      {!isDetailedView ? (
-        <div className="bg-white border border-brown/20 rounded-2xl p-5 space-y-3 shadow-sm">
-          <h3 className="font-semibold text-brown mb-2 text-lg">Loan Summary</h3>
-          <ul className="list-disc pl-5 text-brown/80 space-y-2 text-sm">
+      {isDetailedView ? (
+        <section
+          id="loan-terms-content"
+          aria-labelledby="detailed-terms-heading"
+          className="rounded-2xl border border-brown/20 bg-white shadow-sm dark:border-brown-700 dark:bg-brown-900"
+        >
+          <h3
+            id="detailed-terms-heading"
+            className="border-b border-brown/10 px-4 py-4 text-lg font-semibold text-brown-800 dark:border-brown-700 dark:text-cream-50"
+          >
+            Full Loan Terms
+          </h3>
+          <dl className="divide-y divide-brown/10 dark:divide-brown-700">
+            {rows.map(({ label, value, emphasis }, index) => (
+              <div
+                key={index}
+                className={`grid min-w-0 grid-cols-1 gap-1 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-4 ${
+                  emphasis ? 'bg-gold/5 dark:bg-gold/10' : ''
+                }`}
+              >
+                <dt
+                  className={`min-w-0 break-words text-sm ${
+                    emphasis
+                      ? 'font-semibold text-brown-800 dark:text-cream-50'
+                      : 'text-brown-700 dark:text-cream-200'
+                  }`}
+                >
+                  {label}
+                </dt>
+                <dd
+                  className={`min-w-0 break-words text-sm sm:text-right ${
+                    emphasis
+                      ? 'font-bold text-brown-800 dark:text-cream-50'
+                      : 'text-brown-800 dark:text-cream-100'
+                  }`}
+                >
+                  {value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ) : (
+        <section
+          id="loan-terms-content"
+          aria-labelledby="simplified-terms-heading"
+          className="rounded-2xl border border-brown/20 bg-white p-5 shadow-sm dark:border-brown-700 dark:bg-brown-900"
+        >
+          <h3
+            id="simplified-terms-heading"
+            className="mb-3 text-lg font-semibold text-brown-800 dark:text-cream-50"
+          >
+            Loan Summary
+          </h3>
+          <ul className="list-disc space-y-2 pl-5 text-sm leading-6 text-brown-700 dark:text-cream-200">
             <li>
               You are borrowing <strong>{principal.toLocaleString()} stroops</strong>.
             </li>
@@ -230,50 +296,40 @@ export default function StepReview() {
             <li>
               You will owe a total of <strong>{totalRepay.toLocaleString()} stroops</strong>{' '}
               including fees.
-              <AmountBreakdownTooltip
-                principal={principal}
-                originationFee={fee}
-                estimatedFirstInterest={estimatedFirstInterest}
-              />
+              {breakdown}
             </li>
             <li>If you fail to repay, your collateral may be seized.</li>
           </ul>
-        </div>
-      ) : (
-        <div className="bg-white border border-brown/20 rounded-2xl overflow-hidden shadow-sm transition-all">
-          {rows.map(({ label, value, bold }, i) => (
-            <div
-              key={typeof label === 'string' ? label : i}
-              className={`flex justify-between items-center px-5 py-3.5 ${
-                i !== rows.length - 1 ? 'border-b border-brown/10' : ''
-              } ${bold ? 'bg-gold/5' : ''}`}
-            >
-              <span className={`text-sm ${bold ? 'font-semibold text-brown' : 'text-brown/60'}`}>
-                {label}
-              </span>
-              <span className={`text-sm ${bold ? 'font-bold text-brown' : 'text-brown'}`}>
-                {value}
-              </span>
-            </div>
-          ))}
-        </div>
+        </section>
       )}
 
-      {/* Risk warning */}
-      <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex gap-3">
-        <span className="text-amber-500 text-lg">⚠️</span>
-        <p className="text-amber-700 text-sm">
+      <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+        <svg
+          aria-hidden="true"
+          className="mt-0.5 h-5 w-5 shrink-0"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M12 9v3.75m0 3.75h.008M10.29 3.86L2.82 17a2 2 0 001.73 3h14.9a2 2 0 001.73-3L13.71 3.86a2 2 0 00-3.42 0z"
+          />
+        </svg>
+        <p className="text-sm">
           If the health factor drops below 1.0, your collateral may be liquidated. Monitor your
           position regularly.
         </p>
       </div>
 
-      <div className="flex gap-3">
-        <Button variant="ghost" className="flex-1" onClick={prevStep}>
-          ← Back
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <Button variant="ghost" className="w-full sm:flex-1" onClick={prevStep}>
+          Back
         </Button>
-        <Button className="flex-[2]" onClick={nextStep}>
-          Confirm & Submit →
+        <Button className="w-full sm:flex-[2]" onClick={nextStep}>
+          Confirm and submit
         </Button>
       </div>
     </div>
