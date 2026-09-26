@@ -1,6 +1,7 @@
 services:
   contract-builder:
-    image: rust:1.78
+    # Pinned to immutable digest — update via Dependabot (docker ecosystem)
+    image: rust:1.78@sha256:5907e96b0293eb53bcc8f09b4883d71449808af289862950ede9a0e3cca44ff5
     working_dir: /app
     volumes:
       - .:/app
@@ -64,7 +65,8 @@ services:
         tag: "frontend"
 
   loki:
-    image: grafana/loki:2.9.4
+    # Pinned to immutable digest — update via Dependabot (docker ecosystem)
+    image: grafana/loki:2.9.4@sha256:f379a20ce9dd815884ed6446aad8819b81a8ba4d36b548ca14be8cecbc6cbca0
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
@@ -73,7 +75,8 @@ services:
     restart: unless-stopped
 
   promtail:
-    image: grafana/promtail:2.9.4
+    # Pinned to immutable digest — update via Dependabot (docker ecosystem)
+    image: grafana/promtail:2.9.4@sha256:3667f68c8f33a4b7f09292b926a94a449322ab7fe4c7768ef32928598561f968
     volumes:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -84,7 +87,8 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:10.4.2
+    # Pinned to immutable digest — update via Dependabot (docker ecosystem)
+    image: grafana/grafana:10.4.2@sha256:7d5faae481a4c6f436c99e98af11534f7fd5e8d3e35213552dd1dd02bc393d2e
     ports:
       - "3200:3000"
     environment:

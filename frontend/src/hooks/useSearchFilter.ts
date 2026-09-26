@@ -8,9 +8,19 @@ export interface FilterState {
   types: string[];
   dateFrom: string;
   dateTo: string;
+  amountMin: string;
+  amountMax: string;
 }
 
-const EMPTY: FilterState = { query: '', statuses: [], types: [], dateFrom: '', dateTo: '' };
+const EMPTY: FilterState = {
+  query: '',
+  statuses: [],
+  types: [],
+  dateFrom: '',
+  dateTo: '',
+  amountMin: '',
+  amountMax: '',
+};
 
 /**
  * Hook that manages search/filter state with 300ms debounce and URL sync.
@@ -19,6 +29,9 @@ const EMPTY: FilterState = { query: '', statuses: [], types: [], dateFrom: '', d
  * `filters.query` reflects the raw (immediate) input value for controlled input display.
  * `debouncedQuery` is the debounced value that should drive actual filtering logic —
  * it only updates 300 ms after the user stops typing.
+ *
+ * Amount range (`amountMin` / `amountMax`) are serialised to the URL as
+ * `amountMin` / `amountMax` query params (string representation of XLM values).
  */
 export function useSearchFilter(debounceMs = 300) {
   const router = useRouter();
@@ -34,6 +47,8 @@ export function useSearchFilter(debounceMs = 300) {
     types: searchParams.getAll('type'),
     dateFrom: searchParams.get('dateFrom') ?? '',
     dateTo: searchParams.get('dateTo') ?? '',
+    amountMin: searchParams.get('amountMin') ?? '',
+    amountMax: searchParams.get('amountMax') ?? '',
   }));
 
   // Separate state for the debounced query value used for actual filtering.
@@ -53,6 +68,8 @@ export function useSearchFilter(debounceMs = 300) {
         next.types.forEach((t) => params.append('type', t));
         if (next.dateFrom) params.set('dateFrom', next.dateFrom);
         if (next.dateTo) params.set('dateTo', next.dateTo);
+        if (next.amountMin) params.set('amountMin', next.amountMin);
+        if (next.amountMax) params.set('amountMax', next.amountMax);
         const qs = params.toString();
         router.replace(`${pathname}${qs ? `?${qs}` : ''}`, { scroll: false });
       };
@@ -124,6 +141,24 @@ export function useSearchFilter(debounceMs = 300) {
     [filters, syncUrl]
   );
 
+  const setAmountMin = useCallback(
+    (amountMin: string) => {
+      const next = { ...filters, amountMin };
+      setFilters(next);
+      syncUrl(next, true);
+    },
+    [filters, syncUrl]
+  );
+
+  const setAmountMax = useCallback(
+    (amountMax: string) => {
+      const next = { ...filters, amountMax };
+      setFilters(next);
+      syncUrl(next, true);
+    },
+    [filters, syncUrl]
+  );
+
   const removeStatus = useCallback((status: string) => toggleStatus(status), [toggleStatus]);
 
   const removeType = useCallback((type: string) => toggleType(type), [toggleType]);
@@ -149,7 +184,9 @@ export function useSearchFilter(debounceMs = 300) {
     filters.statuses.length > 0 ||
     filters.types.length > 0 ||
     filters.dateFrom !== '' ||
-    filters.dateTo !== '';
+    filters.dateTo !== '' ||
+    filters.amountMin !== '' ||
+    filters.amountMax !== '';
 
   return {
     filters,
@@ -159,6 +196,8 @@ export function useSearchFilter(debounceMs = 300) {
     toggleType,
     setDateFrom,
     setDateTo,
+    setAmountMin,
+    setAmountMax,
     removeStatus,
     removeType,
     clearAll,

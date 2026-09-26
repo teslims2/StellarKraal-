@@ -5,16 +5,21 @@ interface Props {
   statusOptions: string[];
   typeOptions: string[];
   searchPlaceholder?: string;
+  /** Maximum XLM amount for the range slider upper bound (default: 100 000) */
+  maxAmount?: number;
 }
 
 /**
  * Reusable search + filter bar with debounced search, multi-select filter panel,
- * date range picker, active filter chips, and a clear-all button.
+ * amount range slider, date range picker, active filter chips, and a clear-all button.
+ *
+ * Closes #526 — added amount range slider and wired to useSearchFilter.
  */
 export default function SearchFilterBar({
   statusOptions,
   typeOptions,
   searchPlaceholder = 'Search…',
+  maxAmount = 100_000,
 }: Props) {
   const {
     filters,
@@ -24,11 +29,16 @@ export default function SearchFilterBar({
     toggleType,
     setDateFrom,
     setDateTo,
+    setAmountMin,
+    setAmountMax,
     removeStatus,
     removeType,
     clearAll,
     hasActiveFilters,
   } = useSearchFilter();
+
+  const amountMinNum = filters.amountMin ? Number(filters.amountMin) : 0;
+  const amountMaxNum = filters.amountMax ? Number(filters.amountMax) : maxAmount;
 
   return (
     <div className="space-y-3">
@@ -40,7 +50,7 @@ export default function SearchFilterBar({
           placeholder={searchPlaceholder}
           value={filters.query}
           onChange={(e) => setQuery(e.target.value)}
-          className="flex-1 border border-brown/30 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-gold"
+          className="flex-1 border border-brown/30 rounded-lg px-3 py-2 text-sm bg-white dark:bg-brown-900 dark:border-brown-600 focus:outline-none focus:ring-2 focus:ring-gold"
         />
         {hasActiveFilters && (
           <button
@@ -66,10 +76,10 @@ export default function SearchFilterBar({
                   key={s}
                   onClick={() => toggleStatus(s)}
                   aria-pressed={filters.statuses.includes(s)}
-                  className={`px-3 py-1 rounded-full text-xs font-medium border transition ${
+                  className={`px-3 py-1 rounded-full text-xs font-medium border transition capitalize ${
                     filters.statuses.includes(s)
                       ? 'bg-brown text-cream border-brown'
-                      : 'bg-white text-brown border-brown/30 hover:border-brown/60'
+                      : 'bg-white dark:bg-brown-900 text-brown dark:text-cream border-brown/30 hover:border-brown/60'
                   }`}
                 >
                   {s}
@@ -93,7 +103,7 @@ export default function SearchFilterBar({
                   className={`px-3 py-1 rounded-full text-xs font-medium border transition ${
                     filters.types.includes(t)
                       ? 'bg-gold text-brown border-gold'
-                      : 'bg-white text-brown border-brown/30 hover:border-brown/60'
+                      : 'bg-white dark:bg-brown-900 text-brown dark:text-cream border-brown/30 hover:border-brown/60'
                   }`}
                 >
                   {t}
@@ -102,6 +112,97 @@ export default function SearchFilterBar({
             </div>
           </fieldset>
         )}
+
+        {/* Amount range slider */}
+        <fieldset className="min-w-[240px] flex-1">
+          <legend className="text-xs font-semibold text-brown/60 uppercase tracking-wide mb-1">
+            Amount range (XLM)
+          </legend>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs text-brown/60">
+              <span>{amountMinNum.toLocaleString()} XLM</span>
+              <span>{amountMaxNum.toLocaleString()} XLM</span>
+            </div>
+            {/* Min slider */}
+            <div className="relative">
+              <label className="sr-only" htmlFor="amount-min">
+                Minimum loan amount
+              </label>
+              <input
+                id="amount-min"
+                type="range"
+                min={0}
+                max={maxAmount}
+                step={100}
+                value={amountMinNum}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  // Prevent min exceeding max
+                  if (val <= amountMaxNum) {
+                    setAmountMin(val === 0 ? '' : String(val));
+                  }
+                }}
+                className="w-full accent-gold cursor-pointer"
+                aria-label={`Minimum amount: ${amountMinNum.toLocaleString()} XLM`}
+                aria-valuemin={0}
+                aria-valuemax={maxAmount}
+                aria-valuenow={amountMinNum}
+              />
+            </div>
+            {/* Max slider */}
+            <div className="relative">
+              <label className="sr-only" htmlFor="amount-max">
+                Maximum loan amount
+              </label>
+              <input
+                id="amount-max"
+                type="range"
+                min={0}
+                max={maxAmount}
+                step={100}
+                value={amountMaxNum}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  // Prevent max going below min
+                  if (val >= amountMinNum) {
+                    setAmountMax(val === maxAmount ? '' : String(val));
+                  }
+                }}
+                className="w-full accent-gold cursor-pointer"
+                aria-label={`Maximum amount: ${amountMaxNum.toLocaleString()} XLM`}
+                aria-valuemin={0}
+                aria-valuemax={maxAmount}
+                aria-valuenow={amountMaxNum}
+              />
+            </div>
+            {/* Numeric inputs for precise control */}
+            <div className="flex gap-2 items-center">
+              <input
+                type="number"
+                min={0}
+                max={amountMaxNum}
+                step={100}
+                placeholder="Min"
+                value={filters.amountMin}
+                onChange={(e) => setAmountMin(e.target.value)}
+                aria-label="Minimum amount in XLM"
+                className="w-24 border border-brown/30 rounded-lg px-2 py-1 text-sm bg-white dark:bg-brown-900 dark:border-brown-600 focus:outline-none focus:ring-2 focus:ring-gold"
+              />
+              <span className="text-xs text-brown/50">to</span>
+              <input
+                type="number"
+                min={amountMinNum}
+                max={maxAmount}
+                step={100}
+                placeholder="Max"
+                value={filters.amountMax}
+                onChange={(e) => setAmountMax(e.target.value)}
+                aria-label="Maximum amount in XLM"
+                className="w-24 border border-brown/30 rounded-lg px-2 py-1 text-sm bg-white dark:bg-brown-900 dark:border-brown-600 focus:outline-none focus:ring-2 focus:ring-gold"
+              />
+            </div>
+          </div>
+        </fieldset>
 
         {/* Date range */}
         <fieldset>
@@ -115,7 +216,7 @@ export default function SearchFilterBar({
               value={filters.dateFrom}
               max={filters.dateTo || undefined}
               onChange={(e) => setDateFrom(e.target.value)}
-              className="border border-brown/30 rounded-lg px-2 py-1 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-gold"
+              className="border border-brown/30 rounded-lg px-2 py-1 text-sm bg-white dark:bg-brown-900 dark:border-brown-600 focus:outline-none focus:ring-2 focus:ring-gold"
             />
             <span className="text-xs text-brown/50">to</span>
             <input
@@ -124,7 +225,7 @@ export default function SearchFilterBar({
               value={filters.dateTo}
               min={filters.dateFrom || undefined}
               onChange={(e) => setDateTo(e.target.value)}
-              className="border border-brown/30 rounded-lg px-2 py-1 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-gold"
+              className="border border-brown/30 rounded-lg px-2 py-1 text-sm bg-white dark:bg-brown-900 dark:border-brown-600 focus:outline-none focus:ring-2 focus:ring-gold"
             />
           </div>
         </fieldset>
@@ -140,6 +241,18 @@ export default function SearchFilterBar({
           {filters.types.map((t) => (
             <Chip key={t} label={t} onRemove={() => removeType(t)} />
           ))}
+          {filters.amountMin && (
+            <Chip
+              label={`Min: ${Number(filters.amountMin).toLocaleString()} XLM`}
+              onRemove={() => setAmountMin('')}
+            />
+          )}
+          {filters.amountMax && (
+            <Chip
+              label={`Max: ${Number(filters.amountMax).toLocaleString()} XLM`}
+              onRemove={() => setAmountMax('')}
+            />
+          )}
           {filters.dateFrom && (
             <Chip label={`From: ${filters.dateFrom}`} onRemove={() => setDateFrom('')} />
           )}
