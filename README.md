@@ -150,6 +150,27 @@ Access:
 - Frontend: `http://localhost:3000`
 - Backend API: `http://localhost:3001`
 
+### Pulling pre-built images (Apple Silicon / arm64)
+
+GHCR images are published as multi-arch manifests covering `linux/amd64` and `linux/arm64`. Docker Desktop on Apple Silicon automatically selects the native arm64 layer — no `--platform` flag needed.
+
+```bash
+# Pull latest images (arm64 selected automatically on Apple Silicon)
+docker pull ghcr.io/teslims2/stellarkraal-backend:main
+docker pull ghcr.io/teslims2/stellarkraal-frontend:main
+
+# Or run directly — Docker resolves the correct arch from the manifest
+docker run --rm -p 3001:3001 ghcr.io/teslims2/stellarkraal-backend:main
+docker run --rm -p 3000:3000 ghcr.io/teslims2/stellarkraal-frontend:main
+```
+
+To verify you received the native arm64 image:
+
+```bash
+docker inspect ghcr.io/teslims2/stellarkraal-backend:main | grep Architecture
+# Should print: "Architecture": "arm64"
+```
+
 ### Run without Docker
 
 #### Backend
