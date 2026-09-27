@@ -18,6 +18,7 @@ import { fetchWithRetry } from "@/lib/fetchWithRetry";
 import { useLoans } from "@/hooks/useLoans";
 import { useLiquidationWarning } from "@/hooks/useLiquidationWarning";
 import LoanPortfolioSummary from "@/components/LoanPortfolioSummary";
+import WalletConnect from "@/components/WalletConnect";
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -45,21 +46,11 @@ const RepayPanel = dynamic(() => import("@/components/RepayPanel"), {
   loading: () => <SkeletonLoanCard />,
 });
 
+const OnboardingModal = dynamic(() => import("@/components/OnboardingModal"), {
+  ssr: false,
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
-
-type TabName = "overview" | "loans" | "collateral" | "transactions";
-type LoanWithHealth = {
-  id: string;
-  health_factor?: number | null;
-  status?: string;
-};
-
-const TABS: { id: TabName; label: string }[] = [
-  { id: "overview", label: "Overview" },
-  { id: "loans", label: "Loans" },
-  { id: "collateral", label: "Collateral" },
-  { id: "transactions", label: "Transactions" },
-];
 
 type TabName = "overview" | "loans" | "collateral" | "transactions";
 type LoanWithHealth = {
