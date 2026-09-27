@@ -148,7 +148,11 @@ app.use(requestDrainingMiddleware);
 // Shutdown guard middleware - reject new requests during graceful shutdown
 app.use(shutdownGuardMiddleware);
 
-// ── Health check — excluded from rate limiting and JWT ────────────────────────
+// GET /health
+app.get('/health', (_req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok', uptime: Math.floor((Date.now() - startTime) / 1000) });
+});
+
 // GET /api/health
 app.get('/api/health', async (_req: Request, res: Response) => {
   const uptime = Math.floor((Date.now() - startTime) / 1000);
