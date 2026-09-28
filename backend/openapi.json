@@ -1176,14 +1176,22 @@
           "loan"
         ],
         "summary": "List loans (paginated)",
-        "description": "Returns a paginated list of loan records. Supports page and pageSize query parameters. Unpaginated requests (without page/pageSize) are deprecated and return Deprecation/Sunset headers.",
+        "description": "Returns a paginated list of loan records.\n\n**Cursor-based pagination (recommended)** — Pass `cursor=<nextCursor>` from the previous response. Provides stable, efficient traversal using `(createdAt, id)` as the composite key. `total` and `page` are omitted in cursor mode; use `nextCursor` and `hasMore` instead.\n\n**Offset-based pagination (legacy)** — Use `page` and `pageSize`/`limit` parameters. Remains fully supported for backward compatibility. Returns `total` and `page` fields.\n\nUnpaginated requests (without any pagination params) are deprecated and return `Deprecation`/`Sunset` headers.",
         "operationId": "listLoans",
         "security": [],
         "parameters": [
           {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque page token returned as `nextCursor` in a previous response. When provided, cursor-based pagination is used. Mutually exclusive with `page`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "page",
             "in": "query",
-            "description": "Page number for pagination (1-indexed).",
+            "description": "Page number for offset-based pagination (1-indexed). Ignored when `cursor` is supplied.",
             "schema": {
               "type": "integer",
               "minimum": 1,
@@ -1193,12 +1201,58 @@
           {
             "name": "pageSize",
             "in": "query",
-            "description": "Number of records per page (1–100).",
+            "description": "Number of records per page (1–100). Applies to both cursor and offset modes.",
             "schema": {
               "type": "integer",
               "minimum": 1,
               "maximum": 100,
               "default": 20
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Alias for `pageSize` (legacy). `pageSize` takes precedence when both are provided.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter loans by status.",
+            "schema": {
+              "type": "string",
+              "enum": ["active", "repaid", "liquidated"]
+            }
+          },
+          {
+            "name": "borrowerAddress",
+            "in": "query",
+            "description": "Filter loans belonging to this Stellar public key.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "ISO 8601 start date for `createdAt` range filter (inclusive).",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "ISO 8601 end date for `createdAt` range filter (inclusive).",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
             }
           }
         ],
@@ -2672,7 +2726,7 @@
       },
       "LoanPage": {
         "type": "object",
-        "description": "Paginated response containing a list of loan records with total count and pagination metadata.",
+        "description": "Paginated response containing a list of loan records. Fields differ slightly between cursor and offset pagination modes — see `paginationMode`.",
         "properties": {
           "data": {
             "type": "array",
@@ -2684,15 +2738,33 @@
           },
           "total": {
             "type": "integer",
-            "description": "Total number of loan records matching the query."
+            "description": "Total number of loan records matching the query (offset mode only; -1 in cursor mode)."
           },
           "page": {
             "type": "integer",
-            "description": "Current page number (1-indexed)."
+            "description": "Current page number, 1-indexed (offset mode only; -1 in cursor mode)."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Effective page size used for this request."
           },
           "pageSize": {
             "type": "integer",
-            "description": "Number of records per page."
+            "description": "Alias for `limit` (API-v2 compatibility)."
+          },
+          "paginationMode": {
+            "type": "string",
+            "enum": ["cursor", "offset"],
+            "description": "Indicates which pagination strategy was used. `cursor` when `?cursor=` was supplied; `offset` otherwise."
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true,
+            "description": "Opaque token to pass as `?cursor=` to fetch the next page (cursor mode only). `null` when there are no more records."
+          },
+          "hasMore": {
+            "type": "boolean",
+            "description": "Whether more records exist after the current page (cursor mode only)."
           }
         }
       },
