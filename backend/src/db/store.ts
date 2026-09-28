@@ -65,6 +65,8 @@ export interface TransactionRecord {
   amount: number;
   loanId?: string;
   collateralId?: string;
+  /** Stellar transaction hash — used to link to the Stellar Expert explorer. */
+  tx_hash?: string;
   createdAt: string;
   updatedAt: string;
 }
