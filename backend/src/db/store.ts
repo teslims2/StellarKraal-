@@ -48,10 +48,12 @@ export interface LoanRecord {
 }
 
 export interface LoanSummary {
+  totalLoans: number;
   activeLoans: number;
-  totalCollateralValue: number;
-  averageHealthFactor: number;
-  atRiskCount: number;
+  atRiskLoans: number;
+  repaidLoans: number;
+  liquidatedLoans: number;
+  totalLoanValueXLM: number;
 }
 
 export type TransactionType = 'loan' | 'repayment' | 'liquidation';
@@ -327,48 +329,30 @@ function normalizeHealthFactor(value: number | null | undefined): number | null 
 
 /**
  * Aggregate dashboard metrics for loans belonging to a borrower.
- * Only active/at_risk non-deleted loans are included.
+ * Returns counts by status and total loan value.
  * @param borrower - Borrower wallet/public key.
  * @returns Aggregated loan summary metrics.
  */
 export function getLoanSummaryForBorrower(borrower: string): LoanSummary {
-  const activeLoans = [...loanTable.values()].filter(
-    (r) =>
-      r.deletedAt === null &&
-      r.borrower === borrower &&
-      (r.status === 'active' || r.status === 'at_risk')
+  const allLoans = [...loanTable.values()].filter(
+    (r) => r.deletedAt === null && r.borrower === borrower
   );
 
-  const totalCollateralValue = activeLoans.reduce((sum, loan) => {
-    const collateral = collateralTable.get(loan.collateral_id);
-    if (!collateral || collateral.deletedAt !== null) return sum;
-    return sum + collateral.appraised_value;
-  }, 0);
+  const activeLoans = allLoans.filter((r) => r.status === 'active').length;
+  const atRiskLoans = allLoans.filter((r) => r.status === 'at_risk').length;
+  const repaidLoans = allLoans.filter((r) => r.status === 'repaid').length;
+  const liquidatedLoans = allLoans.filter((r) => r.status === 'liquidated').length;
+  const totalLoans = allLoans.length;
 
-  const normalizedHealthFactors = activeLoans
-    .map((loan) => normalizeHealthFactor(loan.health_factor))
-    .filter((value): value is number => value !== null);
-
-  const averageHealthFactor =
-    normalizedHealthFactors.length > 0
-      ? Number(
-          (
-            normalizedHealthFactors.reduce((sum, value) => sum + value, 0) /
-            normalizedHealthFactors.length
-          ).toFixed(4)
-        )
-      : 0;
-
-  const atRiskCount = activeLoans.filter((loan) => {
-    const hf = normalizeHealthFactor(loan.health_factor);
-    return hf !== null && hf < 1.2;
-  }).length;
+  const totalLoanValueXLM = allLoans.reduce((sum, loan) => sum + loan.amount, 0);
 
   return {
-    activeLoans: activeLoans.length,
-    totalCollateralValue,
-    averageHealthFactor,
-    atRiskCount,
+    totalLoans,
+    activeLoans,
+    atRiskLoans,
+    repaidLoans,
+    liquidatedLoans,
+    totalLoanValueXLM,
   };
 }
 
