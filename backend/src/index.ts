@@ -78,7 +78,7 @@ import path from 'path';
 import { mkdirSync, unlinkSync } from 'fs';
 import multer from 'multer';
 import { z } from 'zod';
-import { globalLimiter, authLimiter, readLimiter, writeLimiter } from './middleware/rateLimit';
+import { globalLimiter, authLimiter, readLimiter, writeLimiter, walletLimiter } from './middleware/rateLimit';
 import { asyncHandler } from './utils/asyncHandler';
 import { validate } from './middleware/validate';
 import { stellarPublicKeySchema } from './validators/stellar';
@@ -500,6 +500,7 @@ app.post(
 // POST /api/loan/request
 app.post(
   '/api/loan/request',
+  walletLimiter,
   timeoutMiddleware(CONTRACT_TIMEOUT_MS),
   asyncHandler(async (req: Request, res: Response) => {
     const validation = loanRequestSchema.safeParse(req.body);
