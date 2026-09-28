@@ -1,0 +1,16 @@
+node_modules
+dist
+coverage
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+tests/
+__tests__/
+*.map
+**/*.map
+.git
+.github
+*.md
+.env*
+.DS_Store
