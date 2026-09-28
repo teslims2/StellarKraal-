@@ -18,6 +18,8 @@ import NotificationBadge from "@/components/NotificationBadge";
 import { NotificationBell, NotificationDrawer } from "@/components/NotificationDrawer";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useShortcutsHelp } from "@/components/KeyboardShortcutsProvider";
+// i18n — Issue #1207
+import LanguageSwitcher from "@/components/LanguageSwitcher";
 
 const NAV_SECTIONS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -174,6 +176,9 @@ export default function Navbar() {
           >
             <Icon icon={Keyboard} size="sm" className="text-[color:var(--color-text-muted)]" />
           </button>
+
+          {/* Language switcher — #1207 */}
+          <LanguageSwitcher />
 
           {/* Notification bell — #1066 */}
           <NotificationBell

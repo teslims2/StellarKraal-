@@ -8,6 +8,7 @@
     "analyze": "ANALYZE=true next build",
     "start": "next start",
     "lint": "eslint src --ext .ts,.tsx --max-warnings 0",
+    "lint:i18n": "node scripts/validate-i18n.js",
     "test": "jest --passWithNoTests",
     "test:contrast": "node ./scripts/contrast-audit.js",
     "test:a11y": "playwright test -c playwright-a11y.config.ts",

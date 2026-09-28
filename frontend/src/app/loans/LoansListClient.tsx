@@ -8,6 +8,8 @@ import Card from '@/components/Card';
 import ScrollToTopButton from '@/components/ScrollToTopButton';
 import { badgeVariants } from '@/lib/animations';
 import { useScrollPosition } from '@/hooks/useScrollPosition';
+// i18n — Issue #1207
+import { useI18n } from '@/context/I18nContext';
 
 interface Loan {
   id: string;
@@ -55,6 +57,7 @@ function LoanListContent() {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
   const reduced = useReducedMotion();
+  const { t } = useI18n();
 
   useEffect(() => {
     setLoading(true);
@@ -83,22 +86,22 @@ function LoanListContent() {
       <SearchFilterBar
         statusOptions={STATUS_OPTIONS}
         typeOptions={TYPE_OPTIONS}
-        searchPlaceholder="Search by loan ID, borrower, or status…"
+        searchPlaceholder={t('loans.searchPlaceholder', 'Search by loan ID, borrower, or status…')}
       />
       {loading ? (
         <p className="text-brown/60 text-sm" role="status" aria-live="polite">
-          Loading…
+          {t('loans.loading', 'Loading…')}
         </p>
       ) : filtered.length === 0 ? (
         <p className="text-brown/60 text-sm" role="status" aria-live="polite">
-          No loans match your filters.
+          {t('loans.noResults', 'No loans match your filters.')}
         </p>
       ) : (
-        <ul className="space-y-2" aria-label="Loans list">
+        <ul className="space-y-2" aria-label={t('loans.title', 'Loans')}>
           {filtered.map((loan) => (
             <li key={loan.id}>
               <Card
-                title={`Loan #${loan.id}`}
+                title={`${t('loans.loanId', 'Loan')} #${loan.id}`}
                 subtitle={loan.borrower}
                 badge={<LoanStatusBadge status={loan.status} reduced={reduced} />}
                 action={
@@ -106,7 +109,7 @@ function LoanListContent() {
                     {loan.amount.toLocaleString()} XLM
                   </span>
                 }
-                aria-label={`Loan ${loan.id}, ${loan.status}, ${loan.amount.toLocaleString()} XLM`}
+                aria-label={`${t('loans.loanId', 'Loan')} ${loan.id}, ${loan.status}, ${loan.amount.toLocaleString()} XLM`}
               />
             </li>
           ))}
@@ -118,11 +121,12 @@ function LoanListContent() {
 
 export default function LoansListClient() {
   useScrollPosition();
+  const { t } = useI18n();
 
   return (
     <PageTransition>
       <main className="max-w-3xl mx-auto px-4 py-10">
-        <h1 className="text-3xl font-bold text-brown mb-6">Loans</h1>
+        <h1 className="text-3xl font-bold text-brown mb-6">{t('loans.title', 'Loans')}</h1>
         <Suspense
           fallback={
             <ul className="space-y-3 mt-4" aria-busy="true" aria-label="Loading loans">

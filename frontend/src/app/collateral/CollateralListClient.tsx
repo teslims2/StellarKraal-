@@ -7,6 +7,8 @@ import PageTransition from '@/components/PageTransition';
 import ScrollToTopButton from '@/components/ScrollToTopButton';
 import { useScrollPosition } from '@/hooks/useScrollPosition';
 import MoneyAmount from '@/components/MoneyAmount';
+// i18n — Issue #1207
+import { useI18n } from '@/context/I18nContext';
 
 interface Collateral {
   id: string;
@@ -24,6 +26,7 @@ function CollateralListContent() {
   const searchParams = useSearchParams();
   const [items, setItems] = useState<Collateral[]>([]);
   const [loading, setLoading] = useState(true);
+  const { t } = useI18n();
 
   useEffect(() => {
     setLoading(true);
@@ -52,10 +55,10 @@ function CollateralListContent() {
       <SearchFilterBar
         statusOptions={STATUS_OPTIONS}
         typeOptions={TYPE_OPTIONS}
-        searchPlaceholder="Search by ID, owner, or animal type…"
+        searchPlaceholder={t('collateral.searchPlaceholder', 'Search by ID, owner, or animal type…')}
       />
       {loading ? (
-        <ul className="space-y-3" aria-busy="true" aria-label="Loading collateral">
+        <ul className="space-y-3" aria-busy="true" aria-label={t('collateral.loading', 'Loading collateral')}>
           {[...Array(5)].map((_, i) => (
             <li
               key={i}
@@ -74,7 +77,7 @@ function CollateralListContent() {
           ))}
         </ul>
       ) : filtered.length === 0 ? (
-        <p className="text-brown/60 text-sm">No collateral matches your filters.</p>
+        <p className="text-brown/60 text-sm">{t('collateral.noResults', 'No collateral matches your filters.')}</p>
       ) : (
         <ul className="space-y-2">
           {filtered.map((col) => (
@@ -84,7 +87,7 @@ function CollateralListContent() {
             >
               <div>
                 <p className="font-semibold text-brown text-sm capitalize">
-                  <HighlightText text={col.animal_type} query={q} /> — {col.count} head
+                  <HighlightText text={col.animal_type} query={q} /> — {col.count} {t('common.kg', 'head')}
                 </p>
                 <p className="text-xs text-brown/60 truncate max-w-xs">
                   <HighlightText text={col.owner} query={q} />
@@ -95,7 +98,7 @@ function CollateralListContent() {
                   <MoneyAmount value={col.appraised_value} fromStroops interactive={false} />
                 </p>
                 <p className="text-xs text-brown/50">
-                  ID: <HighlightText text={col.id} query={q} />
+                  {t('collateral.id', 'ID')}: <HighlightText text={col.id} query={q} />
                 </p>
               </div>
             </li>
@@ -108,11 +111,12 @@ function CollateralListContent() {
 
 export default function CollateralListClient() {
   useScrollPosition();
+  const { t } = useI18n();
 
   return (
     <PageTransition>
       <main className="max-w-3xl mx-auto px-4 py-10">
-        <h1 className="text-3xl font-bold text-brown mb-6">Collateral</h1>
+        <h1 className="text-3xl font-bold text-brown mb-6">{t('collateral.title', 'Collateral')}</h1>
         <Suspense
           fallback={
             <ul className="space-y-3 mt-4" aria-busy="true" aria-label="Loading collateral">
