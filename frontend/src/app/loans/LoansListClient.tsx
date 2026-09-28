@@ -2,24 +2,39 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { motion, useReducedMotion } from 'framer-motion';
+import { Download } from 'lucide-react';
 import SearchFilterBar from '@/components/SearchFilterBar';
 import PageTransition from '@/components/PageTransition';
 import Card from '@/components/Card';
 import ScrollToTopButton from '@/components/ScrollToTopButton';
+import Spinner from '@/components/Spinner';
 import { badgeVariants } from '@/lib/animations';
 import { useScrollPosition } from '@/hooks/useScrollPosition';
+import { toCsvString, downloadCsv, csvFilename, type CsvColumn } from '@/lib/exportCsv';
 
 interface Loan {
   id: string;
   borrower: string;
   amount: number;
   status: string;
+  collateralId?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 const STATUS_OPTIONS = ['active', 'repaid', 'liquidated', 'pending'];
 const TYPE_OPTIONS: string[] = [];
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+/** CSV column definitions for loan export — closes #1203 */
+const LOAN_CSV_COLUMNS: CsvColumn<Loan>[] = [
+  { header: 'Loan ID', value: (loan) => loan.id },
+  { header: 'Status', value: (loan) => loan.status },
+  { header: 'Amount (XLM)', value: (loan) => String(loan.amount) },
+  { header: 'Collateral ID', value: (loan) => loan.collateralId ?? '' },
+  { header: 'Created At', value: (loan) => loan.createdAt },
+  { header: 'Updated At', value: (loan) => loan.updatedAt ?? '' },
+];
 
 /** Maps loan status to design-token badge classes (WCAG AA compliant). */
 function statusBadgeClasses(status: string): string {
@@ -47,6 +62,44 @@ function LoanStatusBadge({ status, reduced }: { status: string; reduced: boolean
     >
       {status}
     </motion.span>
+  );
+}
+
+/** Export button that generates a CSV of the currently-filtered loan list. */
+function ExportCsvButton({ loans }: { loans: Loan[] }) {
+  const [exporting, setExporting] = useState(false);
+
+  async function handleExport() {
+    setExporting(true);
+    try {
+      // Small async yield so the browser can re-render the disabled/spinner state
+      await Promise.resolve();
+      const csv = toCsvString(loans, LOAN_CSV_COLUMNS);
+      downloadCsv(csv, csvFilename('loans'));
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <button
+      onClick={handleExport}
+      disabled={exporting || loans.length === 0}
+      aria-label="Export loans to CSV"
+      className="flex items-center gap-2 rounded-lg border border-brown/30 dark:border-gold/30 bg-white dark:bg-brown-900 px-3 py-2 text-sm font-medium text-brown dark:text-cream hover:bg-brown/5 dark:hover:bg-gold/10 transition disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+    >
+      {exporting ? (
+        <>
+          <Spinner className="h-4 w-4" label="Generating CSV…" />
+          <span>Exporting…</span>
+        </>
+      ) : (
+        <>
+          <Download className="h-4 w-4" aria-hidden="true" />
+          <span>Export CSV</span>
+        </>
+      )}
+    </button>
   );
 }
 
@@ -80,11 +133,15 @@ function LoanListContent() {
 
   return (
     <div className="space-y-4">
-      <SearchFilterBar
-        statusOptions={STATUS_OPTIONS}
-        typeOptions={TYPE_OPTIONS}
-        searchPlaceholder="Search by loan ID, borrower, or status…"
-      />
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <SearchFilterBar
+          statusOptions={STATUS_OPTIONS}
+          typeOptions={TYPE_OPTIONS}
+          searchPlaceholder="Search by loan ID, borrower, or status…"
+        />
+        {/* Export button — closes #1203: active filters applied before export */}
+        <ExportCsvButton loans={filtered} />
+      </div>
       {loading ? (
         <p className="text-brown/60 text-sm" role="status" aria-live="polite">
           Loading…
