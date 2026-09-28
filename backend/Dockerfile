@@ -16,6 +16,7 @@ RUN (getent group node || addgroup -S -g 1000 node) && (getent passwd node || ad
 COPY --from=builder --chown=node:node /app/package*.json ./
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/dist ./dist
+RUN chown -R node:node /app
 USER node
 EXPOSE 3001
 CMD ["node", "dist/index.js"]
