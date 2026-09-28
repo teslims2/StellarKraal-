@@ -266,8 +266,8 @@ app.use('/api/v2', v2Router);
  *
  * Apollo Sandbox (interactive explorer) is available in non-production at /graphql.
  *
- * The endpoint is intentionally unauthenticated for the PoC; add jwtMiddleware
- * to the handler array when authentication is required.
+ * JWT auth middleware is applied so that the authenticated wallet address is
+ * forwarded to resolvers via GraphQLContext.userPublicKey (#1220).
  */
 let apolloServer: import('@apollo/server').ApolloServer | undefined;
 
@@ -276,8 +276,9 @@ let apolloServer: import('@apollo/server').ApolloServer | undefined;
     const { middleware, server } = await createGraphQLMiddleware();
     apolloServer = server;
     // Apollo Server 4 / expressMiddleware requires JSON body parsing before the handler.
+    // jwtMiddleware guards POST requests (all GraphQL operations use POST).
     // Cast to any to work around Express 5 generic overload resolution.
-    app.use('/graphql', express.json(), middleware as any);
+    app.use('/graphql', express.json(), jwtMiddleware, middleware as any);
     logger.info('GraphQL endpoint mounted at /graphql');
   } catch (err) {
     logger.error('Failed to start Apollo Server', {
