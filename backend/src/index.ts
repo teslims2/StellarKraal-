@@ -846,7 +846,7 @@ app.get(
       return res.status(404).json({ error: `Loan ${req.params.id} not found` });
     }
 
-    const collateral = getCollateral(loan.collateral_id);
+    const collateral = getCollateralIncludingDeleted(loan.collateral_id);
 
     // Fetch on-chain status from Soroban contract
     let onChainStatus: unknown = null;

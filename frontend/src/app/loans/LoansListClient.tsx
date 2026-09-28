@@ -1,25 +1,39 @@
 'use client';
 import { Suspense, useEffect, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
+import { Download } from 'lucide-react';
 import SearchFilterBar from '@/components/SearchFilterBar';
 import PageTransition from '@/components/PageTransition';
 import Card from '@/components/Card';
 import ScrollToTopButton from '@/components/ScrollToTopButton';
+import Spinner from '@/components/Spinner';
 import { badgeVariants } from '@/lib/animations';
 import { useScrollPosition } from '@/hooks/useScrollPosition';
-import { useSearchFilter } from '@/hooks/useSearchFilter';
+import { toCsvString, downloadCsv, csvFilename, type CsvColumn } from '@/lib/exportCsv';
 
 interface Loan {
   id: string;
   borrower: string;
   amount: number;
   status: string;
+  collateralId?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 const STATUS_OPTIONS = ['active', 'repaid', 'liquidated', 'pending'];
 const TYPE_OPTIONS: string[] = [];
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+/** CSV column definitions for loan export — closes #1203 */
+const LOAN_CSV_COLUMNS: CsvColumn<Loan>[] = [
+  { header: 'Loan ID', value: (loan) => loan.id },
+  { header: 'Status', value: (loan) => loan.status },
+  { header: 'Amount (XLM)', value: (loan) => String(loan.amount) },
+  { header: 'Collateral ID', value: (loan) => loan.collateralId ?? '' },
+  { header: 'Created At', value: (loan) => loan.createdAt },
+  { header: 'Updated At', value: (loan) => loan.updatedAt ?? '' },
+];
 
 /** Maps loan status to design-token badge classes (WCAG AA compliant). */
 function statusBadgeClasses(status: string): string {
@@ -50,47 +64,41 @@ function LoanStatusBadge({ status, reduced }: { status: string; reduced: boolean
   );
 }
 
-/** Amount range slider filter for the loans list. */
-function AmountRangeFilter({
-  min,
-  max,
-  value,
-  onChange,
-}: {
-  min: number;
-  max: number;
-  value: [number, number];
-  onChange: (range: [number, number]) => void;
-}) {
+/** Export button that generates a CSV of the currently-filtered loan list. */
+function ExportCsvButton({ loans }: { loans: Loan[] }) {
+  const [exporting, setExporting] = useState(false);
+
+  async function handleExport() {
+    setExporting(true);
+    try {
+      // Small async yield so the browser can re-render the disabled/spinner state
+      await Promise.resolve();
+      const csv = toCsvString(loans, LOAN_CSV_COLUMNS);
+      downloadCsv(csv, csvFilename('loans'));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
-    <fieldset>
-      <legend className="text-xs font-semibold text-brown/60 uppercase tracking-wide mb-1">
-        Amount range (XLM)
-      </legend>
-      <div className="flex items-center gap-2">
-        <input
-          type="range"
-          aria-label="Minimum loan amount"
-          min={min}
-          max={max}
-          value={value[0]}
-          onChange={(e) => onChange([Number(e.target.value), value[1]])}
-          className="w-24 accent-brown"
-        />
-        <span className="text-xs text-brown/60 w-16 text-center">
-          {value[0].toLocaleString()} – {value[1].toLocaleString()}
-        </span>
-        <input
-          type="range"
-          aria-label="Maximum loan amount"
-          min={min}
-          max={max}
-          value={value[1]}
-          onChange={(e) => onChange([value[0], Number(e.target.value)])}
-          className="w-24 accent-brown"
-        />
-      </div>
-    </fieldset>
+    <button
+      onClick={handleExport}
+      disabled={exporting || loans.length === 0}
+      aria-label="Export loans to CSV"
+      className="flex items-center gap-2 rounded-lg border border-brown/30 dark:border-gold/30 bg-white dark:bg-brown-900 px-3 py-2 text-sm font-medium text-brown dark:text-cream hover:bg-brown/5 dark:hover:bg-gold/10 transition disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+    >
+      {exporting ? (
+        <>
+          <Spinner className="h-4 w-4" label="Generating CSV…" />
+          <span>Exporting…</span>
+        </>
+      ) : (
+        <>
+          <Download className="h-4 w-4" aria-hidden="true" />
+          <span>Export CSV</span>
+        </>
+      )}
+    </button>
   );
 }
 
@@ -98,6 +106,7 @@ function LoanListContent() {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
   const reduced = useReducedMotion();
+  const { t } = useI18n();
 
   // Derive dynamic min/max amounts from loaded loans
   const [amountRange, setAmountRange] = useState<[number, number]>([0, 0]);
@@ -167,75 +176,29 @@ function LoanListContent() {
 
   return (
     <div className="space-y-4">
-      {/* Integrated SearchFilterBar — drives URL-synced query + status + date */}
-      <SearchFilterBar
-        statusOptions={STATUS_OPTIONS}
-        typeOptions={TYPE_OPTIONS}
-        searchPlaceholder="Search by loan ID or borrower…"
-      />
-
-      {/* Amount range slider — controlled locally, applied on top of URL filters */}
-      {amountRange[0] !== amountRange[1] && (
-        <div className="flex flex-wrap gap-4">
-          <AmountRangeFilter
-            min={amountRange[0]}
-            max={amountRange[1]}
-            value={selectedAmountRange}
-            onChange={setSelectedAmountRange}
-          />
-          {hasAmountFilter && (
-            <button
-              onClick={() => setSelectedAmountRange(amountRange)}
-              className="self-end text-xs text-brown/60 hover:text-brown underline"
-              aria-label="Reset amount range filter"
-            >
-              Reset amount
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Active filters summary */}
-      {(hasActiveFilters || hasAmountFilter) && (
-        <div className="flex flex-wrap gap-2 items-center" aria-label="Active filters">
-          {hasAmountFilter && (
-            <span className="inline-flex items-center gap-1 bg-gold/20 text-brown text-xs font-medium px-2 py-1 rounded-full">
-              Amount: {selectedAmountRange[0].toLocaleString()} – {selectedAmountRange[1].toLocaleString()} XLM
-              <button
-                onClick={() => setSelectedAmountRange(amountRange)}
-                aria-label="Remove amount range filter"
-                className="hover:text-brown/60 transition"
-              >
-                ×
-              </button>
-            </span>
-          )}
-          {(hasActiveFilters || hasAmountFilter) && (
-            <button
-              onClick={handleClearAll}
-              className="text-xs text-brown/60 hover:text-brown underline"
-              aria-label="Clear all filters"
-            >
-              Clear all
-            </button>
-          )}
-        </div>
-      )}
-
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <SearchFilterBar
+          statusOptions={STATUS_OPTIONS}
+          typeOptions={TYPE_OPTIONS}
+          searchPlaceholder="Search by loan ID, borrower, or status…"
+        />
+        {/* Export button — closes #1203: active filters applied before export */}
+        <ExportCsvButton loans={filtered} />
+      </div>
       {loading ? (
         <p className="text-brown/60 text-sm" role="status" aria-live="polite">
-          Loading…
+          {t('loans.loading', 'Loading…')}
         </p>
       ) : filtered.length === 0 ? (
         <p className="text-brown/60 text-sm" role="status" aria-live="polite">
-          No loans match your filters.
+          {t('loans.noResults', 'No loans match your filters.')}
         </p>
       ) : (
-        <ul className="space-y-2" aria-label="Loans list">
+        <ul className="space-y-2" aria-label={t('loans.title', 'Loans')}>
           {filtered.map((loan) => (
             <li key={loan.id}>
               <Card
-                title={`Loan #${loan.id}`}
+                title={`${t('loans.loanId', 'Loan')} #${loan.id}`}
                 subtitle={loan.borrower}
                 badge={<LoanStatusBadge status={loan.status} reduced={reduced} />}
                 action={
@@ -243,7 +206,7 @@ function LoanListContent() {
                     {loan.amount.toLocaleString()} XLM
                   </span>
                 }
-                aria-label={`Loan ${loan.id}, ${loan.status}, ${loan.amount.toLocaleString()} XLM`}
+                aria-label={`${t('loans.loanId', 'Loan')} ${loan.id}, ${loan.status}, ${loan.amount.toLocaleString()} XLM`}
               />
             </li>
           ))}
@@ -255,11 +218,12 @@ function LoanListContent() {
 
 export default function LoansListClient() {
   useScrollPosition();
+  const { t } = useI18n();
 
   return (
     <PageTransition>
       <main className="max-w-3xl mx-auto px-4 py-10">
-        <h1 className="text-3xl font-bold text-brown mb-6">Loans</h1>
+        <h1 className="text-3xl font-bold text-brown mb-6">{t('loans.title', 'Loans')}</h1>
         <Suspense
           fallback={
             <ul className="space-y-3 mt-4" aria-busy="true" aria-label="Loading loans">
