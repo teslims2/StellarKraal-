@@ -16,6 +16,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   redis:
     image: redis:7-alpine
@@ -30,6 +35,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   contract-builder:
     # Pinned to immutable digest — update via Dependabot (docker ecosystem)
@@ -50,6 +60,11 @@ services:
         reservations:
           cpus: '0.25'
           memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   backend:
     build:
@@ -78,6 +93,8 @@ services:
       driver: json-file
       options:
         tag: "backend"
+        max-size: "10m"
+        max-file: "3"
 
   frontend:
     build:
@@ -102,6 +119,8 @@ services:
       driver: json-file
       options:
         tag: "frontend"
+        max-size: "10m"
+        max-file: "3"
 
   loki:
     # Pinned to immutable digest — update via Dependabot (docker ecosystem)
@@ -112,6 +131,11 @@ services:
     volumes:
       - loki-data:/loki
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   promtail:
     # Pinned to immutable digest — update via Dependabot (docker ecosystem)
@@ -124,6 +148,11 @@ services:
     depends_on:
       - loki
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   grafana:
     # Pinned to immutable digest — update via Dependabot (docker ecosystem)
@@ -141,6 +170,11 @@ services:
     depends_on:
       - loki
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   cargo-cache:
