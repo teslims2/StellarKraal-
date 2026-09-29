@@ -22,6 +22,9 @@ services:
         max-file: "3"
 
   frontend:
+    build:
+      args:
+        NEXT_PUBLIC_API_URL: ${STAGING_API_URL:-https://api-staging.stellarkraal.example.com}
     environment:
       - NODE_ENV=staging
       - NEXT_PUBLIC_NETWORK=testnet

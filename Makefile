@@ -1,4 +1,4 @@
-.PHONY: install dev build test lint docker-up docker-down clean help
+.PHONY: install dev build test test:integration lint docker-up docker-down clean help
 
 ## install: Install dependencies for frontend and backend
 install:
@@ -20,6 +20,11 @@ test:
 	npm run test:contract
 	cd backend && npm test
 	cd frontend && npm test
+
+## test:integration: Run integration tests in an isolated Docker Compose environment
+test:integration:
+	docker compose -f docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from backend-test
+	docker compose -f docker-compose.test.yml down -v
 
 ## lint: Run ESLint and Prettier checks on backend and frontend
 lint:
