@@ -205,6 +205,92 @@ describe('CollateralRegistrationForm', () => {
     expect(screen.queryByAltText('cattle animal photo preview')).not.toBeInTheDocument();
   });
 
+  describe('drag-and-drop upload zone (#822)', () => {
+    it('renders drag-and-drop drop zone with instructional text', () => {
+      renderWithToast(<CollateralRegistrationForm walletAddress={walletAddress} />);
+      fillBasicInfo();
+
+      const dropZone = screen.getByRole('button', { name: /upload animal photo drop zone/i });
+      expect(dropZone).toBeInTheDocument();
+      expect(screen.getByText(/drag and drop/i)).toBeInTheDocument();
+      expect(screen.getByText(/JPEG, PNG, WebP or GIF \(max 5MB\)/i)).toBeInTheDocument();
+    });
+
+    it('highlights drop zone when dragging over and removes highlight on drag leave', () => {
+      renderWithToast(<CollateralRegistrationForm walletAddress={walletAddress} />);
+      fillBasicInfo();
+
+      const dropZone = screen.getByRole('button', { name: /upload animal photo drop zone/i });
+      expect(dropZone.className).not.toMatch(/border-gold-500/);
+
+      fireEvent.dragEnter(dropZone, { dataTransfer: { files: [] } });
+      expect(dropZone.className).toMatch(/border-gold-500/);
+
+      fireEvent.dragOver(dropZone, { dataTransfer: { files: [] } });
+      expect(dropZone.className).toMatch(/border-gold-500/);
+
+      fireEvent.dragLeave(dropZone, { relatedTarget: document.body });
+      expect(dropZone.className).not.toMatch(/border-gold-500/);
+    });
+
+    it('accepts dropped image file, shows preview and metadata', async () => {
+      renderWithToast(<CollateralRegistrationForm walletAddress={walletAddress} />);
+      fillBasicInfo();
+
+      const dropZone = screen.getByRole('button', { name: /upload animal photo drop zone/i });
+      const file = new File(['img_content'], 'livestock.png', { type: 'image/png' });
+
+      fireEvent.drop(dropZone, { dataTransfer: { files: [file] } });
+
+      expect(await screen.findByAltText('cattle animal photo preview')).toBeInTheDocument();
+      expect(screen.getByText('livestock.png')).toBeInTheDocument();
+      expect(screen.getByText('Ready for submission')).toBeInTheDocument();
+    });
+
+    it('rejects dropped unsupported file type with inline error', async () => {
+      renderWithToast(<CollateralRegistrationForm walletAddress={walletAddress} />);
+      fillBasicInfo();
+
+      const dropZone = screen.getByRole('button', { name: /upload animal photo drop zone/i });
+      const pdfFile = new File(['pdf_content'], 'document.pdf', { type: 'application/pdf' });
+
+      fireEvent.drop(dropZone, { dataTransfer: { files: [pdfFile] } });
+
+      expect(screen.getAllByText('Only JPEG, PNG, WebP, or GIF images are allowed')).toHaveLength(2);
+      expect(screen.queryByAltText('cattle animal photo preview')).not.toBeInTheDocument();
+    });
+
+    it('rejects dropped image exceeding 5MB size limit', async () => {
+      renderWithToast(<CollateralRegistrationForm walletAddress={walletAddress} />);
+      fillBasicInfo();
+
+      const dropZone = screen.getByRole('button', { name: /upload animal photo drop zone/i });
+      const largeFile = new File([new ArrayBuffer(6 * 1024 * 1024)], 'huge.png', { type: 'image/png' });
+
+      fireEvent.drop(dropZone, { dataTransfer: { files: [largeFile] } });
+
+      expect(screen.getAllByText('Animal photo must be smaller than 5MB')).toHaveLength(2);
+      expect(screen.queryByAltText('cattle animal photo preview')).not.toBeInTheDocument();
+    });
+
+    it('supports opening file picker via Enter and Space keyboard events', () => {
+      renderWithToast(<CollateralRegistrationForm walletAddress={walletAddress} />);
+      fillBasicInfo();
+
+      const dropZone = screen.getByRole('button', { name: /upload animal photo drop zone/i });
+      const fileInput = screen.getByLabelText(/Animal Photo/);
+      const clickSpy = jest.spyOn(fileInput, 'click');
+
+      fireEvent.keyDown(dropZone, { key: 'Enter' });
+      expect(clickSpy).toHaveBeenCalledTimes(1);
+
+      fireEvent.keyDown(dropZone, { key: ' ' });
+      expect(clickSpy).toHaveBeenCalledTimes(2);
+
+      clickSpy.mockRestore();
+    });
+  });
+
   it('only submits after step two is completed', async () => {
     renderWithToast(
       <CollateralRegistrationForm walletAddress={walletAddress} onSuccess={onSuccess} />

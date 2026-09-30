@@ -1,7 +1,7 @@
 import { HTMLAttributes, ReactNode, KeyboardEvent } from "react";
 import { cn } from "@/lib/utils";
 
-export type CardVariant = "default" | "highlighted" | "warning";
+export type CardVariant = "default" | "highlighted" | "warning" | "glass";
 
 export interface CardProps extends HTMLAttributes<HTMLDivElement> {
   /** Visual treatment of the card. */
@@ -53,6 +53,8 @@ const variantClasses: Record<CardVariant, string> = {
     "bg-gold-50 dark:bg-brown-700 border border-gold-500 dark:border-gold-600 shadow-md",
   warning:
     "bg-warning-light dark:bg-brown-700 border border-warning dark:border-warning-dark shadow",
+  glass:
+    "bg-white/75 dark:bg-brown-900/60 backdrop-blur-[8px] border border-white/60 dark:border-brown-700/60 shadow-sm supports-[not(backdrop-filter:blur(8px))]:bg-cream-50 supports-[not(backdrop-filter:blur(8px))]:dark:bg-brown-800",
 };
 
 /**

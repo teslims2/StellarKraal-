@@ -107,4 +107,116 @@ describe("FieldTooltip (#1095)", () => {
     fireEvent.mouseEnter(btn);
     expect(btn.getAttribute("aria-expanded")).toBe("true");
   });
+
+  describe("viewport overflow and flip positioning (#833)", () => {
+    it("flips from top to bottom when trigger is near top viewport edge", () => {
+      render(<FieldTooltip content={TOOLTIP_CONTENT} />);
+      const btn = screen.getByRole("button");
+
+      jest.spyOn(btn, "getBoundingClientRect").mockReturnValue({
+        top: 20,
+        bottom: 40,
+        left: 200,
+        right: 220,
+        width: 20,
+        height: 20,
+        x: 200,
+        y: 20,
+        toJSON: () => {},
+      });
+
+      fireEvent.mouseEnter(btn);
+      const tooltip = screen.getByRole("tooltip");
+      expect(tooltip).toBeDefined();
+      expect(tooltip.getAttribute("data-side")).toBe("bottom");
+      expect(tooltip.className).toContain("top-full");
+
+      const arrow = screen.getByTestId("tooltip-arrow");
+      expect(arrow.getAttribute("data-side")).toBe("bottom");
+      expect(arrow.className).toContain("-top-2");
+    });
+
+    it("flips to right-aligned when near right viewport edge", () => {
+      Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 500 });
+      render(<FieldTooltip content={TOOLTIP_CONTENT} />);
+      const btn = screen.getByRole("button");
+
+      jest.spyOn(btn, "getBoundingClientRect").mockReturnValue({
+        top: 300,
+        bottom: 320,
+        left: 480,
+        right: 500,
+        width: 20,
+        height: 20,
+        x: 480,
+        y: 300,
+        toJSON: () => {},
+      });
+
+      fireEvent.mouseEnter(btn);
+      const tooltip = screen.getByRole("tooltip");
+      expect(tooltip.getAttribute("data-align")).toBe("right");
+      expect(tooltip.className).toContain("right-0");
+
+      const arrow = screen.getByTestId("tooltip-arrow");
+      expect(arrow.getAttribute("data-align")).toBe("right");
+      expect(arrow.className).toContain("right-4");
+    });
+
+    it("flips to left-aligned when near left viewport edge", () => {
+      Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 1024 });
+      render(<FieldTooltip content={TOOLTIP_CONTENT} />);
+      const btn = screen.getByRole("button");
+
+      jest.spyOn(btn, "getBoundingClientRect").mockReturnValue({
+        top: 300,
+        bottom: 320,
+        left: 10,
+        right: 30,
+        width: 20,
+        height: 20,
+        x: 10,
+        y: 300,
+        toJSON: () => {},
+      });
+
+      fireEvent.mouseEnter(btn);
+      const tooltip = screen.getByRole("tooltip");
+      expect(tooltip.getAttribute("data-align")).toBe("left");
+      expect(tooltip.className).toContain("left-0");
+
+      const arrow = screen.getByTestId("tooltip-arrow");
+      expect(arrow.getAttribute("data-align")).toBe("left");
+      expect(arrow.className).toContain("left-4");
+    });
+
+    it("recalculates position on window resize", () => {
+      Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 1024 });
+      render(<FieldTooltip content={TOOLTIP_CONTENT} />);
+      const btn = screen.getByRole("button");
+
+      jest.spyOn(btn, "getBoundingClientRect").mockReturnValue({
+        top: 300,
+        bottom: 320,
+        left: 500,
+        right: 520,
+        width: 20,
+        height: 20,
+        x: 500,
+        y: 300,
+        toJSON: () => {},
+      });
+
+      fireEvent.mouseEnter(btn);
+      const tooltip = screen.getByRole("tooltip");
+      expect(tooltip.getAttribute("data-align")).toBe("center");
+
+      // Shrink window so button is now near right edge
+      Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 550 });
+      fireEvent(window, new Event("resize"));
+
+      expect(tooltip.getAttribute("data-align")).toBe("right");
+    });
+  });
 });
+
