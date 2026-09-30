@@ -149,14 +149,9 @@ Promtail reads from `/var/lib/docker/containers` and forwards structured JSON lo
 
 The staging override file (`docker-compose.staging.yml`) is layered on top of the base file:
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
-```
-
 The overlay replaces the RPC endpoint (`STAGING_RPC_URL`) and contract ID (`STAGING_CONTRACT_ID`) so the stack points at Stellar testnet rather than a local node. All service dependencies and health checks remain unchanged.
 
 ---
-
 ## Volumes
 
 | Volume | Used by | Contents |
