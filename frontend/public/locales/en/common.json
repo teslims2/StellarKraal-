@@ -8,6 +8,42 @@
     "profile": "Profile",
     "faq": "FAQ"
   },
+  "dashboard": {
+    "title": "Dashboard",
+    "tabs": {
+      "overview": "Overview",
+      "loans": "Loans",
+      "collateral": "Collateral",
+      "transactions": "Transactions"
+    },
+    "healthFactor": "Health Factor",
+    "noLoanSelected": "Select a loan to view its health factor",
+    "loanId": "Loan ID",
+    "checkHealth": "Check Health",
+    "connectWallet": "Connect your wallet to view your dashboard",
+    "portfolio": "Portfolio Summary"
+  },
+  "wizard": {
+    "step": "Step",
+    "of": "of",
+    "stepCollateral": "Register Collateral",
+    "stepAmount": "Loan Amount",
+    "stepReview": "Review Terms",
+    "stepConfirm": "Confirm",
+    "animalType": "Animal Type",
+    "count": "Count",
+    "appraisedValue": "Appraised Value (stroops)",
+    "loanAmount": "Loan Amount (stroops)",
+    "collateralId": "Collateral ID",
+    "registerAndContinue": "Register & Continue",
+    "reviewTerms": "Review Terms",
+    "confirmAndSubmit": "Confirm & Submit",
+    "submitLoanRequest": "Submit Loan Request",
+    "loanDisbursed": "Loan disbursed!",
+    "originationFee": "Origination Fee",
+    "totalRepayment": "Total Repayment",
+    "processingFee": "Processing…"
+  },
   "loans": {
     "title": "Loans",
     "searchPlaceholder": "Search by loan ID, borrower, or status…",
