@@ -56,6 +56,7 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
   const [formData, setFormData] = useState<FormData>(INITIAL_FORM_DATA);
   const [errors, setErrors] = useState<FormErrors>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  const [submitCount, setSubmitCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [showRestorePrompt, setShowRestorePrompt] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
@@ -239,6 +240,7 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmitAttempted(true);
+    setSubmitCount((c) => c + 1);
 
     if (currentStep === 1) {
       if (validateFields(BASIC_FIELDS)) setCurrentStep(2);
@@ -379,7 +381,7 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
           {currentStep === 1 ? 'Basic Info' : 'Valuation & Photo'}
         </h3>
 
-        <ErrorSummary errors={submitAttempted ? toSummaryErrors(visibleErrors, FIELD_IDS) : []} />
+        <ErrorSummary errors={submitAttempted ? toSummaryErrors(visibleErrors, FIELD_IDS) : []} submitCount={submitCount} />
 
         {currentStep === 1 ? (
           <section aria-labelledby={STEP_HEADING_ID} className="space-y-4">

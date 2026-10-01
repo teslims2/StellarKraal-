@@ -45,6 +45,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Lint i18n locale keys
+        run: npm run lint:i18n
+
       - name: Format check
         run: npm run format:check
 

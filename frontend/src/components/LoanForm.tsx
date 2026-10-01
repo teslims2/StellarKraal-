@@ -75,6 +75,7 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
   const [loanAmount, setLoanAmount] = useState('');
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [submitCount, setSubmitCount] = useState(0);
   const [collateralPendingHash, setCollateralPendingHash] = useState<string | null>(null);
   const [loanPendingHash, setLoanPendingHash] = useState<string | null>(null);
   const [pendingError, setPendingError] = useState<string | null>(null);
@@ -111,6 +112,7 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
 
   async function registerCollateral() {
     setSubmitted(true);
+    setSubmitCount((c) => c + 1);
     if (collateralHasErrors) return;
 
     setLoading(true);
@@ -162,6 +164,7 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
 
   async function requestLoan() {
     setSubmitted(true);
+    setSubmitCount((c) => c + 1);
     if (loanHasErrors) return;
 
     setLoading(true);
@@ -253,7 +256,7 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
           <h2 className="text-xl font-semibold text-brown-700 dark:text-cream-50">
             1. Register Collateral
           </h2>
-          <ErrorSummary errors={summaryErrors} />
+          <ErrorSummary errors={summaryErrors} submitCount={submitCount} />
           <Select
             label="Animal Type"
             value={animalType}
@@ -329,7 +332,7 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
             <h2 className="text-xl font-semibold text-brown-700 dark:text-cream-50">
               2. Request Loan
             </h2>
-            <ErrorSummary errors={summaryErrors} />
+            <ErrorSummary errors={summaryErrors} submitCount={submitCount} />
             <Input
               id={LOAN_FIELD_IDS.collateralId}
               label="Collateral ID"

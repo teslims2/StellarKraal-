@@ -13,24 +13,38 @@ export interface SummaryError {
 export interface ErrorSummaryProps {
   errors: SummaryError[];
   title?: string;
+  /**
+   * Increment this on every submit attempt so focus is re-applied to the
+   * summary heading even when the error list has not changed between submits.
+   */
+  submitCount?: number;
 }
 
 /**
- * Accessible form error summary (#832).
+ * Accessible form error summary (#832, #1068).
  *
  * Renders at the top of a form after a failed submit. Each error is a link
  * that moves focus to the matching field. Hidden when `errors` is empty.
+ *
+ * Focus is moved to the summary heading on every render where errors are
+ * present, including repeated submit attempts with identical errors. Pass a
+ * monotonically-increasing `submitCount` prop to ensure focus is re-applied
+ * on each submit attempt even when the error list has not changed.
  */
-export default function ErrorSummary({ errors, title }: ErrorSummaryProps) {
+export default function ErrorSummary({ errors, title, submitCount }: ErrorSummaryProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const headingId = useId();
   const visible = errors.length > 0;
 
+  // Re-focus on every submit attempt (submitCount changes) OR whenever new
+  // errors appear. This satisfies the WCAG 2.1 focus-management requirement
+  // for repeated submit failures with the same field errors.
   useEffect(() => {
     if (visible) {
       headingRef.current?.focus();
     }
-  }, [visible, errors.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, errors.length, submitCount]);
 
   if (!visible) return null;
 
