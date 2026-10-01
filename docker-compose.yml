@@ -16,6 +16,9 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    networks:
+      - backend
+      - data
 
   redis:
     image: redis:7-alpine
@@ -30,6 +33,9 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+    networks:
+      - backend
+      - data
 
   contract-builder:
     # Pinned to immutable digest — update via Dependabot (docker ecosystem)
@@ -78,6 +84,9 @@ services:
       driver: json-file
       options:
         tag: "backend"
+    networks:
+      - frontend
+      - backend
 
   frontend:
     build:
@@ -102,6 +111,8 @@ services:
       driver: json-file
       options:
         tag: "frontend"
+    networks:
+      - frontend
 
   loki:
     # Pinned to immutable digest — update via Dependabot (docker ecosystem)
@@ -148,3 +159,9 @@ volumes:
   grafana-data:
   postgres-data:
   redis-data:
+
+networks:
+  frontend:
+  backend:
+  data:
+    internal: true
