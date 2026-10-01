@@ -67,9 +67,10 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // Image upload state
+  // Image upload and drag-and-drop state
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const [fileInputKey, setFileInputKey] = useState(0);
   const stepHeadingRef = useRef<HTMLHeadingElement>(null);
   const previousStepRef = useRef(currentStep);
@@ -200,8 +201,7 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
     }));
   };
 
-  const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.currentTarget.files?.[0] ?? null;
+  const processFile = (file: File | null) => {
     handleChange('image', file);
 
     if (!file || validateField('image', file)) {
@@ -210,6 +210,57 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
     }
 
     setImagePreview(URL.createObjectURL(file));
+  };
+
+  const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0] ?? null;
+    processFile(file);
+  };
+
+  const handleDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+    setIsDragging(false);
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragging(false);
+    if (loading) return;
+
+    const file = event.dataTransfer.files?.[0] ?? null;
+    if (file) {
+      processFile(file);
+    }
+  };
+
+  const handleDropZoneKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      imageInputRef.current?.click();
+    }
+  };
+
+  const removePhoto = () => {
+    if (imageInputRef.current) imageInputRef.current.value = '';
+    handleChange('image', null);
+    setImagePreview(null);
+    setFileInputKey((key) => key + 1);
   };
 
   const validateFields = (fields: Array<keyof FormData>) => {
@@ -441,44 +492,125 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
               >
                 Animal Photo <span className="text-error">*</span>
               </label>
-              <input
-                key={fileInputKey}
-                ref={imageInputRef}
-                id={FIELD_IDS.image}
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                required
-                onChange={handleImageChange}
-                onBlur={() => handleBlur('image')}
-                disabled={loading}
-                className="block w-full rounded-xl border border-brown-300 text-sm text-brown-700 file:mr-4 file:rounded-lg file:border-0 file:bg-gold file:px-4 file:py-2.5 file:text-sm file:font-semibold file:text-brown hover:file:bg-gold/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500 disabled:opacity-50 dark:border-brown-600 dark:text-cream-50"
-                aria-invalid={!!errors.image}
-                aria-describedby={errors.image ? `${FIELD_IDS.image}-error` : undefined}
-              />
-              <FieldError id={`${FIELD_IDS.image}-error`} message={errors.image} />
 
-              {imagePreview && (
-                <div className="relative mt-3 w-fit">
-                  <img
-                    src={imagePreview}
-                    alt={`${formData.animalType} animal photo preview`}
-                    className="max-h-48 rounded-lg border border-brown-200 dark:border-brown-600"
+              {!imagePreview ? (
+                <div
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Upload animal photo drop zone. Drag and drop file here or press Enter to choose file"
+                  onDragEnter={handleDragEnter}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={() => imageInputRef.current?.click()}
+                  onKeyDown={handleDropZoneKeyDown}
+                  className={`relative flex flex-col items-center justify-center p-6 border-2 border-dashed rounded-xl cursor-pointer transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 ${
+                    isDragging
+                      ? 'border-gold-500 bg-gold-50/70 dark:bg-gold-950/40 ring-2 ring-gold-500/50'
+                      : errors.image
+                        ? 'border-error bg-error/5 dark:border-error dark:bg-error/10'
+                        : 'border-brown-300 dark:border-brown-600 bg-brown-50/30 dark:bg-brown-900/30 hover:border-gold-500 dark:hover:border-gold-500'
+                  }`}
+                >
+                  <input
+                    key={fileInputKey}
+                    ref={imageInputRef}
+                    id={FIELD_IDS.image}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    required
+                    onChange={handleImageChange}
+                    onBlur={() => handleBlur('image')}
+                    disabled={loading}
+                    className="sr-only"
+                    aria-invalid={!!errors.image}
+                    aria-describedby={errors.image ? `${FIELD_IDS.image}-error` : undefined}
                   />
+                  <div className="flex flex-col items-center text-center pointer-events-none">
+                    <svg
+                      className={`w-10 h-10 mb-3 transition-colors ${
+                        isDragging ? 'text-gold-600 dark:text-gold-400' : 'text-brown-400 dark:text-brown-300'
+                      }`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="1.75"
+                        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                      />
+                    </svg>
+                    <p className="text-sm font-medium text-brown-700 dark:text-cream-100">
+                      <span className="text-gold-600 dark:text-gold-400 font-semibold underline">
+                        Click to upload
+                      </span>{' '}
+                      or drag and drop
+                    </p>
+                    <p className="mt-1 text-xs text-brown-500 dark:text-brown-300">
+                      JPEG, PNG, WebP or GIF (max 5MB)
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="relative mt-3 rounded-xl border border-brown-200 dark:border-brown-700 p-3 bg-brown-50/20 dark:bg-brown-900/20 w-fit">
+                  <input
+                    key={fileInputKey}
+                    ref={imageInputRef}
+                    id={FIELD_IDS.image}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    onChange={handleImageChange}
+                    onBlur={() => handleBlur('image')}
+                    disabled={loading}
+                    className="sr-only"
+                    aria-invalid={!!errors.image}
+                    aria-describedby={errors.image ? `${FIELD_IDS.image}-error` : undefined}
+                  />
+                  <div className="flex items-start gap-4">
+                    <img
+                      src={imagePreview}
+                      alt={`${formData.animalType} animal photo preview`}
+                      className="max-h-48 rounded-lg border border-brown-200 dark:border-brown-600 object-cover shadow-sm"
+                    />
+                    <div className="flex flex-col justify-between self-stretch pr-8">
+                      <div>
+                        <p className="text-sm font-semibold text-brown-800 dark:text-cream-100">
+                          {formData.image?.name || 'Selected photo'}
+                        </p>
+                        {formData.image?.size ? (
+                          <p className="text-xs text-brown-500 dark:text-brown-300 mt-0.5">
+                            {(formData.image.size / (1024 * 1024)).toFixed(2)} MB
+                          </p>
+                        ) : null}
+                        <span className="inline-block mt-2 px-2 py-0.5 text-[11px] font-medium rounded-full bg-success-light text-success-dark dark:bg-green-950 dark:text-green-300">
+                          Ready for submission
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={removePhoto}
+                        className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-error hover:text-error-dark focus:outline-none focus-visible:underline"
+                        aria-label="Remove animal photo"
+                      >
+                        <span aria-hidden="true">✕</span> Remove photo
+                      </button>
+                    </div>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      if (imageInputRef.current) imageInputRef.current.value = '';
-                      handleChange('image', null);
-                      setImagePreview(null);
-                      setFileInputKey((key) => key + 1);
-                    }}
-                    className="absolute right-2 top-2 rounded-full bg-error p-2 text-white hover:bg-error/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-error focus-visible:ring-offset-2"
+                    onClick={removePhoto}
+                    className="absolute right-2 top-2 rounded-full bg-error p-1.5 text-white hover:bg-error/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-error focus-visible:ring-offset-2"
                     aria-label="Remove animal photo"
                   >
-                    <span aria-hidden="true">✕</span>
+                    <span aria-hidden="true" className="text-xs leading-none">✕</span>
                   </button>
                 </div>
               )}
+
+              <FieldError id={`${FIELD_IDS.image}-error`} message={errors.image} />
             </div>
           </section>
         )}

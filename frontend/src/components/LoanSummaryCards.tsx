@@ -92,7 +92,7 @@ export default function LoanSummaryCards({ summary, loading = false }: LoanSumma
               <SkeletonStatCard key={key} />
             ))
           : METRICS.map(({ key, label, formatter, ariaLabel }) => (
-              <Card key={key}>
+              <Card key={key} variant="glass">
                 <p className="text-xs font-medium uppercase tracking-wide text-brown/60 dark:text-brown-300/70 mb-1">
                   {label}
                 </p>

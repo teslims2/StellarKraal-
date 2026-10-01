@@ -111,6 +111,15 @@ describe("Card — variants", () => {
     const card = container.firstChild as HTMLElement;
     expect(card.className).toMatch(/bg-warning-light/);
   });
+
+  it("applies glass variant classes with backdrop blur (#828)", () => {
+    const { container } = render(<Card variant="glass">body</Card>);
+    const card = container.firstChild as HTMLElement;
+    expect(card.className).toMatch(/backdrop-blur-\[8px\]/);
+    expect(card.className).toMatch(/bg-white\/75/);
+    expect(card.className).toMatch(/dark:bg-brown-900\/60/);
+    expect(card.className).toMatch(/supports-\[not\(backdrop-filter:blur\(8px\)\)\]:bg-cream-50/);
+  });
 });
 
 describe("Card — selected state", () => {

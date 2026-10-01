@@ -1,5 +1,6 @@
 "use client";
-import { useState, useId } from "react";
+import { useState, useId, useRef } from "react";
+import { usePopoverPosition } from "./Tooltip";
 
 export interface FieldTooltipProps {
   /** The tooltip text shown on hover/focus. Written at Grade 8 reading level. */
@@ -9,10 +10,16 @@ export interface FieldTooltipProps {
 }
 
 /**
- * FieldTooltip — #1095
+ * FieldTooltip — #1095 / #833
  *
  * An info-icon button that shows a tooltip for complex form field terms
  * (LTV, health factor, origination fee, collateral value, etc.).
+ *
+ * Positioning & Overflow (#833):
+ *  - Automatically detects viewport edges
+ *  - Flips from top to bottom (or right to left) to prevent clipping
+ *  - Updates caret / arrow indicator to match flipped position
+ *  - Recalculates dynamically on window resize
  *
  * Accessibility:
  *  - Trigger button is keyboard-focusable
@@ -23,7 +30,10 @@ export interface FieldTooltipProps {
  */
 export default function FieldTooltip({ content, label = "More information" }: FieldTooltipProps) {
   const [visible, setVisible] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
   const tooltipId = useId();
+  const { side, align } = usePopoverPosition(triggerRef, tooltipRef, visible);
 
   function show() {
     setVisible(true);
@@ -37,9 +47,35 @@ export default function FieldTooltip({ content, label = "More information" }: Fi
     setVisible((v) => !v);
   }
 
+  const verticalClass = side === "bottom" ? "top-full mt-2" : "bottom-full mb-2";
+  const horizontalClass =
+    align === "right"
+      ? "right-0 left-auto translate-x-0"
+      : align === "left"
+      ? "left-0 translate-x-0"
+      : "left-1/2 -translate-x-1/2";
+
+  const arrowHorizontalClass =
+    align === "right"
+      ? "right-4 left-auto translate-x-0"
+      : align === "left"
+      ? "left-4 translate-x-0"
+      : "left-1/2 -translate-x-1/2";
+
+  const arrowVerticalClass =
+    side === "bottom"
+      ? "-top-2 border-b-8 border-x-8 border-t-0 border-x-transparent"
+      : "-bottom-2 border-t-8 border-x-8 border-b-0 border-x-transparent";
+
+  const arrowColorStyle =
+    side === "bottom"
+      ? { borderBottomColor: "#3D2810" }
+      : { borderTopColor: "#3D2810" };
+
   return (
     <span className="relative inline-flex items-center">
       <button
+        ref={triggerRef}
         type="button"
         aria-label={label}
         aria-describedby={visible ? tooltipId : undefined}
@@ -79,21 +115,25 @@ export default function FieldTooltip({ content, label = "More information" }: Fi
 
       {visible && (
         <div
+          ref={tooltipRef}
           id={tooltipId}
           role="tooltip"
-          className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2
-            w-56 sm:w-64 rounded-lg bg-brown-dark p-3 text-sm shadow-lg
-            text-white pointer-events-none"
+          data-side={side}
+          data-align={align}
+          className={`absolute z-50 ${verticalClass} ${horizontalClass}
+            w-56 sm:w-64 rounded-lg bg-brown-dark dark:bg-brown-900 p-3 text-sm shadow-lg
+            text-white pointer-events-none`}
           style={{ backgroundColor: "#3D2810" }}
         >
           {content}
-          {/* Caret */}
+          {/* Caret / Arrow indicator (#833) */}
           <span
             aria-hidden="true"
-            className="absolute left-1/2 -bottom-2 -translate-x-1/2
-              border-solid border-t-8 border-x-8 border-b-0
-              border-x-transparent"
-            style={{ borderTopColor: "#3D2810" }}
+            data-testid="tooltip-arrow"
+            data-side={side}
+            data-align={align}
+            className={`absolute ${arrowVerticalClass} ${arrowHorizontalClass}`}
+            style={arrowColorStyle}
           />
         </div>
       )}
