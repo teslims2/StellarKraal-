@@ -15,17 +15,21 @@ Each service includes the following logging configuration:
 logging:
   driver: json-file
   options:
-    max-size: "10m"
-    max-file: "3"
+    tag: "backend"   # or "frontend"
 ```
 
-- `driver: json-file` — the default Docker log driver, writing JSON-formatted logs.
-- `max-size: "10m"` — each log file is rotated once it reaches 10 MB.
-- `max-file: "3"` — at most 3 rotated log files are retained per container.
+Promtail reads from `/var/lib/docker/containers` and forwards structured JSON logs to Loki. Grafana dashboards query Loki using these tags.
 
-This caps per-container log storage at roughly 30 MB (3 files × 10 MB).
+---
 
-## Services
+## Staging Overlay
+
+The staging override file (`docker-compose.staging.yml`) is layered on top of the base file:
+
+The overlay replaces the RPC endpoint (`STAGING_RPC_URL`) and contract ID (`STAGING_CONTRACT_ID`) so the stack points at Stellar testnet rather than a local node. All service dependencies and health checks remain unchanged.
+
+---
+## Volumes
 
 The logging configuration above is applied to every service in each compose file,
 including the application, database, cache, and any auxiliary services. When

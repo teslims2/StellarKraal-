@@ -162,6 +162,7 @@ export function RegisterCollateralForm({ walletAddress, onSuccess }: RegisterCol
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  const [submitCount, setSubmitCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [successId, setSuccessId] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -298,6 +299,7 @@ export function RegisterCollateralForm({ walletAddress, onSuccess }: RegisterCol
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmitAttempted(true);
+    setSubmitCount((c) => c + 1);
     setStatusError(null);
 
     if (!isOnline) {
@@ -413,6 +415,7 @@ export function RegisterCollateralForm({ walletAddress, onSuccess }: RegisterCol
           errors={
             submitAttempted ? toSummaryErrors(errors as Record<string, string>, FIELD_IDS) : []
           }
+          submitCount={submitCount}
         />
 
         <Select

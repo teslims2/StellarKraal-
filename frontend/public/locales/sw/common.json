@@ -8,6 +8,42 @@
     "profile": "Wasifu",
     "faq": "Maswali"
   },
+  "dashboard": {
+    "title": "Dashibodi",
+    "tabs": {
+      "overview": "Muhtasari",
+      "loans": "Mikopo",
+      "collateral": "Dhamana",
+      "transactions": "Miamala"
+    },
+    "healthFactor": "Kiwango cha Afya",
+    "noLoanSelected": "Chagua mkopo kuona kiwango chake cha afya",
+    "loanId": "Nambari ya Mkopo",
+    "checkHealth": "Angalia Afya",
+    "connectWallet": "Unganisha pochi yako kuona dashibodi yako",
+    "portfolio": "Muhtasari wa Mkoba"
+  },
+  "wizard": {
+    "step": "Hatua",
+    "of": "ya",
+    "stepCollateral": "Sajili Dhamana",
+    "stepAmount": "Kiasi cha Mkopo",
+    "stepReview": "Kagua Masharti",
+    "stepConfirm": "Thibitisha",
+    "animalType": "Aina ya Mnyama",
+    "count": "Idadi",
+    "appraisedValue": "Thamani Iliyokadiriwa (stroops)",
+    "loanAmount": "Kiasi cha Mkopo (stroops)",
+    "collateralId": "Nambari ya Dhamana",
+    "registerAndContinue": "Sajili na Endelea",
+    "reviewTerms": "Kagua Masharti",
+    "confirmAndSubmit": "Thibitisha na Wasilisha",
+    "submitLoanRequest": "Wasilisha Ombi la Mkopo",
+    "loanDisbursed": "Mkopo umetolewa!",
+    "originationFee": "Ada ya Kuanzisha",
+    "totalRepayment": "Jumla ya Malipo",
+    "processingFee": "Inashughulikia…"
+  },
   "loans": {
     "title": "Mikopo",
     "searchPlaceholder": "Tafuta kwa nambari ya mkopo, mkopaji, au hali…",

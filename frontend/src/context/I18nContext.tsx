@@ -72,22 +72,47 @@ async function loadTranslations(locale: Locale): Promise<TranslationDict> {
   }
 }
 
-// ─── Cookie helpers ───────────────────────────────────────────────────────────
+// ─── Storage helpers (localStorage + cookie) ─────────────────────────────────
+//
+// The locale preference is stored in both localStorage (primary, per AC #1067)
+// and a cookie (secondary, allows server-side middleware to read it without JS).
 
-function readLocaleCookie(): Locale {
-  if (typeof document === "undefined") return DEFAULT_LOCALE;
+const LS_KEY = "stellarkraal_locale";
+
+function readLocalePreference(): Locale {
+  if (typeof window === "undefined") return DEFAULT_LOCALE;
+
+  // 1. Try localStorage first (primary storage per AC #1067)
+  try {
+    const lsValue = localStorage.getItem(LS_KEY);
+    if (lsValue && (SUPPORTED_LOCALES as string[]).includes(lsValue)) {
+      return lsValue as Locale;
+    }
+  } catch {
+    // localStorage may be blocked (e.g. private browsing in some browsers)
+  }
+
+  // 2. Fall back to cookie
   const match = document.cookie.match(
     new RegExp(`(?:^|; )${COOKIE_NAME}=([^;]*)`)
   );
-  const value = match ? decodeURIComponent(match[1]) : null;
-  return (SUPPORTED_LOCALES as string[]).includes(value ?? "")
-    ? (value as Locale)
+  const cookieValue = match ? decodeURIComponent(match[1]) : null;
+  return (SUPPORTED_LOCALES as string[]).includes(cookieValue ?? "")
+    ? (cookieValue as Locale)
     : DEFAULT_LOCALE;
 }
 
-function writeLocaleCookie(locale: Locale): void {
-  if (typeof document === "undefined") return;
-  // 1-year expiry, SameSite=Lax, no Secure flag needed (locale is not sensitive)
+function writeLocalePreference(locale: Locale): void {
+  if (typeof window === "undefined") return;
+
+  // Write to localStorage (primary)
+  try {
+    localStorage.setItem(LS_KEY, locale);
+  } catch {
+    // Ignore write errors (storage quota exceeded, etc.)
+  }
+
+  // Write to cookie (secondary — for SSR / middleware)
   const maxAge = 60 * 60 * 24 * 365;
   document.cookie = `${COOKIE_NAME}=${locale}; path=/; max-age=${maxAge}; SameSite=Lax`;
 }
@@ -106,16 +131,16 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(DEFAULT_LOCALE);
   const [translations, setTranslations] = useState<TranslationDict>({});
 
-  // Hydrate locale from cookie on mount
+  // Hydrate locale from localStorage / cookie on mount
   useEffect(() => {
-    const saved = readLocaleCookie();
+    const saved = readLocalePreference();
     setLocaleState(saved);
     loadTranslations(saved).then(setTranslations);
   }, []);
 
   const setLocale = useCallback((next: Locale) => {
     setLocaleState(next);
-    writeLocaleCookie(next);
+    writeLocalePreference(next);
     loadTranslations(next).then(setTranslations);
   }, []);
 

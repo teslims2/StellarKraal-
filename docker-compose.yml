@@ -16,11 +16,9 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    networks:
+      - backend
+      - data
 
   redis:
     image: redis:7-alpine
@@ -35,11 +33,9 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    networks:
+      - backend
+      - data
 
   contract-builder:
     # Pinned to immutable digest — update via Dependabot (docker ecosystem)
@@ -93,8 +89,9 @@ services:
       driver: json-file
       options:
         tag: "backend"
-        max-size: "10m"
-        max-file: "3"
+    networks:
+      - frontend
+      - backend
 
   frontend:
     build:
@@ -119,8 +116,8 @@ services:
       driver: json-file
       options:
         tag: "frontend"
-        max-size: "10m"
-        max-file: "3"
+    networks:
+      - frontend
 
   loki:
     # Pinned to immutable digest — update via Dependabot (docker ecosystem)
@@ -182,3 +179,9 @@ volumes:
   grafana-data:
   postgres-data:
   redis-data:
+
+networks:
+  frontend:
+  backend:
+  data:
+    internal: true
