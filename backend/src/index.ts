@@ -42,6 +42,7 @@ import {
 import { corsMiddleware } from './middleware/cors';
 import { helmetMiddleware } from './middleware/helmet';
 import { correlationMiddleware } from './middleware/correlation';
+import { requestIdMiddleware } from './middleware/requestId';
 import { loggingMiddleware } from './middleware/logging';
 import { getIdempotencyEntry, setIdempotencyEntry } from './middleware/idempotency';
 import {
@@ -73,7 +74,6 @@ import {
   invalidateCache,
   createResponseCacheMiddleware,
 } from './utils/responseCache';
-import { randomUUID } from 'crypto';
 import path from 'path';
 import { mkdirSync, unlinkSync } from 'fs';
 import multer from 'multer';
@@ -137,6 +137,7 @@ const app = express();
 
 // Startup warning for CORS misconfiguration
 app.use(helmetMiddleware);
+app.use(requestIdMiddleware);
 app.use(corsMiddleware);
 app.use(express.json());
 app.use(sanitizeInput);
@@ -213,11 +214,9 @@ app.use('/api/v1', (_req: Request, res: Response, next: NextFunction) => {
 });
 
 app.use(correlationMiddleware);
-// Request ID middleware
-app.use((req: Request, res: Response, next: NextFunction) => {
-  const requestId = (req.headers['x-request-id'] as string) || randomUUID();
-  (req as any).requestId = requestId;
-  res.setHeader('X-Request-ID', requestId);
+// Bind the request logger after the global ID middleware so every downstream
+// handler can emit structured entries with the same request identifier.
+app.use((req: Request, _res: Response, next: NextFunction) => {
   (req as any).logger = createRequestLogger(req.requestId!);
   next();
 });

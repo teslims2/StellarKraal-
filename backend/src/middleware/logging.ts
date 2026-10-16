@@ -9,7 +9,7 @@ import logger, { createRequestLogger } from "../utils/logger";
  */
 export function loggingMiddleware(req: Request, res: Response, next: NextFunction): void {
   const startTime = Date.now();
-  const reqLogger = req.requestId ? createRequestLogger(req.requestId) : logger;
+  const reqLogger = req.logger ?? (req.requestId ? createRequestLogger(req.requestId) : logger);
 
   res.on("finish", () => {
     reqLogger.info("request completed", {

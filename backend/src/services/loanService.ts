@@ -25,6 +25,7 @@ import { fireWebhooks } from "../webhooks";
 import { buildContractTx, CONTRACT_ID, NETWORK_PASSPHRASE } from "./contractTx";
 import rpcClient from "../utils/rpcClient";
 import { loanCreatedTotal, loanRepaidTotal, loanLiquidatedTotal } from "../metrics";
+import { getCachedTwapPrice } from "../utils/twapCache";
 
 const SCALE = 10_000;
 const SIMULATION_ACCOUNT = "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6";
@@ -350,6 +351,20 @@ export async function getLoanOnChain(loanId: string) {
  * @throws If the RPC call fails or the contract is not deployed.
  */
 export async function getHealthFactor(loanId: string) {
+  // Cache the oracle read shared by repeated health-factor calculations.
+  await getCachedTwapPrice(process.env.TWAP_ASSET || "default", async () => {
+    const contract = new Contract(CONTRACT_ID);
+    const account = (await rpcClient.getAccount(SIMULATION_ACCOUNT)) as any;
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(contract.call("get_twap_data"))
+      .setTimeout(30)
+      .build();
+    const twapResult = await rpcClient.simulateTransaction(tx);
+    return (twapResult as { result?: { retval: unknown } }).result?.retval ?? null;
+  });
   const contract = new Contract(CONTRACT_ID);
   const account = (await rpcClient.getAccount(SIMULATION_ACCOUNT)) as any;
   const tx = new TransactionBuilder(account, {

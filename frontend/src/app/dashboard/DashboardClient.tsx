@@ -243,7 +243,7 @@ export default function DashboardClient() {
               {isHealthLoading ? (
                 <SkeletonHealthDashboard />
               ) : (
-                <div className="mt-8 rounded-2xl bg-white p-6 shadow">
+                <div data-onboarding-target="health-factor" className="mt-8 rounded-2xl bg-white p-6 shadow">
                   <h2 className="mb-3 text-xl font-semibold text-brown">
                     <GlossaryTerm termKey="healthFactor" />
                   </h2>
