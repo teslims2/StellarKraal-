@@ -3,8 +3,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 /**
- * Human-readable label overrides for specific path segments.
- * Dynamic segments (e.g. collateral IDs) fall back to the raw segment value.
+ * Human-readable label overrides for known path segments.
+ * Dynamic segments (e.g. IDs) fall back to the capitalised raw segment value.
  */
 const SEGMENT_LABELS: Record<string, string> = {
   dashboard: 'Dashboard',
@@ -42,7 +42,10 @@ export function buildCrumbs(pathname: string): Crumb[] {
 
   const rest = segments.map((segment, index) => {
     const href = '/' + segments.slice(0, index + 1).join('/');
-    const label = SEGMENT_LABELS[segment] ?? segment;
+    // Use the label map, then fall back to capitalising the raw segment.
+    const label =
+      SEGMENT_LABELS[segment] ??
+      segment.charAt(0).toUpperCase() + segment.slice(1);
     return { label, href };
   });
 

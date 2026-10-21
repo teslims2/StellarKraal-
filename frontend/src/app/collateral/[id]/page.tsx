@@ -47,7 +47,7 @@ interface CollateralRecord {
   appraised_value: number;
   appraisal_history: AppraisalEntry[];
   createdAt: string;
-  /** Optional GPS / text location — shown in location placeholder section (#568). */
+  /** Optional GPS / text location — shown in location section (#568, #1253). */
   location?: string | null;
   /** Optional GPS latitude — used by the Leaflet map (#1253). */
   latitude?: number | null;

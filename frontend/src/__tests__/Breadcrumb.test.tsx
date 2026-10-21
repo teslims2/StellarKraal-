@@ -70,7 +70,16 @@ describe('buildCrumbs', () => {
     expect(crumbs[3]).toEqual({ label: 'abc-123', href: '/dashboard/collateral/abc-123' });
   });
 
-  it('falls back to the raw segment for unknown segments', () => {
+  it('returns four crumbs for /dashboard/collateral/abc-123', () => {
+    const crumbs = buildCrumbs('/dashboard/collateral/abc-123');
+    expect(crumbs).toHaveLength(4);
+    expect(crumbs[0]).toEqual({ label: 'Home', href: '/' });
+    expect(crumbs[1]).toEqual({ label: 'Dashboard', href: '/dashboard' });
+    expect(crumbs[2]).toEqual({ label: 'Collateral', href: '/dashboard/collateral' });
+    expect(crumbs[3]).toEqual({ label: 'abc-123', href: '/dashboard/collateral/abc-123' });
+  });
+
+  it('falls back to capitalised raw segment for unknown segments', () => {
     const crumbs = buildCrumbs('/dashboard/unknown-segment');
     expect(crumbs[2].label).toBe('unknown-segment');
   });
@@ -132,7 +141,7 @@ describe('Breadcrumb', () => {
     });
   });
 
-  // -- /dashboard/collateral/abc-123 --
+  // -- /dashboard/collateral/abc-123 (depth = 3) --
 
   describe('on /dashboard/collateral/abc-123', () => {
     beforeEach(() => {
@@ -140,7 +149,7 @@ describe('Breadcrumb', () => {
       render(<Breadcrumb />);
     });
 
-    it('renders a breadcrumb nav', () => {
+    it('renders a breadcrumb nav landmark', () => {
       expect(screen.getByRole('navigation', { name: /breadcrumb/i })).toBeTruthy();
     });
 
