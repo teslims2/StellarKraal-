@@ -6,8 +6,11 @@
  *     PII exposure in log aggregation pipelines and log storage systems.
  *   - JWT tokens are fully redacted to prevent session hijacking via log access.
  *   - Loan amounts are financial data, not PII, and are retained for audit purposes.
- *   - Masking applies only in production (NODE_ENV === "production") so dev/test
- *     logs remain readable for debugging.
+ *   - PII fields (national ID, phone, account number) are always redacted regardless
+ *     of NODE_ENV to prevent PII leakage in any environment.
+ *   - Additional fields can be added via the AUDIT_REDACT_FIELDS env var
+ *     (comma-separated list of lowercase field names).
+ *   - Every log entry includes the authenticated user ID (or "anonymous").
  */
 import { Request, Response, NextFunction } from "express";
 import winston from "winston";
@@ -16,12 +19,57 @@ import path from "path";
 import { config } from "../config";
 
 // ── Sensitive fields to redact ────────────────────────────────────────────────
-const REDACTED_FIELDS = new Set([
+
+/**
+ * Base set of sensitive field names (lowercased).
+ * Matched case-insensitively at redaction time.
+ */
+const BASE_REDACTED_FIELDS = new Set([
+  // Auth / credentials
   "password", "secret", "private_key", "privatekey", "seed",
   "mnemonic", "token", "authorization", "api_key", "apikey",
   "secret_key", "secretkey", "signing_key", "signingkey",
   "refreshtoken",
+  // PII — always redacted regardless of environment
+  "national_id", "nationalid", "national_id_number", "nationalidnumber",
+  "phone", "phone_number", "phonenumber", "mobile", "mobile_number",
+  "account_number", "accountnumber", "account_no", "accountno",
 ]);
+
+/**
+ * Build the final redact-field set by merging the base set with any extra
+ * fields supplied via AUDIT_REDACT_FIELDS (comma-separated, lowercased).
+ */
+function buildRedactedFields(): Set<string> {
+  const extra = (config.AUDIT_REDACT_FIELDS ?? "")
+    .split(",")
+    .map((f) => f.trim().toLowerCase())
+    .filter(Boolean);
+  return extra.length > 0
+    ? new Set([...BASE_REDACTED_FIELDS, ...extra])
+    : BASE_REDACTED_FIELDS;
+}
+
+// Re-evaluated each time the module is first loaded (once per process).
+// To update at runtime, call configureRedactFields().
+let REDACTED_FIELDS: Set<string> = buildRedactedFields();
+
+/**
+ * Extend the runtime redact list with additional field names.
+ * Useful for tests and dynamic reconfiguration without restarting the process.
+ * @param fields - Lowercase field names to add to the redact list.
+ */
+export function configureRedactFields(fields: string[]): void {
+  REDACTED_FIELDS = new Set([...REDACTED_FIELDS, ...fields.map((f) => f.toLowerCase())]);
+}
+
+/**
+ * Reset the redact list back to the env-configured default.
+ * Intended for use in tests only.
+ */
+export function _resetRedactFields(): void {
+  REDACTED_FIELDS = buildRedactedFields();
+}
 
 /** Stellar public key pattern: G followed by 55 base32 characters. */
 const STELLAR_PUBKEY_RE = /\bG[A-Z2-7]{55}\b/g;
@@ -57,6 +105,7 @@ function maskString(value: string): string {
 /**
  * Recursively redact sensitive fields from a plain object.
  * In production, also masks wallet addresses and JWT tokens in string values.
+ * PII fields (national ID, phone, account number) are always redacted.
  * @param obj - The value to redact.
  * @param depth - Current recursion depth (stops at 5).
  * @returns A new object with sensitive field values replaced by `"[REDACTED]"`.
@@ -113,9 +162,27 @@ const auditLogger = winston.createLogger({
 });
 
 // ── Middleware ────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve the authenticated user ID from the request.
+ * Returns the Stellar public key when a JWT or API key is present,
+ * or the string "anonymous" for unauthenticated requests.
+ */
+function resolveUserId(req: Request): string {
+  const user = (req as Request & { user?: { publicKey?: unknown } }).user;
+  if (user && typeof user.publicKey === "string" && user.publicKey.length > 0) {
+    return user.publicKey;
+  }
+  return "anonymous";
+}
+
 /**
  * Express middleware that logs each request to the audit log.
- * In production, wallet addresses in logged bodies are masked and JWT tokens
+ * Every entry includes:
+ *   - userId: authenticated user (Stellar public key) or "anonymous"
+ *   - method, path, status, durationMs, ip, requestId
+ *   - body (non-GET only): redacted copy of request body
+ * In production, wallet addresses in string values are masked and JWT tokens
  * are fully redacted.
  * @param req - Express request object.
  * @param res - Express response object.
@@ -129,6 +196,7 @@ export function auditMiddleware(req: Request, res: Response, next: NextFunction)
 
     auditLogger.info("api_request", {
       requestId: (req as any).requestId,
+      userId: resolveUserId(req),
       method: req.method,
       path: req.path,
       status: res.statusCode,
@@ -141,4 +209,4 @@ export function auditMiddleware(req: Request, res: Response, next: NextFunction)
   next();
 }
 
-export { auditLogger };
+export { auditLogger, BASE_REDACTED_FIELDS };
