@@ -436,10 +436,41 @@ describe('CollateralRegistrationForm', () => {
 
       fillAndOpenConfirmation();
       confirmRegistration();
+    });
 
-  it('keeps the old component path as a compatibility export', () => {
-    render(<CollateralRegistrationForm />);
-    expect(screen.getByRole('heading', { name: 'Register Collateral' })).toBeInTheDocument();
+    it('does NOT restore form state when saved draft is expired', () => {
+      // Place an expired draft in sessionStorage
+      const expiredDraft = JSON.stringify({
+        step: 1,
+        data: { animalType: 'goat', quantity: '10', appraisedValue: '500000' },
+        expiresAt: Date.now() - 1000, // 1 second in the past → already expired
+      });
+      sessionStorage.setItem('stellarkraal_collateral_form', expiredDraft);
+
+      renderWithToast(<CollateralRegistrationForm walletAddress={walletAddress} />);
+
+      // Mock Date.now() to return a time well past expiresAt so the check
+      // inside restoreSavedData() sees it as expired.
+      const realDateNow = Date.now;
+      Date.now = jest.fn(() => realDateNow() + 7_200_000); // 2 hours later
+
+      try {
+        // If the restore prompt appears, clicking it should NOT restore data
+        // because the draft is expired.
+        const restoreButton = screen.queryByRole('button', { name: 'Restore' });
+        if (restoreButton) {
+          fireEvent.click(restoreButton);
+        }
+
+        // Form state should remain at initial values — expired draft discarded
+        expect(screen.getByLabelText(/Animal Type/)).toHaveValue('cattle');
+        expect(screen.getByLabelText(/Count/)).toHaveValue(null);
+        // sessionStorage entry should be gone
+        expect(sessionStorage.getItem('stellarkraal_collateral_form')).toBeNull();
+      } finally {
+        Date.now = realDateNow;
+      }
+    });
   });
 });
 

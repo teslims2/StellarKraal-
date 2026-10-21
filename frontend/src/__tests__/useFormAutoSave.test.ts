@@ -6,7 +6,7 @@ describe('useFormAutoSave', () => {
   const walletAddress = 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN';
 
   beforeEach(() => {
-    localStorage.clear();
+    sessionStorage.clear();
     jest.useFakeTimers();
   });
 
@@ -28,11 +28,37 @@ describe('useFormAutoSave', () => {
       jest.advanceTimersByTime(5000);
     });
 
-    const saved = localStorage.getItem(storageKey);
+    const saved = sessionStorage.getItem(storageKey);
     expect(saved).toBeTruthy();
     const parsed = JSON.parse(saved!);
     expect(parsed.data.field1).toBe('value1');
-    expect(parsed.walletAddress).toBe(walletAddress);
+    // walletAddress must NOT be stored in the saved draft
+    expect(parsed.walletAddress).toBeUndefined();
+  });
+
+  it('stores expiresAt as a Unix ms timestamp', () => {
+    const now = Date.now();
+    renderHook(() =>
+      useFormAutoSave({
+        storageKey,
+        data: { field1: 'value1' },
+        interval: 5000,
+        expiryMs: 3_600_000,
+      })
+    );
+
+    act(() => {
+      jest.advanceTimersByTime(5000);
+    });
+
+    const saved = sessionStorage.getItem(storageKey);
+    expect(saved).toBeTruthy();
+    const parsed = JSON.parse(saved!);
+    // expiresAt should be roughly now + 1 hour
+    expect(typeof parsed.expiresAt).toBe('number');
+    expect(parsed.expiresAt).toBeGreaterThanOrEqual(now + 3_600_000 - 100);
+    // timestamp field must not exist (old shape)
+    expect(parsed.timestamp).toBeUndefined();
   });
 
   it('does not save empty data', () => {
@@ -48,16 +74,15 @@ describe('useFormAutoSave', () => {
       jest.advanceTimersByTime(5000);
     });
 
-    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(sessionStorage.getItem(storageKey)).toBeNull();
   });
 
   it('detects existing saved data on mount', () => {
-    localStorage.setItem(
+    sessionStorage.setItem(
       storageKey,
       JSON.stringify({
-        walletAddress,
         data: { field1: 'saved' },
-        timestamp: new Date().toISOString(),
+        expiresAt: Date.now() + 3_600_000,
       })
     );
 
@@ -74,12 +99,11 @@ describe('useFormAutoSave', () => {
 
   it('restores saved data', () => {
     const savedData = { field1: 'restored', field2: 'data' };
-    localStorage.setItem(
+    sessionStorage.setItem(
       storageKey,
       JSON.stringify({
-        walletAddress,
         data: savedData,
-        timestamp: new Date().toISOString(),
+        expiresAt: Date.now() + 3_600_000,
       })
     );
 
@@ -100,12 +124,11 @@ describe('useFormAutoSave', () => {
   });
 
   it('clears saved data', () => {
-    localStorage.setItem(
+    sessionStorage.setItem(
       storageKey,
       JSON.stringify({
-        walletAddress,
         data: { field1: 'value' },
-        timestamp: new Date().toISOString(),
+        expiresAt: Date.now() + 3_600_000,
       })
     );
 
@@ -121,7 +144,7 @@ describe('useFormAutoSave', () => {
       result.current.clearSavedData();
     });
 
-    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(sessionStorage.getItem(storageKey)).toBeNull();
     expect(result.current.hasSavedData).toBe(false);
   });
 
@@ -158,34 +181,11 @@ describe('useFormAutoSave', () => {
       jest.advanceTimersByTime(10000);
     });
 
-    expect(localStorage.getItem(storageKey)).toBeNull();
-  });
-
-  it('only restores data for matching wallet address', () => {
-    localStorage.setItem(
-      storageKey,
-      JSON.stringify({
-        walletAddress: 'DIFFERENT_ADDRESS',
-        data: { field1: 'value' },
-        timestamp: new Date().toISOString(),
-      })
-    );
-
-    const { result } = renderHook(() =>
-      useFormAutoSave({
-        storageKey,
-        data: { field1: '' },
-        walletAddress,
-      })
-    );
-
-    expect(result.current.hasSavedData).toBe(false);
-    const restored = result.current.restoreSavedData();
-    expect(restored).toBeNull();
+    expect(sessionStorage.getItem(storageKey)).toBeNull();
   });
 
   it('handles invalid JSON gracefully', () => {
-    localStorage.setItem(storageKey, 'invalid json');
+    sessionStorage.setItem(storageKey, 'invalid json');
 
     const { result } = renderHook(() =>
       useFormAutoSave({
@@ -216,7 +216,7 @@ describe('useFormAutoSave', () => {
       jest.advanceTimersByTime(5000);
     });
 
-    let saved = JSON.parse(localStorage.getItem(storageKey)!);
+    let saved = JSON.parse(sessionStorage.getItem(storageKey)!);
     expect(saved.data.field1).toBe('initial');
 
     rerender({ data: { field1: 'updated' } });
@@ -225,8 +225,87 @@ describe('useFormAutoSave', () => {
       jest.advanceTimersByTime(5000);
     });
 
-    saved = JSON.parse(localStorage.getItem(storageKey)!);
+    saved = JSON.parse(sessionStorage.getItem(storageKey)!);
     expect(saved.data.field1).toBe('updated');
+  });
+
+  // ── Expiry logic ───────────────────────────────────────────────────────
+
+  describe('expiry logic', () => {
+    it('discards expired data on mount and hasSavedData stays false', () => {
+      // Store a draft that already expired (expiresAt in the past)
+      sessionStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          data: { field1: 'stale' },
+          expiresAt: Date.now() - 1000,
+        })
+      );
+
+      const { result } = renderHook(() =>
+        useFormAutoSave({
+          storageKey,
+          data: { field1: '' },
+          expiryMs: 3_600_000,
+        })
+      );
+
+      expect(result.current.hasSavedData).toBe(false);
+      // Entry must be removed from sessionStorage
+      expect(sessionStorage.getItem(storageKey)).toBeNull();
+    });
+
+    it('discards expired data when restoreSavedData is called', () => {
+      sessionStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          data: { field1: 'stale' },
+          expiresAt: Date.now() - 1000,
+        })
+      );
+
+      const { result } = renderHook(() =>
+        useFormAutoSave({
+          storageKey,
+          data: { field1: '' },
+          expiryMs: 3_600_000,
+        })
+      );
+
+      let restored: { field1: string } | null = null;
+      act(() => {
+        restored = result.current.restoreSavedData();
+      });
+
+      expect(restored).toBeNull();
+      expect(sessionStorage.getItem(storageKey)).toBeNull();
+    });
+
+    it('restores non-expired data', () => {
+      const savedData = { field1: 'fresh' };
+      sessionStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          data: savedData,
+          expiresAt: Date.now() + 3_600_000,
+        })
+      );
+
+      const { result } = renderHook(() =>
+        useFormAutoSave({
+          storageKey,
+          data: { field1: '' },
+          expiryMs: 3_600_000,
+        })
+      );
+
+      let restored: typeof savedData | null = null;
+      act(() => {
+        restored = result.current.restoreSavedData();
+      });
+
+      expect(restored).toEqual(savedData);
+    });
   });
 
   // ── Draft saved indicator ──────────────────────────────────────────────────
