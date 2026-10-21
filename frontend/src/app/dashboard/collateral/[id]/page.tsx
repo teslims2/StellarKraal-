@@ -6,6 +6,7 @@ import Card from '@/components/Card';
 import Skeleton from '@/components/Skeleton';
 import ErrorState from '@/components/ErrorState';
 import MoneyAmount from '@/components/MoneyAmount';
+import Breadcrumb from '@/components/Breadcrumb';
 import { formatFiat } from '@/lib/formatMoney';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
@@ -131,6 +132,7 @@ export default function CollateralDetailPage() {
 
   return (
     <main className="max-w-2xl mx-auto px-4 py-10">
+      <Breadcrumb />
       <button
         onClick={() => router.back()}
         className="text-brown-600 hover:text-brown-700 mb-6 font-semibold"

@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import ErrorState from '@/components/ErrorState';
 import DetailSkeleton from '@/components/DetailSkeleton';
+import Breadcrumb from '@/components/Breadcrumb';
 import HealthGauge, { SkeletonHealthGauge } from '@/components/HealthGauge';
 import HealthFactorAlert from '@/components/HealthFactorAlert';
 import { useHealthFactor } from '@/hooks/useHealthFactor';
@@ -267,6 +268,7 @@ export default function LoanDetailPage() {
     <main
       className={`mx-auto max-w-2xl px-4 py-10 ${loan.status === 'active' ? 'pb-44 sm:pb-10' : ''}`}
     >
+      <Breadcrumb />
       <Link href="/loans" className="text-brown/60 hover:text-brown text-sm mb-6 inline-block">
         ← Back to Loans
       </Link>
@@ -333,11 +335,7 @@ export default function LoanDetailPage() {
       {loan.status === 'active' && (
         <>
           {/* Real-time health factor gauge + alert banners */}
-          <section
-            aria-label="Health factor"
-            className="mb-6"
-            data-testid="health-factor-section"
-          >
+          <section aria-label="Health factor" className="mb-6" data-testid="health-factor-section">
             <div className="bg-white rounded-2xl p-6 shadow">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-semibold text-brown">Health Factor</h2>
