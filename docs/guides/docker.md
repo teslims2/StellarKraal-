@@ -207,10 +207,38 @@ The `frontend` service uses `condition: service_healthy` so it only starts after
 
 | File | Purpose |
 |---|---|
-| `docker-compose.yml` | Local development (default) |
+| `docker-compose.yml` | Base configuration (production-style images) |
+| `docker-compose.override.yml` | **Hot-reload overrides** — applied automatically during `docker compose up` |
 | `docker-compose.staging.yml` | Staging overrides — apply on top of the base file |
 | `docker-compose.prod.yml` | Production overrides |
 | `docker-compose.test.yml` | Integration test environment |
+
+### Hot reload with docker-compose.override.yml
+
+The `docker-compose.override.yml` file is committed to the repository and is automatically merged by Docker Compose whenever you run `docker compose up`. It replaces the built production images with volume mounts and watch-mode commands for a fast development feedback loop.
+
+**What it does:**
+
+| Service | Command | Mounted paths |
+|---|---|---|
+| `backend` | `ts-node-dev --respawn --transpile-only src/index.ts` | `./backend/src` |
+| `frontend` | `next dev` | `./frontend/src`, `./frontend/public` |
+
+Any change you save to a file in `./backend/src/` restarts the backend server automatically via `ts-node-dev`. Any change to `./frontend/src/` triggers Next.js Fast Refresh in the browser without a full reload.
+
+**Start the hot-reload stack:**
+
+```bash
+docker compose up --build
+```
+
+The override file is picked up automatically — no extra flags needed.
+
+**Start without hot-reload overrides** (production-parity images):
+
+```bash
+docker compose -f docker-compose.yml up --build
+```
 
 To run the staging stack:
 

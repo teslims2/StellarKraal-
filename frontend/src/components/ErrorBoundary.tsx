@@ -28,63 +28,41 @@ interface Props {
   /** Label for the retry button. Defaults to "Try again". Ignored without onRetry. */
   retryLabel?: string;
   /**
-   * Optional external error tracker callback.
-   * Called with the error and component stack whenever componentDidCatch fires.
-   *
-   * @example
-   *   <ErrorBoundary onError={(err, info) => Sentry.captureException(err, { extra: info })}>
+   * When true, renders a full-page fallback suitable for the root layout
+   * (issue #1399). Section-level boundaries keep the compact fallback.
    */
-  onError?: (error: Error, info: React.ErrorInfo) => void;
+  fullPage?: boolean;
 }
 
 interface State {
   error: Error | null;
 }
 
-/** Branded SVG warning illustration. Uses CSS design tokens for dark-mode support. */
-function ErrorIllustration() {
-  return (
-    <svg
-      width="80"
-      height="80"
-      viewBox="0 0 80 80"
-      fill="none"
-      role="img"
-      aria-label="Something went wrong illustration"
-      className="mb-4"
-    >
-      {/* Warning triangle */}
-      <path
-        d="M40 8 L72 64 H8 L40 8Z"
-        fill="var(--token-warning-subtle, #FEF3C7)"
-        stroke="var(--token-warning, #D97706)"
-        strokeWidth="3"
-        strokeLinejoin="round"
-      />
-      {/* Exclamation stem */}
-      <rect
-        x="37"
-        y="28"
-        width="6"
-        height="20"
-        rx="3"
-        fill="var(--token-warning, #D97706)"
-      />
-      {/* Exclamation dot */}
-      <circle cx="40" cy="54" r="3.5" fill="var(--token-warning, #D97706)" />
-      {/* Cow ear silhouettes — brand nod */}
-      <path
-        d="M18 62 Q14 56 17 53 Q21 56 18 62Z"
-        fill="var(--token-primary, #5D3C15)"
-        opacity="0.3"
-      />
-      <path
-        d="M62 62 Q66 56 63 53 Q59 56 62 62Z"
-        fill="var(--token-primary, #5D3C15)"
-        opacity="0.3"
-      />
-    </svg>
-  );
+/**
+ * Report a caught error to the frontend logging sink (#1399).
+ * Falls back to console.error when no sink is configured.
+ */
+function reportError(error: Error, info: React.ErrorInfo, section?: string) {
+  const payload = {
+    message: error.message,
+    stack: error.stack,
+    componentStack: info.componentStack,
+    section: section ?? "root",
+    timestamp: new Date().toISOString(),
+  };
+
+  const sink = (globalThis as { __frontendLogSink?: (e: unknown) => void })
+    .__frontendLogSink;
+  if (typeof sink === "function") {
+    try {
+      sink(payload);
+      return;
+    } catch {
+      // fall through to console
+    }
+  }
+
+  console.error("[ErrorBoundary]", payload);
 }
 
 export default class ErrorBoundary extends Component<Props, State> {
@@ -95,10 +73,7 @@ export default class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    // Always log — useful for both dev debugging and production log aggregators.
-    console.error("[ErrorBoundary]", error, info.componentStack);
-    // Forward to external tracker (Sentry, Datadog, etc.) if provided.
-    this.props.onError?.(error, info);
+    reportError(error, info, this.props.section);
   }
 
   handleRetry = () => {
@@ -111,23 +86,20 @@ export default class ErrorBoundary extends Component<Props, State> {
     if (!error) return this.props.children;
 
     const section = this.props.section ? `${this.props.section} — ` : "";
-    const { onRetry, retryLabel } = this.props;
-    const isDev = process.env.NODE_ENV !== "production";
+    const { onRetry, retryLabel, fullPage } = this.props;
+
+    const wrapperClass = fullPage
+      ? "flex flex-col items-center justify-center min-h-screen p-8 text-center"
+      : "flex flex-col items-center justify-center min-h-[200px] p-8 text-center";
 
     return (
-      <div
-        role="alert"
-        aria-live="assertive"
-        className="flex flex-col items-center justify-center min-h-[200px] p-8 text-center"
-      >
-        <ErrorIllustration />
-
+      <div className={wrapperClass} role="alert">
+        <p className="text-2xl mb-2">⚠️</p>
         <h2 className="text-xl font-semibold text-brown mb-2">
           {section}Something went wrong
         </h2>
-        <p className="text-brown/60 mb-6 text-sm max-w-sm">
-          An unexpected error occurred. Please reload the page or report the
-          issue if it persists.
+        <p className="text-brown/60 mb-6 text-sm">
+          An unexpected error occurred. Please retry or report the issue.
         </p>
 
         {/* Collapsible error details — non-production only */}
@@ -143,21 +115,12 @@ export default class ErrorBoundary extends Component<Props, State> {
         )}
 
         <div className="flex gap-3 flex-wrap justify-center">
-          {onRetry ? (
-            <button
-              onClick={this.handleRetry}
-              className="bg-gold text-brown font-semibold px-4 py-2 rounded-lg hover:bg-gold/80 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-gold focus-visible:ring-offset-2"
-            >
-              {retryLabel ?? "Try again"}
-            </button>
-          ) : (
-            <button
-              onClick={() => window.location.reload()}
-              className="bg-gold text-brown font-semibold px-4 py-2 rounded-lg hover:bg-gold/80 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-gold focus-visible:ring-offset-2"
-            >
-              Reload page
-            </button>
-          )}
+          <button
+            onClick={this.handleRetry}
+            className="bg-gold text-brown font-semibold px-4 py-2 rounded-lg hover:bg-gold/80 transition"
+          >
+            {onRetry ? retryLabel ?? "Try again" : "Retry"}
+          </button>
           <a
             href="/help/faq"
             className="border border-brown/30 text-brown px-4 py-2 rounded-lg hover:bg-brown/5 transition text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-brown focus-visible:ring-offset-2"

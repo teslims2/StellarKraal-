@@ -3,8 +3,14 @@ import DailyRotateFile from "winston-daily-rotate-file";
 import path from "path";
 import { mkdirSync } from "fs";
 import { config } from "../config";
+import { getCorrelationId } from "./correlationContext";
 
 const isProd = config.NODE_ENV === "production";
+const requestContextFormat = winston.format((info) => {
+  const requestId = getCorrelationId();
+  if (requestId && !info.requestId) info.requestId = requestId;
+  return info;
+})();
 
 /**
  * Configure log rotation settings.
@@ -45,11 +51,13 @@ const logger = winston.createLogger({
   level: config.LOG_LEVEL,
   format: isProd
     ? winston.format.combine(
+        requestContextFormat,
         winston.format.timestamp(),
         winston.format.errors({ stack: true }),
         winston.format.json()
       )
     : winston.format.combine(
+        requestContextFormat,
         winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
         winston.format.errors({ stack: true }),
         winston.format.colorize(),

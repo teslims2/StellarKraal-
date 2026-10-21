@@ -36,33 +36,48 @@ jest.mock('next/link', () => {
 
 // ---------------------------------------------------------------------------
 // buildCrumbs unit tests (pure function — no rendering needed)
+// buildCrumbs always prepends a Home crumb (issue #1258)
 // ---------------------------------------------------------------------------
 
 describe('buildCrumbs', () => {
-  it('returns a single crumb for /dashboard', () => {
-    const crumbs = buildCrumbs('/dashboard');
+  it('returns [Home] for /', () => {
+    const crumbs = buildCrumbs('/');
     expect(crumbs).toHaveLength(1);
-    expect(crumbs[0]).toEqual({ label: 'Dashboard', href: '/dashboard' });
+    expect(crumbs[0]).toEqual({ label: 'Home', href: '/' });
   });
 
-  it('returns two crumbs for /dashboard/collateral', () => {
-    const crumbs = buildCrumbs('/dashboard/collateral');
+  it('returns [Home, Dashboard] for /dashboard', () => {
+    const crumbs = buildCrumbs('/dashboard');
     expect(crumbs).toHaveLength(2);
-    expect(crumbs[0]).toEqual({ label: 'Dashboard', href: '/dashboard' });
-    expect(crumbs[1]).toEqual({ label: 'Collateral', href: '/dashboard/collateral' });
+    expect(crumbs[0]).toEqual({ label: 'Home', href: '/' });
+    expect(crumbs[1]).toEqual({ label: 'Dashboard', href: '/dashboard' });
   });
 
-  it('returns three crumbs for /dashboard/collateral/abc-123', () => {
-    const crumbs = buildCrumbs('/dashboard/collateral/abc-123');
+  it('returns [Home, Dashboard, Collateral] for /dashboard/collateral', () => {
+    const crumbs = buildCrumbs('/dashboard/collateral');
     expect(crumbs).toHaveLength(3);
-    expect(crumbs[0]).toEqual({ label: 'Dashboard', href: '/dashboard' });
-    expect(crumbs[1]).toEqual({ label: 'Collateral', href: '/dashboard/collateral' });
-    expect(crumbs[2]).toEqual({ label: 'abc-123', href: '/dashboard/collateral/abc-123' });
+    expect(crumbs[0]).toEqual({ label: 'Home', href: '/' });
+    expect(crumbs[1]).toEqual({ label: 'Dashboard', href: '/dashboard' });
+    expect(crumbs[2]).toEqual({ label: 'Collateral', href: '/dashboard/collateral' });
+  });
+
+  it('returns 4 crumbs for /dashboard/collateral/abc-123', () => {
+    const crumbs = buildCrumbs('/dashboard/collateral/abc-123');
+    expect(crumbs).toHaveLength(4);
+    expect(crumbs[0]).toEqual({ label: 'Home', href: '/' });
+    expect(crumbs[1]).toEqual({ label: 'Dashboard', href: '/dashboard' });
+    expect(crumbs[2]).toEqual({ label: 'Collateral', href: '/dashboard/collateral' });
+    expect(crumbs[3]).toEqual({ label: 'abc-123', href: '/dashboard/collateral/abc-123' });
   });
 
   it('falls back to the raw segment for unknown segments', () => {
     const crumbs = buildCrumbs('/dashboard/unknown-segment');
-    expect(crumbs[1].label).toBe('unknown-segment');
+    expect(crumbs[2].label).toBe('unknown-segment');
+  });
+
+  it('uses Loans label for /loans segment', () => {
+    const crumbs = buildCrumbs('/loans/abc-123');
+    expect(crumbs[1].label).toBe('Loans');
   });
 });
 
@@ -71,15 +86,21 @@ describe('buildCrumbs', () => {
 // ---------------------------------------------------------------------------
 
 describe('Breadcrumb', () => {
-  // -- Hidden on top-level pages --
+  // -- Hidden on top-level pages (≤2 crumbs including Home) --
 
-  it('renders nothing on /dashboard (top-level page)', () => {
+  it('renders nothing on /dashboard (single segment)', () => {
     mockPathname = '/dashboard';
     const { container } = render(<Breadcrumb />);
     expect(container.firstChild).toBeNull();
   });
 
-  // -- /dashboard/collateral --
+  it('renders nothing on / (root)', () => {
+    mockPathname = '/';
+    const { container } = render(<Breadcrumb />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  // -- /dashboard/collateral (2 segments + Home = 3 crumbs, renders) --
 
   describe('on /dashboard/collateral', () => {
     beforeEach(() => {
@@ -87,8 +108,14 @@ describe('Breadcrumb', () => {
       render(<Breadcrumb />);
     });
 
-    it('renders a breadcrumb nav', () => {
+    it('renders a breadcrumb nav with aria-label="breadcrumb"', () => {
       expect(screen.getByRole('navigation', { name: /breadcrumb/i })).toBeTruthy();
+    });
+
+    it('shows "Home" as a link to /', () => {
+      const link = screen.getByRole('link', { name: 'Home' });
+      expect(link).toBeTruthy();
+      expect(link).toHaveAttribute('href', '/');
     });
 
     it('shows "Dashboard" as a link (not the current page)', () => {
@@ -99,7 +126,6 @@ describe('Breadcrumb', () => {
     });
 
     it('shows "Collateral" as the current page (not a link)', () => {
-      // The last segment should NOT be an anchor
       expect(screen.queryByRole('link', { name: 'Collateral' })).toBeNull();
       const current = screen.getByText('Collateral');
       expect(current).toHaveAttribute('aria-current', 'page');
@@ -116,6 +142,11 @@ describe('Breadcrumb', () => {
 
     it('renders a breadcrumb nav', () => {
       expect(screen.getByRole('navigation', { name: /breadcrumb/i })).toBeTruthy();
+    });
+
+    it('shows "Home" as a link to /', () => {
+      const link = screen.getByRole('link', { name: 'Home' });
+      expect(link).toHaveAttribute('href', '/');
     });
 
     it('shows "Dashboard" as a link to /dashboard', () => {
@@ -135,10 +166,28 @@ describe('Breadcrumb', () => {
     });
 
     it('does not mark ancestor links with aria-current', () => {
+      const homeLink = screen.getByRole('link', { name: 'Home' });
       const dashLink = screen.getByRole('link', { name: 'Dashboard' });
       const colLink = screen.getByRole('link', { name: 'Collateral' });
+      expect(homeLink).not.toHaveAttribute('aria-current');
       expect(dashLink).not.toHaveAttribute('aria-current');
       expect(colLink).not.toHaveAttribute('aria-current');
+    });
+  });
+
+  // -- /loans/abc-123 (Home > Loans > abc-123) --
+
+  describe('on /loans/abc-123', () => {
+    beforeEach(() => {
+      mockPathname = '/loans/abc-123';
+      render(<Breadcrumb />);
+    });
+
+    it('shows "Home > Loans > abc-123" format', () => {
+      expect(screen.getByRole('link', { name: 'Home' })).toBeTruthy();
+      expect(screen.getByRole('link', { name: 'Loans' })).toBeTruthy();
+      const current = screen.getByText('abc-123');
+      expect(current).toHaveAttribute('aria-current', 'page');
     });
   });
 

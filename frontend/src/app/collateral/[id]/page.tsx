@@ -1,36 +1,34 @@
-"use client";
-import { useEffect, useState } from "react";
-import Link from "next/link";
-import Image from "next/image";
-import { useParams } from "next/navigation";
-import dynamic from "next/dynamic";
-import Sparkline from "@/components/Sparkline";
-import ErrorState from "@/components/ErrorState";
-import DetailSkeleton from "@/components/DetailSkeleton";
-import CollateralLocationSection from "@/components/CollateralLocationSection";
-import LiquidationThresholdBadge from "@/components/LiquidationThresholdBadge";
-import { formatXlmNumber } from "@/lib/formatMoney";
+'use client';
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import Image from 'next/image';
+import { useParams } from 'next/navigation';
+import dynamic from 'next/dynamic';
+import Sparkline from '@/components/Sparkline';
+import ErrorState from '@/components/ErrorState';
+import DetailSkeleton from '@/components/DetailSkeleton';
+import Breadcrumb from '@/components/Breadcrumb';
+import CollateralLocationSection from '@/components/CollateralLocationSection';
+import LiquidationThresholdBadge from '@/components/LiquidationThresholdBadge';
+import { formatXlmNumber } from '@/lib/formatMoney';
 
 // Heavy components — loaded lazily to reduce initial JS bundle (#1070)
 const PriceChart = dynamic(
-  () => import("@/components/PriceChart").then((m) => ({ default: m.PriceChart })),
+  () => import('@/components/PriceChart').then((m) => ({ default: m.PriceChart })),
   {
     ssr: false,
     loading: () => <DetailSkeleton />,
-  },
+  }
 );
-const TransactionHistory = dynamic(() => import("@/components/TransactionHistory"), {
+const TransactionHistory = dynamic(() => import('@/components/TransactionHistory'), {
   ssr: false,
   loading: () => <DetailSkeleton />,
 });
 // Issue #1209: Recharts-based appraisal history chart — lazy loaded
-const AppraisalHistoryChart = dynamic(
-  () => import("@/components/AppraisalHistoryChart"),
-  {
-    ssr: false,
-    loading: () => <DetailSkeleton />,
-  },
-);
+const AppraisalHistoryChart = dynamic(() => import('@/components/AppraisalHistoryChart'), {
+  ssr: false,
+  loading: () => <DetailSkeleton />,
+});
 
 interface AppraisalEntry {
   date: string;
@@ -51,6 +49,10 @@ interface CollateralRecord {
   createdAt: string;
   /** Optional GPS / text location — shown in location placeholder section (#568). */
   location?: string | null;
+  /** Optional GPS latitude — used by the Leaflet map (#1253). */
+  latitude?: number | null;
+  /** Optional GPS longitude — used by the Leaflet map (#1253). */
+  longitude?: number | null;
   /** Liquidation threshold in bps from the backend, e.g. 8000 = 80% (#697). */
   liquidation_threshold_bps?: number | null;
 }
@@ -161,6 +163,7 @@ export default function CollateralDetailPage() {
 
   return (
     <main className="max-w-2xl mx-auto px-4 py-10" data-print="content">
+      <Breadcrumb />
       <Link
         href="/dashboard"
         className="text-brown/60 hover:text-brown text-sm mb-6 inline-block no-print"
@@ -197,26 +200,46 @@ export default function CollateralDetailPage() {
           </div>
         )}
         <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-bold text-brown capitalize">{record.animal_type}</h1>
-            <div className="flex items-center gap-2 mb-3">
-              <p className="text-brown/50 text-sm">ID: {record.id}</p>
-              <button
-                onClick={copyId}
-                aria-label={copied ? "Collateral ID copied" : "Copy collateral ID"}
-                title={copied ? "Copied!" : "Copy ID"}
-                className="shrink-0 text-brown/50 hover:text-brown transition focus:outline-none focus-visible:ring-2 focus-visible:ring-brown rounded"
-              >
-                {copied ? (
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                ) : (
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
-                  </svg>
-                )}
-              </button>
-            </div>
+          <h1 className="text-2xl font-bold text-brown capitalize">{record.animal_type}</h1>
+          <div className="flex items-center gap-2 mb-3">
+            <p className="text-brown/50 text-sm">ID: {record.id}</p>
+            <button
+              onClick={copyId}
+              aria-label={copied ? 'Collateral ID copied' : 'Copy collateral ID'}
+              title={copied ? 'Copied!' : 'Copy ID'}
+              className="shrink-0 text-brown/50 hover:text-brown transition focus:outline-none focus-visible:ring-2 focus-visible:ring-brown rounded"
+            >
+              {copied ? (
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4 text-green-600"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              ) : (
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"
+                  />
+                </svg>
+              )}
+            </button>
+          </div>
           <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
             {record.breed && (
               <>
@@ -252,10 +275,18 @@ export default function CollateralDetailPage() {
         data-print="show"
       >
         <p className="text-sm text-brown/60 mb-1">Current Appraised Value</p>
-        <p className="text-4xl font-bold text-brown">{(latestValue / 1e7).toFixed(2)} <span className="text-xl font-normal text-brown/60">XLM</span></p>
+        <p className="text-4xl font-bold text-brown">
+          {(latestValue / 1e7).toFixed(2)}{' '}
+          <span className="text-xl font-normal text-brown/60">XLM</span>
+        </p>
         {record.appraisal_history.length >= 2 && (
           <div className="mt-3 flex justify-center">
-            <Sparkline data={record.appraisal_history.map((entry) => ({ date: entry.date, value: entry.value }))} />
+            <Sparkline
+              data={record.appraisal_history.map((entry) => ({
+                date: entry.date,
+                value: entry.value,
+              }))}
+            />
           </div>
         )}
       </div>
@@ -296,10 +327,7 @@ export default function CollateralDetailPage() {
 
       {/* Price history chart — hidden when printing (canvas-based) */}
       <div className="mt-6 no-print" data-print="hide">
-        <PriceChart
-          url={`${API}/api/v1/collateral/${id}/appraisals`}
-          label="Price History"
-        />
+        <PriceChart url={`${API}/api/v1/collateral/${id}/appraisals`} label="Price History" />
       </div>
 
       {/* Appraisal history chart (Recharts) — Issue #1209 */}
@@ -310,8 +338,13 @@ export default function CollateralDetailPage() {
       {/* Liquidation threshold — #697 */}
       <LiquidationThresholdBadge thresholdBps={record.liquidation_threshold_bps} />
 
-      {/* Location placeholder — #568 */}
-      <CollateralLocationSection location={record.location} />
+      {/* Location placeholder — #568 / Leaflet map — #1253 */}
+      <CollateralLocationSection
+        location={record.location}
+        latitude={record.latitude}
+        longitude={record.longitude}
+        animalType={record.animal_type}
+      />
     </main>
   );
 }

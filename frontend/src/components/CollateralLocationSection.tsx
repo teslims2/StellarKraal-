@@ -1,26 +1,61 @@
 /**
- * CollateralLocationSection — Issue #568
+ * CollateralLocationSection — Issues #568 / #1253
  *
- * Renders a "Location (coming soon)" placeholder section on CollateralDetailPage.
- * Hidden when no location data exists on the record.
- * Will be wired to a real map in a future iteration.
+ * Renders the location section on the Collateral Detail page.
+ *
+ * Behaviour:
+ *  - Hidden entirely when no location data exists.
+ *  - Shows an interactive Leaflet map when both latitude and longitude are
+ *    present (Issue #1253).
+ *  - Falls back to the text location string when GPS coords are missing but
+ *    a location string exists.
  *
  * Acceptance criteria:
- *  ✓ Section renders with a placeholder map image / skeleton
- *  ✓ Labelled "Location (coming soon)"
- *  ✓ Hidden if no location data exists
- *  ✓ Accessible: h2 heading (follows the page h1)
+ *  ✓ Leaflet map rendered when latitude and longitude are present
+ *  ✓ Map marker uses the animal type icon
+ *  ✓ Map hidden when coordinates are absent
+ *  ✓ Map tiles loaded via OpenStreetMap (no API key required)
+ *  ✓ Map is keyboard accessible
  */
-"use client";
+'use client';
+
+import dynamic from 'next/dynamic';
+
+// Leaflet requires a browser environment — load the map lazily with no SSR.
+const CollateralMap = dynamic(() => import('@/components/CollateralMap'), {
+  ssr: false,
+  loading: () => (
+    <div
+      role="status"
+      aria-label="Loading map…"
+      className="w-full h-64 rounded-xl animate-pulse"
+      style={{ backgroundColor: 'var(--color-skeleton-base, #e8ddd0)' }}
+    />
+  ),
+});
 
 interface Props {
-  /** Optional location string. Section is hidden when absent or null. */
+  /** Optional text location. Section is hidden when both this and GPS coords are absent. */
   location?: string | null;
+  /** Optional GPS latitude. */
+  latitude?: number | null;
+  /** Optional GPS longitude. */
+  longitude?: number | null;
+  /** Optional animal type — used to pick the marker icon. */
+  animalType?: string;
 }
 
-export default function CollateralLocationSection({ location }: Props) {
+export default function CollateralLocationSection({
+  location,
+  latitude,
+  longitude,
+  animalType,
+}: Props) {
+  const hasGps = latitude != null && longitude != null;
+  const hasLocation = hasGps || location != null;
+
   // Hidden when there is no location data at all
-  if (location == null) return null;
+  if (!hasLocation) return null;
 
   return (
     <section
@@ -32,49 +67,50 @@ export default function CollateralLocationSection({ location }: Props) {
         className="text-lg font-semibold text-brown dark:text-[var(--color-text)] mb-4 flex items-center gap-2"
       >
         <span aria-hidden="true">📍</span>
-        Location{" "}
-        <span className="text-sm font-normal text-brown/50 dark:text-[var(--color-text-muted)]">
-          (coming soon)
-        </span>
+        Location
       </h2>
 
-      {/* Placeholder map skeleton */}
-      <div
-        role="img"
-        aria-label="Map placeholder — location feature coming soon"
-        className="relative w-full h-40 rounded-xl overflow-hidden"
-        style={{ backgroundColor: "var(--color-skeleton-base, #e8ddd0)" }}
-      >
-        {/* Subtle animated shimmer */}
-        <div
-          className="absolute inset-0 animate-pulse opacity-50"
-          style={{
-            background:
-              "linear-gradient(90deg, transparent 0%, var(--color-skeleton-shine, #f5ede0) 50%, transparent 100%)",
-          }}
-          aria-hidden="true"
+      {hasGps ? (
+        /* Interactive Leaflet map — shown when GPS coordinates are available */
+        <CollateralMap
+          latitude={latitude as number}
+          longitude={longitude as number}
+          animalType={animalType}
         />
-        {/* Centred icon + label */}
+      ) : (
+        /* Placeholder skeleton — shown when only a text location exists */
         <div
-          className="absolute inset-0 flex flex-col items-center justify-center gap-1"
-          aria-hidden="true"
+          role="img"
+          aria-label="Map placeholder — GPS coordinates not available"
+          className="relative w-full h-40 rounded-xl overflow-hidden"
+          style={{ backgroundColor: 'var(--color-skeleton-base, #e8ddd0)' }}
         >
-          <span className="text-4xl">🗺️</span>
-          <span
-            className="text-sm font-medium"
-            style={{ color: "var(--color-text-muted, #8B5A1F)" }}
+          <div
+            className="absolute inset-0 animate-pulse opacity-50"
+            style={{
+              background:
+                'linear-gradient(90deg, transparent 0%, var(--color-skeleton-shine, #f5ede0) 50%, transparent 100%)',
+            }}
+            aria-hidden="true"
+          />
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center gap-1"
+            aria-hidden="true"
           >
-            Map coming soon
-          </span>
+            <span className="text-4xl">🗺️</span>
+            <span
+              className="text-sm font-medium"
+              style={{ color: 'var(--color-text-muted, #8B5A1F)' }}
+            >
+              GPS coordinates not available
+            </span>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Display the raw location string when one is provided */}
       {location && (
-        <p
-          className="mt-3 text-sm"
-          style={{ color: "var(--color-text-muted, #8B5A1F)" }}
-        >
+        <p className="mt-3 text-sm" style={{ color: 'var(--color-text-muted, #8B5A1F)' }}>
           {location}
         </p>
       )}
