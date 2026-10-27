@@ -1,12 +1,13 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import Card from '@/components/Card';
 import SkeletonCollateralCard from '@/components/SkeletonCollateralCard';
 import EmptyState from '@/components/EmptyState';
 import MoneyAmount from '@/components/MoneyAmount';
 import { AnimalIcon } from '@/components/AnimalIcon';
 import { formatFiat, formatXlmNumber } from '@/lib/formatMoney';
-import { healthColor } from '@/lib/design-tokens';
+import { healthColor, healthTier, HEALTH_TIER_ICON, HEALTH_TIER_LABEL } from '@/lib/design-tokens';
 
 interface Collateral {
   id: string;
@@ -26,6 +27,11 @@ interface Props {
 }
 
 
+/** Page size options specific to the collateral grid (cards-per-page). */
+const COLLATERAL_PAGE_SIZES = [12, 24, 48] as const;
+type CollateralPageSize = (typeof COLLATERAL_PAGE_SIZES)[number];
+const DEFAULT_PAGE_SIZE: CollateralPageSize = 12;
+
 export default function CollateralGrid({
   collaterals,
   loading,
@@ -33,13 +39,60 @@ export default function CollateralGrid({
   onAddCollateral,
   onBatchDelete,
 }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // ── Pagination state (synced with URL ?page=N and ?limit=N) ────────────
+  // Both currentPage and pageSize are derived directly from searchParams on
+  // every render so browser back/forward navigation keeps them in sync with
+  // the URL without any useState drift.
+  const rawPage = parseInt(searchParams.get('page') ?? '1', 10);
+  const pageSizeRaw = parseInt(searchParams.get('limit') ?? String(DEFAULT_PAGE_SIZE), 10);
+  const pageSize = (COLLATERAL_PAGE_SIZES as readonly number[]).includes(pageSizeRaw)
+    ? (pageSizeRaw as CollateralPageSize)
+    : DEFAULT_PAGE_SIZE;
+
+  const totalPages = Math.max(1, Math.ceil(collaterals.length / pageSize));
+  const currentPage = Math.min(Math.max(1, isNaN(rawPage) ? 1 : rawPage), totalPages);
+
+  const navigate = useCallback(
+    (updates: Record<string, string>) => {
+      const params = new URLSearchParams(searchParams.toString());
+      for (const [k, v] of Object.entries(updates)) {
+        params.set(k, v);
+      }
+      router.push(`${pathname}?${params.toString()}`);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    },
+    [router, pathname, searchParams],
+  );
+
+  const setPage = useCallback(
+    (p: number) => navigate({ page: String(p) }),
+    [navigate],
+  );
+
+  const handlePageSizeChange = useCallback(
+    (newSize: CollateralPageSize) => {
+      navigate({ limit: String(newSize), page: '1' });
+    },
+    [navigate],
+  );
+
+  // Paginated slice of collaterals
+  const start = (currentPage - 1) * pageSize;
+  const pageCollaterals = collaterals.slice(start, start + pageSize);
+  const showPagination = collaterals.length > pageSize;
+
+  // ── Selection state ────────────────────────────────────────────────────
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Roving tabIndex state: -1 means no card has been focused yet (first card gets tabIndex=0)
+  // Roving tabIndex state: first card gets tabIndex=0
   const [focusedIndex, setFocusedIndex] = useState<number>(0);
 
-  // Refs array for all card buttons
+  // Refs array for all card buttons on the current page
   const cardRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const handleSelectOne = (id: string) => {
@@ -115,7 +168,7 @@ export default function CollateralGrid({
   // Arrow-key / Home / End navigation within the grid
   const handleGridKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
-      if (collaterals.length === 0) return;
+      if (pageCollaterals.length === 0) return;
 
       let nextIndex: number | null = null;
 
@@ -123,7 +176,7 @@ export default function CollateralGrid({
         case 'ArrowRight':
         case 'ArrowDown':
           e.preventDefault();
-          nextIndex = Math.min(focusedIndex + 1, collaterals.length - 1);
+          nextIndex = Math.min(focusedIndex + 1, pageCollaterals.length - 1);
           break;
         case 'ArrowLeft':
         case 'ArrowUp':
@@ -136,7 +189,7 @@ export default function CollateralGrid({
           break;
         case 'End':
           e.preventDefault();
-          nextIndex = collaterals.length - 1;
+          nextIndex = pageCollaterals.length - 1;
           break;
         default:
           return;
@@ -147,11 +200,11 @@ export default function CollateralGrid({
         cardRefs.current[nextIndex]?.focus();
       }
     },
-    [focusedIndex, collaterals.length],
+    [focusedIndex, pageCollaterals.length],
   );
 
-  // Keep refs array length in sync with collaterals count
-  cardRefs.current = cardRefs.current.slice(0, collaterals.length);
+  // Keep refs array length in sync with page collaterals count
+  cardRefs.current = cardRefs.current.slice(0, pageCollaterals.length);
 
   if (loading) {
     return (
@@ -351,6 +404,98 @@ export default function CollateralGrid({
           );
         })}
       </div>
+
+      {/* Pagination controls */}
+      {showPagination && (
+        <div className="mt-6 flex flex-col items-center gap-4 sm:flex-row sm:justify-between">
+          {/* Page navigation */}
+          <nav aria-label="Pagination" className="flex items-center gap-1">
+            <button
+              onClick={() => setPage(currentPage - 1)}
+              disabled={currentPage === 1}
+              aria-label="Previous page"
+              className="rounded-lg px-3 py-2 text-sm font-medium text-brown-700 dark:text-cream-50 hover:bg-brown-100 dark:hover:bg-brown-700 focus:outline-none focus:ring-2 focus:ring-brown-600 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40 transition"
+            >
+              ← Prev
+            </button>
+
+            {Array.from({ length: totalPages }, (_, idx) => {
+              const pageNum = idx + 1;
+              const isCurrent = pageNum === currentPage;
+              // Show first, last, current, and pages adjacent to current
+              const isVisible =
+                pageNum === 1 ||
+                pageNum === totalPages ||
+                Math.abs(pageNum - currentPage) <= 1;
+
+              if (!isVisible) {
+                // Show ellipsis once per gap
+                if (pageNum === 2 || pageNum === totalPages - 1) {
+                  return (
+                    <span
+                      key={`ellipsis-${pageNum}`}
+                      className="px-2 py-2 text-sm text-brown-400"
+                      aria-hidden="true"
+                    >
+                      …
+                    </span>
+                  );
+                }
+                return null;
+              }
+
+              return (
+                <button
+                  key={pageNum}
+                  onClick={() => setPage(pageNum)}
+                  aria-label={`Page ${pageNum}`}
+                  aria-current={isCurrent ? 'page' : undefined}
+                  className={`min-w-[2.25rem] rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-brown-600 focus:ring-offset-2 transition ${
+                    isCurrent
+                      ? 'bg-brown-600 text-white dark:bg-brown-500'
+                      : 'text-brown-700 dark:text-cream-50 hover:bg-brown-100 dark:hover:bg-brown-700'
+                  }`}
+                >
+                  {pageNum}
+                </button>
+              );
+            })}
+
+            <button
+              onClick={() => setPage(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              aria-label="Next page"
+              className="rounded-lg px-3 py-2 text-sm font-medium text-brown-700 dark:text-cream-50 hover:bg-brown-100 dark:hover:bg-brown-700 focus:outline-none focus:ring-2 focus:ring-brown-600 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40 transition"
+            >
+              Next →
+            </button>
+          </nav>
+
+          {/* Page size selector */}
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor="collateral-page-size"
+              className="text-sm text-brown-600 dark:text-brown-300"
+            >
+              Per page:
+            </label>
+            <select
+              id="collateral-page-size"
+              value={pageSize}
+              onChange={(e) =>
+                handlePageSizeChange(Number(e.target.value) as CollateralPageSize)
+              }
+              className="rounded-lg border border-brown-300 dark:border-brown-600 bg-white dark:bg-brown-800 px-2 py-1.5 text-sm text-brown-700 dark:text-cream-50 focus:outline-none focus:ring-2 focus:ring-brown-600 focus:ring-offset-2"
+            >
+              {COLLATERAL_PAGE_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
