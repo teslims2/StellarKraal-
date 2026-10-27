@@ -92,6 +92,11 @@ const envSchema = z.object({
     }),
   // Audit log directory path
   AUDIT_LOG_DIR: z.string().optional(),
+  // Comma-separated list of additional field names to redact from audit log bodies.
+  // Merged with the built-in redact list (password, national_id, phone, etc.).
+  // Example: "ssn,dob,card_number"
+  // Optional.
+  AUDIT_REDACT_FIELDS: z.string().optional(),
   // Log level for the application logger
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   // Log rotation: maximum number of log files to keep (7-day retention = 7 files for daily rotation)
