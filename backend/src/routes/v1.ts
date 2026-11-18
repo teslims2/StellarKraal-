@@ -59,9 +59,30 @@ const settingsSchema = z.object({
   currency: z.string().min(3).max(6).optional(),
 });
 
+/**
+ * Schema for the notification-preferences PATCH endpoint (issue #1528).
+ * Extends the core notification toggles with an optional webhook URL and
+ * per-event-type toggle map.
+ */
+const notificationPreferencesSchema = z.object({
+  webhookUrl: z.string().url().nullable().optional(),
+  events: z
+    .object({
+      loanApproved: z.boolean().optional(),
+      loanRepaid: z.boolean().optional(),
+      liquidationWarning: z.boolean().optional(),
+      collateralUpdated: z.boolean().optional(),
+      healthFactorAlert: z.boolean().optional(),
+    })
+    .optional(),
+});
+
+type NotificationPreferences = z.infer<typeof notificationPreferencesSchema>;
+
 type UserSettings = z.infer<typeof settingsSchema> & {
   walletAddress: string;
   joinDate: string;
+  notificationPreferences?: NotificationPreferences;
 };
 
 const settingsStore = new Map<string, UserSettings>();
@@ -420,7 +441,145 @@ v1Router.put('/settings/:wallet', auditMiddleware, (req: Request, res: Response)
   res.json(updated);
 });
 
-// ── Transaction Status ────────────────────────────────────────────────────────
+// ── Notification preferences (issue #1528) ────────────────────────────────────
+
+/**
+ * GET /api/v1/settings/notifications
+ *
+ * Returns the caller's current notification preferences, including webhook URL
+ * and per-event-type toggles.  Wallet address is passed as a query param.
+ */
+v1Router.get('/settings/notifications', readLimiter, (req: Request, res: Response) => {
+  const wallet = (req.query.wallet as string | undefined) ?? 'anonymous';
+  const existing = settingsStore.get(wallet);
+  const prefs: NotificationPreferences = existing?.notificationPreferences ?? {
+    webhookUrl: null,
+    events: {
+      loanApproved: true,
+      loanRepaid: true,
+      liquidationWarning: true,
+      collateralUpdated: false,
+      healthFactorAlert: true,
+    },
+  };
+  res.json(prefs);
+});
+
+/**
+ * PATCH /api/v1/settings/notifications
+ *
+ * Partial-update the caller's notification preferences.  Accepts a JSON body
+ * with optional `webhookUrl` and `events` fields; merges into the existing
+ * record rather than replacing it wholesale.  Wallet address is passed as a
+ * query param so the route is usable before full auth is wired.
+ *
+ * Resolves issue #1528.
+ */
+v1Router.patch(
+  '/settings/notifications',
+  auditMiddleware,
+  writeLimiter,
+  (req: Request, res: Response) => {
+    const wallet = (req.query.wallet as string | undefined) ?? 'anonymous';
+
+    const validation = notificationPreferencesSchema.safeParse(req.body);
+    if (!validation.success) {
+      return res
+        .status(400)
+        .json({ error: 'Validation failed', details: validation.error.issues });
+    }
+
+    const existing = settingsStore.get(wallet) ?? {
+      walletAddress: wallet,
+      joinDate: new Date().toISOString(),
+      notifications: { loanApproved: true, loanRepaid: true, liquidationWarning: true },
+      language: 'en',
+      currency: 'USD',
+    };
+
+    const patch = validation.data;
+    const existingPrefs: NotificationPreferences = existing.notificationPreferences ?? {
+      webhookUrl: null,
+      events: {
+        loanApproved: true,
+        loanRepaid: true,
+        liquidationWarning: true,
+        collateralUpdated: false,
+        healthFactorAlert: true,
+      },
+    };
+
+    const updated: UserSettings = {
+      ...existing,
+      notificationPreferences: {
+        webhookUrl:
+          'webhookUrl' in patch ? (patch.webhookUrl ?? null) : existingPrefs.webhookUrl ?? null,
+        events: {
+          ...existingPrefs.events,
+          ...patch.events,
+        },
+      },
+    };
+
+    settingsStore.set(wallet, updated);
+    res.json(updated.notificationPreferences);
+  }
+);
+
+/**
+ * POST /api/v1/settings/notifications/test-webhook
+ *
+ * Sends a sample payload to the caller's registered webhook URL and returns
+ * the outcome so the UI can show success / failure feedback.
+ *
+ * Resolves issue #1528 (test webhook button acceptance criterion).
+ */
+v1Router.post(
+  '/settings/notifications/test-webhook',
+  auditMiddleware,
+  writeLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    const wallet = (req.query.wallet as string | undefined) ?? 'anonymous';
+    const existing = settingsStore.get(wallet);
+    const webhookUrl = existing?.notificationPreferences?.webhookUrl;
+
+    if (!webhookUrl) {
+      return res.status(400).json({
+        error: 'No webhook URL registered',
+        message: 'Register a webhook URL via PATCH /api/v1/settings/notifications first.',
+      });
+    }
+
+    const samplePayload = {
+      event: 'test',
+      timestamp: new Date().toISOString(),
+      wallet,
+      message: 'This is a test notification from StellarKraal.',
+    };
+
+    try {
+      const response = await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(samplePayload),
+        signal: AbortSignal.timeout(5000),
+      });
+      res.json({
+        success: response.ok,
+        statusCode: response.status,
+        message: response.ok
+          ? "Test payload delivered successfully."
+          : `Webhook returned HTTP ${response.status}.`,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(502).json({
+        success: false,
+        message: `Failed to deliver test payload: ${message}`,
+      });
+    }
+  })
+);
 
 /**
  * GET /api/v1/transactions/:hash/status
