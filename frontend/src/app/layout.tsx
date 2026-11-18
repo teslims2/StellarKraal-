@@ -23,8 +23,39 @@ import { I18nProvider } from '@/context/I18nContext';
 import { WalletProvider } from '@/context/WalletContext';
 
 export const metadata: Metadata = {
-  title: "Handsoff",
-  description: "Handsoff application",
+  // Default title template: individual pages set their own segment; the root
+  // template is used as a fallback for any page that does not export metadata.
+  title: {
+    default: 'StellarKraal — Livestock Micro-Lending on Stellar',
+    template: '%s — StellarKraal',
+  },
+  description:
+    'Register livestock as collateral and access instant micro-loans on Stellar. Built for African emerging markets.',
+  metadataBase: new URL('https://stellarkraal.io'),
+  alternates: { canonical: 'https://stellarkraal.io/' },
+  openGraph: {
+    type: 'website',
+    siteName: 'StellarKraal',
+    title: 'StellarKraal — Livestock Micro-Lending on Stellar',
+    description:
+      'Register livestock as collateral and access instant micro-loans on Stellar. Built for African emerging markets.',
+    url: 'https://stellarkraal.io/',
+    images: [
+      {
+        url: '/og-banner.png',
+        width: 1200,
+        height: 630,
+        alt: 'StellarKraal — Livestock Micro-Lending',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'StellarKraal — Livestock Micro-Lending on Stellar',
+    description:
+      'Register livestock as collateral and access instant micro-loans on Stellar.',
+    images: ['/og-banner.png'],
+  },
 };
 
 /**
