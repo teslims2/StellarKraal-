@@ -11,7 +11,6 @@ import HealthFactorAlert from '@/components/HealthFactorAlert';
 import RepaymentCountdown from '@/components/RepaymentCountdown';
 import { useHealthFactor } from '@/hooks/useHealthFactor';
 import PrintButton from '@/components/PrintButton';
-import PrintButton from '@/components/PrintButton';
 
 // Heavy component — loaded lazily to reduce initial JS bundle (#1070)
 const LoanRepaymentCalculator = dynamic(() => import('@/components/LoanRepaymentCalculator'), {
@@ -381,7 +380,11 @@ export default function LoanDetailPage() {
               {/* Warning / critical alert banners */}
               {hfHasFetched && healthFactor !== null && (
                 <div className="mt-4">
-                  <HealthFactorAlert healthFactor={healthFactor} />
+                  <HealthFactorAlert
+                    healthFactor={healthFactor}
+                    loanId={loan.id}
+                    outstanding={loan.outstanding ?? loan.amount}
+                  />
                 </div>
               )}
             </div>

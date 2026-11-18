@@ -1,5 +1,6 @@
-import cron, { ScheduledTask } from "node-cron";
+import type { ScheduledTask } from "node-cron";
 import { listActiveLoans, updateLoan } from "../db/store";
+import type { LoanRecord } from "../db/store";
 import logger from "../utils/logger";
 import { fireAlert } from "../utils/alerting";
 import { config } from "../config";
@@ -178,8 +179,21 @@ export async function evaluateHealthFactors(options: {
     }
 
     if (options.applyUpdates !== false && (loan.health_factor !== hf || loan.status !== newStatus)) {
+      const previousStatus = loan.status;
       updateLoan(loan.id, { health_factor: hf, status: newStatus });
       updated++;
+
+      // Audit-log every state transition performed by the job.
+      if (previousStatus !== newStatus) {
+        logger.info("healthFactorJob: loan state transition", {
+          loanId: loan.id,
+          previousStatus,
+          newStatus,
+          healthFactor: hf,
+          healthFactorDecimal: (hf / 10_000).toFixed(4),
+          triggeredBy: "health_factor_job",
+        });
+      }
     }
 
     // Fire alerts based on configurable thresholds
@@ -201,12 +215,24 @@ export async function runHealthFactorJob(): Promise<number> {
 }
 
 /**
- * Schedule the health factor job to run every hour.
- * Returns the scheduled task so the caller can stop it on shutdown.
- * @returns The scheduled cron task instance.
+ * Schedule the health factor job on a configurable interval (default 5 minutes).
+ * Uses setInterval rather than a fixed cron expression so the interval is
+ * read from HEALTH_FACTOR_JOB_INTERVAL_MS at startup and can be changed via env.
+ * Returns a ScheduledTask-compatible handle with a `stop()` method.
  */
 export function scheduleHealthFactorJob(): ScheduledTask {
-  return cron.schedule("0 * * * *", async () => {
+  const intervalMs = parseInt(config.HEALTH_FACTOR_JOB_INTERVAL_MS, 10);
+
+  logger.info("healthFactorJob: scheduling", { intervalMs });
+
+  // Run once immediately on startup, then on the configured interval.
+  void runHealthFactorJob().catch((err: unknown) => {
+    logger.error("healthFactorJob: unhandled error on startup run", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+
+  const timer = setInterval(async () => {
     try {
       await runHealthFactorJob();
     } catch (err) {
@@ -214,7 +240,12 @@ export function scheduleHealthFactorJob(): ScheduledTask {
         error: err instanceof Error ? err.message : String(err),
       });
     }
-  });
+  }, intervalMs);
+
+  // Return a ScheduledTask-compatible object so existing shutdown code works unchanged.
+  return {
+    stop: () => clearInterval(timer),
+  } as unknown as ScheduledTask;
 }
 
 /** Exported for testing only — clears the per-loan alert cooldown map. */

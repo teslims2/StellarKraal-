@@ -52,6 +52,14 @@ const envSchema = z.object({
     .string()
     .regex(/^\d+$/, 'HEALTH_FACTOR_CRIT must be a number')
     .default('10000'),
+  /**
+   * Interval in milliseconds between health factor job runs.
+   * @default 300000 (5 minutes)
+   */
+  HEALTH_FACTOR_JOB_INTERVAL_MS: z
+    .string()
+    .regex(/^\d+$/, 'HEALTH_FACTOR_JOB_INTERVAL_MS must be a number')
+    .default('300000'),
   // Node environment
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   // Frontend URL for CORS
