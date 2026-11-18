@@ -19,6 +19,8 @@ import InitialLoadingScreen from '@/components/InitialLoadingScreen';
 import ErrorBoundary from '@/components/ErrorBoundary';
 // i18n — Issue #1207: Kiswahili locale support
 import { I18nProvider } from '@/context/I18nContext';
+// RTL layout sync — Issue #1524
+import HtmlDirSync from '@/components/HtmlDirSync';
 // Wallet auth context — Issue #1208
 import { WalletProvider } from '@/context/WalletContext';
 
@@ -258,6 +260,8 @@ export default function RootLayout({
         <ThemeProvider>
           <KeyboardShortcutsProvider>
             <I18nProvider>
+            {/* Sync <html dir> and <html lang> with active locale — Issue #1524 */}
+            <HtmlDirSync />
             <WalletProvider>
             <ToastProvider>
             <SWRErrorToastConfig>

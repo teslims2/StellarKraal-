@@ -1,4 +1,11 @@
 'use client';
+/**
+ * Collateral Detail Page — /collateral/[id]
+ *
+ * Shows animal metadata, appraisal value, appraisal history timeline,
+ * linked active loans with outstanding balance and health factor,
+ * and an edit button for collateral in draft state (#1525).
+ */
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -35,6 +42,9 @@ interface AppraisalEntry {
   value: number;
 }
 
+/** Collateral status determines whether the Edit button is active or disabled. */
+type CollateralStatus = 'draft' | 'active' | 'liquidated' | string;
+
 interface CollateralRecord {
   id: string;
   owner: string;
@@ -47,6 +57,8 @@ interface CollateralRecord {
   appraised_value: number;
   appraisal_history: AppraisalEntry[];
   createdAt: string;
+  /** Collateral status — 'draft' allows editing; 'active' disables the edit button (#1525). */
+  status?: CollateralStatus;
   /** Optional GPS / text location — shown in location section (#568, #1253). */
   location?: string | null;
   /** Optional GPS latitude — used by the Leaflet map (#1253). */
@@ -57,9 +69,25 @@ interface CollateralRecord {
   liquidation_threshold_bps?: number | null;
 }
 
+/** Subset of a Loan record needed for the linked-loans table (#1525). */
+interface LinkedLoan {
+  id: string;
+  status: string;
+  principal: number;
+  outstanding_balance: number;
+  health_factor?: number | null;
+}
+
 type ErrorType = '404' | 'network' | null;
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+/** Health factor colour: green ≥ 1.5, amber 1.0–1.5, red < 1.0 */
+function healthFactorClass(hf: number): string {
+  if (hf >= 1.5) return 'text-green-600 font-semibold';
+  if (hf >= 1.0) return 'text-amber-500 font-semibold';
+  return 'text-red-600 font-bold';
+}
 
 export default function CollateralDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -67,6 +95,10 @@ export default function CollateralDetailPage() {
   const [error, setError] = useState<ErrorType>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+
+  // Linked loans — Issue #1525
+  const [linkedLoans, setLinkedLoans] = useState<LinkedLoan[]>([]);
+  const [loansLoading, setLoansLoading] = useState(false);
 
   const fetchCollateral = async () => {
     try {
@@ -92,6 +124,23 @@ export default function CollateralDetailPage() {
     }
   };
 
+  /** Fetch active loans backed by this collateral (#1525). */
+  const fetchLinkedLoans = async () => {
+    setLoansLoading(true);
+    try {
+      const res = await fetch(`${API}/api/v1/loans?collateral_id=${encodeURIComponent(id)}&status=active`);
+      if (res.ok) {
+        const data = await res.json();
+        // Accept both { loans: [...] } envelope and a bare array
+        setLinkedLoans(Array.isArray(data) ? data : (data.loans ?? []));
+      }
+    } catch {
+      // Non-fatal: linked loans are supplementary information
+    } finally {
+      setLoansLoading(false);
+    }
+  };
+
   async function copyId() {
     if (!id) return;
     try {
@@ -105,6 +154,8 @@ export default function CollateralDetailPage() {
 
   useEffect(() => {
     fetchCollateral();
+    fetchLinkedLoans();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   if (loading) {
@@ -160,17 +211,70 @@ export default function CollateralDetailPage() {
   }
 
   const latestValue = record.appraised_value;
+  const isDraft = !record.status || record.status === 'draft';
 
   return (
     <main className="max-w-2xl mx-auto px-4 py-10" data-print="content">
       <Breadcrumb />
-      <Link
-        href="/dashboard"
-        className="text-brown/60 hover:text-brown text-sm mb-6 inline-block no-print"
-        data-print="hide"
-      >
-        ← Back to Dashboard
-      </Link>
+      <div className="flex items-center justify-between mb-6 no-print" data-print="hide">
+        <Link
+          href="/dashboard"
+          className="text-brown/60 hover:text-brown text-sm"
+        >
+          ← Back to Dashboard
+        </Link>
+
+        {/* Edit button — Issue #1525: enabled for draft, disabled with tooltip for active */}
+        {isDraft ? (
+          <Link
+            href={`/collateral/${id}/edit`}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold bg-brown text-cream hover:bg-brown/80 transition focus:outline-none focus:ring-2 focus:ring-brown focus:ring-offset-2"
+            aria-label="Edit collateral"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+              />
+            </svg>
+            Edit
+          </Link>
+        ) : (
+          <span
+            role="button"
+            aria-disabled="true"
+            aria-label="Editing is disabled for active collateral"
+            title="Collateral is active and cannot be edited while backing a loan"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold bg-brown/20 text-brown/40 cursor-not-allowed select-none"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+              />
+            </svg>
+            Edit
+          </span>
+        )}
+      </div>
 
       {/* Animal profile */}
       <div
@@ -288,6 +392,58 @@ export default function CollateralDetailPage() {
               }))}
             />
           </div>
+        )}
+      </div>
+
+      {/* Linked active loans — Issue #1525 */}
+      <div
+        className="bg-white rounded-2xl p-6 shadow mb-6 loan-summary-card"
+        data-print="show"
+        aria-labelledby="linked-loans-heading"
+      >
+        <h2 id="linked-loans-heading" className="text-lg font-semibold text-brown mb-4">
+          Active Loans Backed by This Collateral
+        </h2>
+        {loansLoading ? (
+          <p className="text-brown/50 text-sm animate-pulse">Loading loans…</p>
+        ) : linkedLoans.length === 0 ? (
+          <p className="text-brown/50 text-sm">No active loans are backed by this collateral.</p>
+        ) : (
+          <table className="w-full text-sm" aria-label="Active loans backed by this collateral">
+            <thead>
+              <tr className="text-left text-brown/50 border-b border-brown/10">
+                <th className="pb-2 font-medium">Loan ID</th>
+                <th className="pb-2 font-medium text-right">Outstanding (XLM)</th>
+                <th className="pb-2 font-medium text-right">Health Factor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {linkedLoans.map((loan) => (
+                <tr key={loan.id} className="border-b border-brown/5 last:border-0">
+                  <td className="py-2">
+                    <Link
+                      href={`/loans/${loan.id}`}
+                      className="font-mono text-xs text-brown hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brown rounded"
+                    >
+                      {loan.id.slice(0, 8)}…
+                    </Link>
+                  </td>
+                  <td className="py-2 text-right font-medium text-brown">
+                    {formatXlmNumber(loan.outstanding_balance / 1e7)}
+                  </td>
+                  <td className="py-2 text-right">
+                    {loan.health_factor != null ? (
+                      <span className={healthFactorClass(loan.health_factor)}>
+                        {loan.health_factor.toFixed(2)}
+                      </span>
+                    ) : (
+                      <span className="text-brown/40">—</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
 

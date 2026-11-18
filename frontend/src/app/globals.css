@@ -987,3 +987,35 @@ video {
     display: block !important;
   }
 }
+
+/* ── RTL / logical-property baseline (#1524) ───────────────────────────────
+   These utilities translate common directional padding/margin/text classes
+   into CSS logical properties so the layout mirrors correctly when
+   dir="rtl" is applied to <html>. Components should use these classes (or
+   the equivalent Tailwind logical utilities) instead of hard-coded
+   padding-left / margin-right / text-align: left declarations.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Inline padding helpers (replaces pl-*/pr-* where direction matters) */
+.ps-4  { padding-inline-start: 1rem; }
+.pe-4  { padding-inline-end:   1rem; }
+.ps-6  { padding-inline-start: 1.5rem; }
+.pe-6  { padding-inline-end:   1.5rem; }
+
+/* Inline margin helpers */
+.ms-auto { margin-inline-start: auto; }
+.me-auto { margin-inline-end:   auto; }
+.ms-2    { margin-inline-start: 0.5rem; }
+.me-2    { margin-inline-end:   0.5rem; }
+
+/* Logical border sides */
+.border-s { border-inline-start-width: 1px; }
+.border-e { border-inline-end-width:   1px; }
+
+/* Text alignment that respects document direction */
+.text-start { text-align: start; }
+.text-end   { text-align: end; }
+
+/* RTL-safe float for inline elements (avoid; prefer flex instead) */
+[dir='rtl'] .float-left-ltr  { float: right; }
+[dir='rtl'] .float-right-ltr { float: left; }

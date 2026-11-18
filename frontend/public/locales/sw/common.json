@@ -92,7 +92,14 @@
     },
     "priceHistory": "Historia ya Bei",
     "locationUnknown": "Mahali haijarekodiwa",
-    "id": "Kitambulisho"
+    "id": "Kitambulisho",
+    "linkedLoans": "Mikopo Inayofanya kazi Inayoungwa mkono na Dhamana Hii",
+    "noLinkedLoans": "Hakuna mikopo inayofanya kazi inayoungwa mkono na dhamana hii.",
+    "loadingLoans": "Inapakia mikopo…",
+    "outstandingBalance": "Iliyobaki (XLM)",
+    "healthFactor": "Kiwango cha Afya",
+    "editCollateral": "Hariri",
+    "editDisabledTooltip": "Dhamana inafanya kazi na haiwezi kuhaririwa wakati inaunga mkono mkopo"
   },
   "wallet": {
     "connect": "Unganisha Pochi",
