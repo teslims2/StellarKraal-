@@ -179,13 +179,15 @@ export default function CollateralDetailPage() {
       >
         {record.photo_url ? (
           <div className="relative w-24 h-24 rounded-xl overflow-hidden flex-shrink-0">
+            {/* priority — this is the first (and only) image visible above the fold
+                on the detail page, so we preload it instead of lazy-loading it. */}
             <Image
               src={record.photo_url}
               alt={`${record.animal_type} collateral photo`}
               fill
               sizes="(max-width: 640px) 96px, 96px"
               className="object-cover"
-              loading="lazy"
+              priority
               placeholder="blur"
               blurDataURL="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iOTYiIGhlaWdodD0iOTYiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0iI0YwRDlCOCIvPjwvc3ZnPg=="
             />

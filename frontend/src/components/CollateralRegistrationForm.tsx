@@ -629,6 +629,9 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
                     aria-describedby={errors.image ? `${FIELD_IDS.image}-error` : undefined}
                   />
                   <div className="flex flex-col items-start gap-4 sm:flex-row">
+                    {/* eslint-disable-next-line @next/next/no-img-element --
+                        imagePreview is a blob: URL created by URL.createObjectURL().
+                        next/image cannot render blob: URLs; a plain <img> is required here. */}
                     <img
                       src={imagePreview}
                       alt={`${formData.animalType} animal photo preview`}

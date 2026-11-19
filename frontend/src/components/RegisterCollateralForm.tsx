@@ -507,6 +507,9 @@ export function RegisterCollateralForm({ walletAddress, onSuccess }: RegisterCol
           <FieldError id={`${FIELD_IDS.image}-error`} message={errors.image} />
           {previewUrl && (
             <div className="relative mt-3 w-fit">
+              {/* eslint-disable-next-line @next/next/no-img-element --
+                  previewUrl is a blob: URL created by URL.createObjectURL().
+                  next/image cannot render blob: URLs; a plain <img> is required here. */}
               <img
                 src={previewUrl}
                 alt="Image preview"
