@@ -10,6 +10,7 @@ import DetailSkeleton from '@/components/DetailSkeleton';
 import Breadcrumb from '@/components/Breadcrumb';
 import CollateralLocationSection from '@/components/CollateralLocationSection';
 import LiquidationThresholdBadge from '@/components/LiquidationThresholdBadge';
+import StatusBadge from '@/components/StatusBadge';
 import { formatXlmNumber } from '@/lib/formatMoney';
 
 // Heavy components — loaded lazily to reduce initial JS bundle (#1070)
@@ -35,6 +36,14 @@ interface AppraisalEntry {
   value: number;
 }
 
+interface LinkedLoan {
+  id: string;
+  borrower?: string;
+  amount: number;
+  status: string;
+  createdAt?: string;
+}
+
 interface CollateralRecord {
   id: string;
   owner: string;
@@ -55,6 +64,8 @@ interface CollateralRecord {
   longitude?: number | null;
   /** Liquidation threshold in bps from the backend, e.g. 8000 = 80% (#697). */
   liquidation_threshold_bps?: number | null;
+  /** Loans currently backed by this collateral item (#1490). */
+  loans?: LinkedLoan[];
 }
 
 type ErrorType = '404' | 'network' | null;
@@ -67,6 +78,9 @@ export default function CollateralDetailPage() {
   const [error, setError] = useState<ErrorType>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [loans, setLoans] = useState<LinkedLoan[]>([]);
+  const [loansLoading, setLoansLoading] = useState(true);
+  const [loansError, setLoansError] = useState(false);
 
   const fetchCollateral = async () => {
     try {
@@ -83,6 +97,10 @@ export default function CollateralDetailPage() {
         const data = await res.json();
         setRecord(data);
         setError(null);
+        if (Array.isArray(data.loans)) {
+          setLoans(data.loans);
+          setLoansError(false);
+        }
       }
     } catch {
       setError('network');
@@ -103,8 +121,31 @@ export default function CollateralDetailPage() {
     }
   }
 
+  const fetchLinkedLoans = async () => {
+    try {
+      setLoansLoading(true);
+      setLoansError(false);
+      const res = await fetch(`${API}/api/v1/collateral/${id}/loans`);
+      if (!res.ok) {
+        setLoansError(true);
+        setLoans([]);
+      } else {
+        const data = await res.json();
+        const list: LinkedLoan[] = Array.isArray(data) ? data : (data.loans ?? []);
+        setLoans(list);
+        setLoansError(false);
+      }
+    } catch {
+      setLoansError(true);
+      setLoans([]);
+    } finally {
+      setLoansLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchCollateral();
+    fetchLinkedLoans();
   }, [id]);
 
   if (loading) {
@@ -160,6 +201,7 @@ export default function CollateralDetailPage() {
   }
 
   const latestValue = record.appraised_value;
+  const linkedLoans = loans.length > 0 ? loans : (record.loans ?? []);
 
   return (
     <main className="max-w-2xl mx-auto px-4 py-10" data-print="content">
@@ -292,33 +334,101 @@ export default function CollateralDetailPage() {
       </div>
 
       {/* Appraisal history */}
-      <div className="bg-white rounded-2xl p-6 shadow loan-summary-card" data-print="show">
-        <h2 className="text-lg font-semibold text-brown mb-4">Appraisal History</h2>
+      <section
+        className="bg-white rounded-2xl p-6 shadow loan-summary-card"
+        data-print="show"
+        aria-labelledby="appraisal-history-heading"
+      >
+        <h2 id="appraisal-history-heading" className="text-lg font-semibold text-brown mb-4">
+          Appraisal History
+        </h2>
         {record.appraisal_history.length === 0 ? (
           <p className="text-brown/50 text-sm">No appraisal history yet.</p>
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-brown/50 border-b border-brown/10">
-                <th className="pb-2 font-medium">Date</th>
-                <th className="pb-2 font-medium text-right">Value (XLM)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...record.appraisal_history].reverse().map((entry, i) => (
-                <tr key={i} className="border-b border-brown/5 last:border-0">
-                  <td className="py-2 text-brown/70">
-                    {new Date(entry.date).toLocaleDateString()}
-                  </td>
-                  <td className="py-2 text-right font-medium text-brown dark:text-cream-50">
-                    {formatXlmNumber(entry.value / 1e7)}
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <caption className="sr-only">
+                Appraisal history for collateral {record.id}, showing value over time
+              </caption>
+              <thead>
+                <tr className="text-left text-brown/50 border-b border-brown/10">
+                  <th scope="col" className="pb-2 font-medium">
+                    Date
+                  </th>
+                  <th scope="col" className="pb-2 font-medium text-right">
+                    Value (XLM)
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {[...record.appraisal_history].reverse().map((entry, i) => (
+                  <tr key={i} className="border-b border-brown/5 last:border-0">
+                    <td className="py-2 text-brown/70">
+                      {new Date(entry.date).toLocaleDateString()}
+                    </td>
+                    <td className="py-2 text-right font-medium text-brown dark:text-cream-50">
+                      {formatXlmNumber(entry.value / 1e7)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </div>
+      </section>
+
+      {/* Loans currently backed by this collateral — #1490 */}
+      <section
+        className="bg-white rounded-2xl p-6 shadow mt-6 loan-summary-card"
+        data-print="show"
+        aria-labelledby="linked-loans-heading"
+      >
+        <h2 id="linked-loans-heading" className="text-lg font-semibold text-brown mb-4">
+          Linked Loans
+        </h2>
+        {loansLoading && linkedLoans.length === 0 ? (
+          <p className="text-brown/50 text-sm" role="status">
+            Loading linked loans…
+          </p>
+        ) : loansError && linkedLoans.length === 0 ? (
+          <div className="text-sm">
+            <p className="text-brown/50 mb-2">Could not load linked loans.</p>
+            <button
+              onClick={fetchLinkedLoans}
+              className="text-brown underline hover:text-brown/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-brown rounded"
+            >
+              Retry
+            </button>
+          </div>
+        ) : linkedLoans.length === 0 ? (
+          <p className="text-brown/50 text-sm">This collateral is not backing any loans.</p>
+        ) : (
+          <ul className="divide-y divide-brown/5" aria-label="Loans backed by this collateral">
+            {linkedLoans.map((loan) => (
+              <li
+                key={loan.id}
+                className="py-3 flex flex-wrap items-center justify-between gap-2"
+              >
+                <div className="min-w-0">
+                  <Link
+                    href={`/loans/${loan.id}`}
+                    className="font-medium text-brown hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brown rounded"
+                  >
+                    Loan {loan.id.slice(0, 8)}…{loan.id.slice(-4)}
+                  </Link>
+                  <p className="text-xs text-brown/50">
+                    {formatXlmNumber(loan.amount / 1e7)} XLM
+                    {loan.createdAt
+                      ? ` · ${new Date(loan.createdAt).toLocaleDateString()}`
+                      : ''}
+                  </p>
+                </div>
+                <StatusBadge status={loan.status} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       {/* Transactions tied to this collateral — #530 */}
       <div className="mt-6" data-print="hide">
@@ -330,10 +440,17 @@ export default function CollateralDetailPage() {
         <PriceChart url={`${API}/api/v1/collateral/${id}/appraisals`} label="Price History" />
       </div>
 
-      {/* Appraisal history chart (Recharts) — Issue #1209 */}
-      <div className="mt-6 no-print" data-print="hide">
+      {/* Appraisal history chart (Recharts) — Issue #1209, #1490 */}
+      <section
+        className="mt-6 no-print"
+        data-print="hide"
+        aria-labelledby="appraisal-chart-heading"
+      >
+        <h2 id="appraisal-chart-heading" className="sr-only">
+          Appraisal value over time
+        </h2>
         <AppraisalHistoryChart collateralId={record.id} />
-      </div>
+      </section>
 
       {/* Liquidation threshold — #697 */}
       <LiquidationThresholdBadge thresholdBps={record.liquidation_threshold_bps} />

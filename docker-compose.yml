@@ -129,6 +129,7 @@ services:
     image: grafana/loki:2.9.4@sha256:f379a20ce9dd815884ed6446aad8819b81a8ba4d36b548ca14be8cecbc6cbca0
     profiles:
       - monitoring
+      - observability
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
@@ -148,6 +149,7 @@ services:
     image: grafana/promtail:2.9.4@sha256:3667f68c8f33a4b7f09292b926a94a449322ab7fe4c7768ef32928598561f968
     profiles:
       - monitoring
+      - observability
     volumes:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -169,6 +171,7 @@ services:
     image: prom/prometheus:v2.51.2@sha256:954e9f81b2f571f73d6e5b56e8ef0f81e5c36eb42e00fc4c95a36cf10b83abcf
     profiles:
       - monitoring
+      - observability
     ports:
       - "9090:9090"
     command:
@@ -198,6 +201,7 @@ services:
     image: grafana/grafana:10.4.2@sha256:7d5faae481a4c6f436c99e98af11534f7fd5e8d3e35213552dd1dd02bc393d2e
     profiles:
       - monitoring
+      - observability
     ports:
       - "3200:3000"
     environment:
@@ -208,6 +212,7 @@ services:
       - ./observability/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
       - ./observability/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./grafana/dashboards/backend.json:/var/lib/grafana/dashboards/backend.json:ro
     depends_on:
       - loki
       - prometheus

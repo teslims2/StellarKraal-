@@ -39,9 +39,39 @@ const COLLATERAL_FIELD_IDS = {
 const LOAN_FIELD_IDS = {
   collateralId: 'loan-collateral-id',
   loanAmount: 'loan-amount',
+  loanAmountSlider: 'loan-amount-slider',
 };
 
 type FieldName = 'count' | 'appraisedValue' | 'collateralId' | 'loanAmount';
+
+// ── LTV / health factor model ────────────────────────────────────────────────
+// Maximum loan is 70% of collateral value (LTV cap). The slider's lower bound
+// is the minimum loan amount; its upper bound is the LTV-derived maximum.
+const MAX_LTV = 0.7;
+// Health factor = (collateral value × liquidation threshold) / debt.
+// A liquidation threshold of 80% means the position is liquidated once debt
+// exceeds 80% of collateral value.
+const LIQUIDATION_THRESHOLD = 0.8;
+// Risk zone boundaries expressed as LTV fractions of the max LTV.
+const SAFE_LTV = MAX_LTV * 0.5; // ≤ 35% LTV → safe
+const CAUTION_LTV = MAX_LTV * 0.85; // ≤ 59.5% LTV → caution, above → high risk
+
+function healthFactorFor(amount: number, collateralValue: number): number {
+  if (amount <= 0) return Infinity;
+  return (collateralValue * LIQUIDATION_THRESHOLD) / amount;
+}
+
+function riskZoneFor(ltv: number): 'safe' | 'caution' | 'high' {
+  if (ltv <= SAFE_LTV) return 'safe';
+  if (ltv <= CAUTION_LTV) return 'caution';
+  return 'high';
+}
+
+const RISK_ZONE_STYLES: Record<'safe' | 'caution' | 'high', { label: string; text: string; dot: string }> = {
+  safe: { label: 'Safe', text: 'text-emerald-600 dark:text-emerald-400', dot: 'bg-emerald-500' },
+  caution: { label: 'Caution', text: 'text-amber-600 dark:text-amber-400', dot: 'bg-amber-500' },
+  high: { label: 'High risk', text: 'text-red-600 dark:text-red-400', dot: 'bg-red-500' },
+};
 
 export default function LoanForm({ walletAddress, initialCollateralId }: Props) {
   const [step, setStep] = useState<'collateral' | 'loan'>(
@@ -77,6 +107,41 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
 
   const collateralHasErrors = Object.values(collateralErrors).some(Boolean);
   const loanHasErrors = Object.values(loanErrors).some(Boolean);
+
+  // ── Slider bounds derived from the collateral value ────────────────────────
+  const collateralValue = parseInt(appraisedValue, 10);
+  const hasCollateralValue = Number.isFinite(collateralValue) && collateralValue > 0;
+  const sliderMin = LIMITS.loanMin;
+  const sliderMax = hasCollateralValue
+    ? Math.max(sliderMin, Math.floor(collateralValue * MAX_LTV))
+    : sliderMin;
+
+  const parsedLoanAmount = parseInt(loanAmount, 10);
+  const sliderValue = Number.isFinite(parsedLoanAmount)
+    ? Math.min(Math.max(parsedLoanAmount, sliderMin), sliderMax)
+    : sliderMin;
+
+  const currentLtv = hasCollateralValue ? sliderValue / collateralValue : 0;
+  const currentHealthFactor = hasCollateralValue
+    ? healthFactorFor(sliderValue, collateralValue)
+    : Infinity;
+  const currentZone = riskZoneFor(currentLtv);
+  const zoneStyle = RISK_ZONE_STYLES[currentZone];
+
+  // Track overlay percentages for the risk zone markers.
+  const safePct = (SAFE_LTV / MAX_LTV) * 100;
+  const cautionPct = (CAUTION_LTV / MAX_LTV) * 100;
+
+  function handleSliderChange(raw: string) {
+    const next = parseInt(raw, 10);
+    if (!Number.isFinite(next)) {
+      setLoanAmount('');
+      return;
+    }
+    const clamped = Math.min(Math.max(next, sliderMin), sliderMax);
+    setLoanAmount(String(clamped));
+    markTouched('loanAmount');
+  }
 
   const allErrors: Record<FieldName, string | null> = { ...collateralErrors, ...loanErrors };
   const markTouched = (name: FieldName) => setTouched((t) => ({ ...t, [name]: true }));
@@ -371,6 +436,7 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
               value={loanAmount}
               inputMode="numeric"
               min={LIMITS.loanMin}
+              max={hasCollateralValue ? sliderMax : undefined}
               step={1}
               required
               onChange={(e) => setLoanAmount(e.target.value)}
@@ -380,6 +446,77 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
               helperText={`Whole number of stroops, minimum ${fmt(LIMITS.loanMin)}. Capped at 70% of your collateral value.`}
               disabled={loading}
             />
+            {/* Interactive loan amount slider with LTV / health factor preview — #1491 */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label
+                  htmlFor={LOAN_FIELD_IDS.loanAmountSlider}
+                  className="text-sm font-medium text-brown-700 dark:text-cream-50"
+                >
+                  Adjust Loan Amount
+                </label>
+                <span className={`text-xs font-semibold ${zoneStyle.text}`} data-testid="ltv-zone">
+                  <span className={`inline-block w-2 h-2 rounded-full mr-1 ${zoneStyle.dot}`} />
+                  {zoneStyle.label}
+                </span>
+              </div>
+              <div className="relative">
+                {/* Risk zone markers overlaid on the track */}
+                <div
+                  aria-hidden="true"
+                  className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-2 rounded-full overflow-hidden pointer-events-none"
+                >
+                  <div className="flex h-full w-full">
+                    <div className="h-full bg-emerald-400/60" style={{ width: `${safePct}%` }} />
+                    <div
+                      className="h-full bg-amber-400/60"
+                      style={{ width: `${cautionPct - safePct}%` }}
+                    />
+                    <div className="h-full bg-red-400/60" style={{ width: `${100 - cautionPct}%` }} />
+                  </div>
+                </div>
+                <input
+                  id={LOAN_FIELD_IDS.loanAmountSlider}
+                  type="range"
+                  min={sliderMin}
+                  max={sliderMax}
+                  step={1}
+                  value={sliderValue}
+                  onChange={(e) => handleSliderChange(e.target.value)}
+                  disabled={loading || !hasCollateralValue}
+                  aria-label="Loan amount slider"
+                  aria-valuemin={sliderMin}
+                  aria-valuemax={sliderMax}
+                  aria-valuenow={sliderValue}
+                  aria-valuetext={`${fmt(sliderValue)} stroops, ${(currentLtv * 100).toFixed(1)}% LTV`}
+                  className="relative w-full appearance-none bg-transparent cursor-pointer accent-brown-600 disabled:cursor-not-allowed disabled:opacity-50"
+                />
+              </div>
+              <div className="flex justify-between text-xs text-brown-500 dark:text-cream-200/60">
+                <span>{fmt(sliderMin)}</span>
+                <span>{hasCollateralValue ? fmt(sliderMax) : 'Enter collateral value'}</span>
+              </div>
+              <div
+                className="flex items-center justify-between text-xs rounded-lg px-3 py-2 bg-cream-100 dark:bg-[#2A1A0C]"
+                role="status"
+                aria-live="polite"
+              >
+                <span className="text-brown-600 dark:text-cream-200/80">
+                  LTV:{' '}
+                  <span className="font-semibold" data-testid="ltv-value">
+                    {hasCollateralValue ? `${(currentLtv * 100).toFixed(1)}%` : '—'}
+                  </span>
+                </span>
+                <span className="text-brown-600 dark:text-cream-200/80">
+                  Health Factor:{' '}
+                  <span className={`font-semibold ${zoneStyle.text}`} data-testid="health-factor">
+                    {hasCollateralValue && Number.isFinite(currentHealthFactor)
+                      ? currentHealthFactor.toFixed(2)
+                      : '—'}
+                  </span>
+                </span>
+              </div>
+            </div>
             <button
               type="submit"
               disabled={loading || isRateLimited || networkMismatch || !isOnline}
