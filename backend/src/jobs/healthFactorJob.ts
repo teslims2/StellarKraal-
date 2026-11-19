@@ -9,6 +9,8 @@ import {
   LIQUIDATION_THRESHOLD_BPS,
   SCALE,
 } from "../services/healthFactorService";
+import { getOracleService } from "../services/OracleService";
+import { HealthFactorService } from "../services/HealthFactorService";
 
 import {
   Contract,
@@ -149,6 +151,17 @@ export async function evaluateHealthFactors(options: {
   let updated = 0;
   const candidates: Array<LoanRecord & { health_factor: number }> = [];
 
+  // Fetch TWAP price once for the whole batch (cached, so the per-loan loop is cheap).
+  const oracleAsset = process.env["TWAP_ASSET"] || "default";
+  const oracleService = getOracleService();
+  const twapResult = await oracleService.getTwapPrice(oracleAsset).catch(() => null);
+
+  if (twapResult && !twapResult.isFresh) {
+    logger.warn("healthFactorJob: TWAP price is stale; health factors may be inaccurate", {
+      ageSeconds: twapResult.ageSeconds,
+    });
+  }
+
   for (const loan of loans) {
     let hf: number | null = null;
     try {
@@ -162,8 +175,19 @@ export async function evaluateHealthFactors(options: {
     }
 
     if (hf === null) {
-      // Fall back to the centralized service when the on-chain simulation is unavailable.
-      hf = healthFactorService.calculateHealthFactor(loan.id);
+      // Try TWAP-adjusted calculation when on-chain simulation is unavailable (ADR-007).
+      if (twapResult && loan.collateral_value != null && loan.amount > 0) {
+        const collateralCount = (loan as any).collateral_count ?? 1;
+        const twapCollateralValue = collateralCount * twapResult.twapPrice;
+        hf = HealthFactorService.computeHealthFactor({
+          collateralValue: twapCollateralValue > 0 ? twapCollateralValue : loan.collateral_value,
+          debtValue: loan.amount,
+          liquidationThreshold: LIQUIDATION_THRESHOLD_BPS / SCALE,
+        }) * SCALE;
+      } else {
+        // Last resort: fall back to the centralized service.
+        hf = await (healthFactorService.calculateHealthFactor(loan.id) as Promise<number | null>).catch(() => null);
+      }
     }
 
     if (hf === null) {

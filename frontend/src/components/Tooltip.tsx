@@ -177,6 +177,7 @@ export default function Tooltip({ hint, children }: TooltipProps) {
   return (
     <span
       ref={triggerRef}
+      aria-describedby={visible ? tooltipId : undefined}
       className="relative group inline-flex w-full"
       onMouseEnter={show}
       onMouseLeave={hide}

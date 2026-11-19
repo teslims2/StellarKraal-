@@ -26,6 +26,8 @@ import { buildContractTx, CONTRACT_ID, NETWORK_PASSPHRASE } from "./contractTx";
 import rpcClient from "../utils/rpcClient";
 import { loanCreatedTotal, loanRepaidTotal, loanLiquidatedTotal } from "../metrics";
 import { getCachedTwapPrice } from "../utils/twapCache";
+import { getOracleService } from "./OracleService";
+import { HealthFactorService } from "./HealthFactorService";
 
 const SCALE = 10_000;
 const SIMULATION_ACCOUNT = "GASPH4OCYOERATXIKLPNURXUP7ISAQU2KWFB5XLUJ3LQHKHOCN3CEGD6";
@@ -273,10 +275,35 @@ export async function liquidateLoan(input: LoanLiquidateInput) {
   }
 
   const collateral = getCollateral(loan.collateral_id);
-  const collateralValue = collateral?.appraised_value ?? 0;
+
+  // ── TWAP-based liquidation eligibility check (ADR-007) ───────────────────
+  // Use TWAP price to compute health factor, preventing flash-loan manipulation.
+  // Block liquidation when the oracle price is stale.
+  const oracleAsset = process.env["TWAP_ASSET"] || "default";
+  const oracleService = getOracleService();
+
+  const liquidationAllowed = await oracleService.isLiquidationAllowed(oracleAsset);
+  if (!liquidationAllowed) {
+    throw new LoanNotLiquidatableError(null);
+  }
+
+  const twapResult = await oracleService.getTwapPrice(oracleAsset);
+  const appraised = collateral?.appraised_value ?? 0;
+  const collateralCount = collateral?.quantity ?? 1;
+
+  // Collateral value: prefer TWAP-adjusted price when available, fall back to appraisal.
+  const twapCollateralValue =
+    twapResult && collateralCount > 0 ? collateralCount * twapResult.twapPrice : appraised;
+  const collateralValue = twapCollateralValue > 0 ? twapCollateralValue : appraised;
+
+  const LIQUIDATION_THRESHOLD = 8_000; // 80% in basis points × SCALE
   const hf =
     loan.amount > 0 && collateralValue > 0
-      ? ((collateralValue * 8_000) / (loan.amount * SCALE)) * SCALE
+      ? HealthFactorService.computeHealthFactor({
+          collateralValue,
+          debtValue: loan.amount,
+          liquidationThreshold: LIQUIDATION_THRESHOLD / SCALE,
+        }) * SCALE
       : null;
 
   if (hf === null || hf >= SCALE) {

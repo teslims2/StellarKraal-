@@ -62,3 +62,28 @@ variable "backup_kms_key_arn" {
   type        = string
   default     = ""
 }
+
+# ── Remote state backend (issue #1478) ───────────────────────────────────────
+# These variables document the naming convention used by the bootstrap module.
+# They are not consumed directly by the root module's resources; the backend
+# is configured via -backend-config flags at `terraform init` time.
+
+variable "state_bucket_name" {
+  description = <<-EOT
+    Globally unique name of the S3 bucket that stores Terraform state.
+    Provisioned by terraform/bootstrap before the first `terraform init`.
+    Example: "stellarkraal-terraform-state-prod"
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "lock_table_name" {
+  description = <<-EOT
+    Name of the DynamoDB table used for Terraform state locking.
+    Provisioned by terraform/bootstrap before the first `terraform init`.
+    Example: "stellarkraal-terraform-lock"
+  EOT
+  type        = string
+  default     = "stellarkraal-terraform-lock"
+}

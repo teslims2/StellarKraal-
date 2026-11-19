@@ -275,3 +275,56 @@ jobs:
         run: |
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+  openapi-freshness:
+    name: OpenAPI Spec Freshness
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      # Regenerate the spec from route annotations, then check whether the
+      # committed openapi.json differs from the freshly generated version.
+      # Contributors must run `npm run openapi:generate` before committing.
+      - name: Regenerate OpenAPI spec
+        run: |
+          if ! npm run openapi:generate; then
+            echo "::error::openapi:generate failed. Run 'npm run openapi:generate' in backend/ and commit the result."
+            exit 1
+          fi
+
+      - name: Check openapi.json is up to date
+        run: |
+          if [ -n "$(git status --porcelain openapi.json)" ]; then
+            echo "::error::openapi.json is stale. Run 'npm run openapi:generate' in backend/ and commit the updated file before pushing."
+            echo ""
+            echo "Diff:"
+            git diff openapi.json
+            exit 1
+          fi
+          echo "openapi.json is up to date."
+
+      # Verify that info.version in the spec matches the package.json version.
+      - name: Verify spec version matches package.json
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          SPEC_VERSION=$(node -p "require('./openapi.json').info.version")
+          if [ "$PKG_VERSION" != "$SPEC_VERSION" ]; then
+            echo "::error::openapi.json info.version ($SPEC_VERSION) does not match package.json version ($PKG_VERSION)."
+            echo "Run 'npm run openapi:sync' in backend/ and commit the updated openapi.json."
+            exit 1
+          fi
+          echo "openapi.json info.version ($SPEC_VERSION) matches package.json."
