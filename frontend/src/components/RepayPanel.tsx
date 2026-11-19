@@ -109,13 +109,31 @@ export default function RepayPanel({ walletAddress }: Props) {
 
   function handleTxTerminal(status: "confirmed" | "failed", errorCode?: string) {
     if (status === "confirmed") {
-      toast.success("Repayment submitted successfully!");
+      const repaidAmount = amount;
+      const repaidLoanId = loanId;
+      toast.success("Repayment submitted successfully!", {
+        description: repaidAmount
+          ? `${repaidAmount} stroops repaid on loan #${repaidLoanId}.`
+          : `Repayment confirmed for loan #${repaidLoanId}.`,
+        action: {
+          label: "View loan",
+          onClick: () => router.push(`/loans/${repaidLoanId}`),
+        },
+      });
       setLoanId("");
       setAmount("");
     } else if (status === "failed") {
       const msg = errorCode ? `Transaction failed: ${errorCode}` : 'Transaction failed';
       setPendingError(msg);
-      toast.error(msg);
+      toast.error(msg, {
+        description: "Your repayment was not completed. Please try again.",
+        action: {
+          label: "Retry",
+          onClick: () => {
+            void repay();
+          },
+        },
+      });
     }
     setPendingHash(null);
   }
