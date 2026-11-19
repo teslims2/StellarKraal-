@@ -4,21 +4,54 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState, useE
 
 export type ToastVariant = "success" | "error" | "warning" | "info";
 
+export type ToastAction = {
+  /** Optional link to the result of the action (e.g. transaction details). */
+  link?: { href: string; label?: string };
+  /** Optional retry callback for failed actions. */
+  retry?: { onRetry: () => void; label?: string };
+  /** Optional support URL shown on failures. */
+  support?: { href: string; label?: string };
+};
+
+export type ToastOptions = {
+  /** Short summary of the completed action (success toasts). */
+  summary?: string;
+  /** Human-readable error reason (failure toasts). */
+  reason?: string;
+  /** Optional action links/callbacks. */
+  action?: ToastAction;
+  /** Override the auto-dismiss timeout in milliseconds. */
+  timeout?: number;
+};
+
 export type Toast = {
   id: string;
   message: string;
   variant: ToastVariant;
+  summary?: string;
+  reason?: string;
+  action?: ToastAction;
+  timeout: number;
 };
 
 type ToastContextValue = {
-  toast: (message: string, variant?: ToastVariant) => void;
+  toast: (message: string, variant?: ToastVariant, options?: ToastOptions) => void;
+  success: (message: string, options?: ToastOptions) => void;
+  error: (message: string, options?: ToastOptions) => void;
+  warning: (message: string, options?: ToastOptions) => void;
+  info: (message: string, options?: ToastOptions) => void;
   dismiss: (id: string) => void;
 };
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
 const MAX_VISIBLE = 3;
-const DISMISS_MS = 5000;
+const DEFAULT_DISMISS_MS = 5000;
+const ERROR_DISMISS_MS = 8000;
+
+function defaultTimeoutFor(variant: ToastVariant) {
+  return variant === "error" ? ERROR_DISMISS_MS : DEFAULT_DISMISS_MS;
+}
 
 function nextId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -57,9 +90,17 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const toast = useCallback(
-    (message: string, variant: ToastVariant = "info") => {
+    (message: string, variant: ToastVariant = "info", options: ToastOptions = {}) => {
       const id = nextId();
-      const t: Toast = { id, message, variant };
+      const t: Toast = {
+        id,
+        message,
+        variant,
+        summary: options.summary,
+        reason: options.reason,
+        action: options.action,
+        timeout: options.timeout ?? defaultTimeoutFor(variant),
+      };
 
       setQueue((prev) => {
         const candidateVisible = Math.min(visibleToasts.length, MAX_VISIBLE);
@@ -82,7 +123,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         dismiss(id);
         // Make room for next queued toast.
         flushQueue();
-      }, DISMISS_MS);
+      }, t.timeout);
       timersRef.current.set(id, timerId);
 
       // Ensure queue is drained if there is space.
@@ -92,7 +133,27 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     [dismiss, flushQueue, visibleToasts.length]
   );
 
-  const value = useMemo(() => ({ toast, dismiss }), [toast, dismiss]);
+  const success = useCallback(
+    (message: string, options?: ToastOptions) => toast(message, "success", options),
+    [toast]
+  );
+  const error = useCallback(
+    (message: string, options?: ToastOptions) => toast(message, "error", options),
+    [toast]
+  );
+  const warning = useCallback(
+    (message: string, options?: ToastOptions) => toast(message, "warning", options),
+    [toast]
+  );
+  const info = useCallback(
+    (message: string, options?: ToastOptions) => toast(message, "info", options),
+    [toast]
+  );
+
+  const value = useMemo(
+    () => ({ toast, success, error, warning, info, dismiss }),
+    [toast, success, error, warning, info, dismiss]
+  );
 
   return (
     <ToastContext.Provider value={value}>
@@ -117,15 +178,13 @@ function ToastViewport({
     if (visibleToasts.length === 0) return;
     // Announce the most recently added toast.
     const last = visibleToasts[visibleToasts.length - 1];
-    setAnnouncement(`${last.variant}: ${last.message}`);
+    const detail = last.reason ?? last.summary;
+    setAnnouncement(`${last.variant}: ${last.message}${detail ? ` — ${detail}` : ""}`);
   }, [visibleToasts]);
 
   return (
     <>
-      <div
-        aria-live={visibleToasts.some((t) => t.variant === "error") ? "assertive" : "polite"}
-        className="sr-only"
-      >
+      <div aria-live="polite" role="status" className="sr-only">
         {announcement}
       </div>
 
@@ -169,10 +228,13 @@ function variantStyles(variant: ToastVariant) {
 
 function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
   const styles = variantStyles(toast.variant);
+  const isFailure = toast.variant === "error" || toast.variant === "warning";
+  const detail = isFailure ? toast.reason : toast.summary;
+  const action = toast.action;
 
   return (
     <div
-      role="status"
+      role={isFailure ? "alert" : "status"}
       aria-live="off"
       className={`border-l-4 ${styles.container} rounded-xl shadow-sm px-3 py-2 flex items-start gap-3`}
     >
@@ -180,6 +242,36 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
       <div className="flex-1 text-sm leading-5">
         <div className="font-semibold capitalize">{toast.variant}</div>
         <div>{toast.message}</div>
+        {detail ? <div className="mt-1 opacity-80">{detail}</div> : null}
+        {action && (action.link || action.retry || action.support) ? (
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            {action.link ? (
+              <a
+                href={action.link.href}
+                className="font-medium underline underline-offset-2 hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gold"
+              >
+                {action.link.label ?? "View details"}
+              </a>
+            ) : null}
+            {action.retry ? (
+              <button
+                type="button"
+                onClick={action.retry.onRetry}
+                className="font-medium underline underline-offset-2 hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gold"
+              >
+                {action.retry.label ?? "Retry"}
+              </button>
+            ) : null}
+            {action.support ? (
+              <a
+                href={action.support.href}
+                className="font-medium underline underline-offset-2 hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gold"
+              >
+                {action.support.label ?? "Contact support"}
+              </a>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       <button
         type="button"

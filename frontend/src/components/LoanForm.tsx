@@ -129,10 +129,20 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
       });
       const hash = await submitSignedXdr(signedTxXdr);
       setCollateralPendingHash(hash);
-      toast.success(`Collateral registered! Waiting for confirmation...`);
+      toast.success('Collateral registration submitted', {
+        description: `${animalType} × ${parseInt(count).toLocaleString()} · ${parseInt(appraisedValue).toLocaleString()} stroops. Waiting for confirmation…`,
+      });
     } catch (e) {
       const { variant, message } = classifyApiError(e);
-      toast[variant](message);
+      toast[variant](message, {
+        description: 'Your collateral was not registered. Please try again.',
+        action: {
+          label: 'Retry',
+          onClick: () => {
+            void registerCollateral();
+          },
+        },
+      });
     } finally {
       setLoading(false);
     }
@@ -140,14 +150,26 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
 
   function handleCollateralTxTerminal(status: TransactionStatus, errorCode?: string) {
     if (status === 'confirmed' && collateralPendingHash) {
-      toast.success(`Collateral confirmed!`);
+      toast.success('Collateral confirmed', {
+        description: `${animalType} × ${parseInt(count).toLocaleString()} · ${parseInt(appraisedValue).toLocaleString()} stroops. Continue to request your loan.`,
+      });
       setSubmitted(false);
       setTouched({});
       setStep('loan');
     } else if (status === 'failed') {
-      const msg = errorCode ? `Transaction failed: ${errorCode}` : 'Transaction failed';
+      const msg = errorCode
+        ? `Collateral registration failed: ${errorCode}`
+        : 'Collateral registration failed. Please try again.';
       setPendingError(msg);
-      toast.error(msg);
+      toast.error(msg, {
+        description: 'The transaction did not go through. No collateral was registered.',
+        action: {
+          label: 'Retry',
+          onClick: () => {
+            void registerCollateral();
+          },
+        },
+      });
     }
     setCollateralPendingHash(null);
   }
@@ -181,9 +203,20 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
       });
       const hash = await submitSignedXdr(signedTxXdr);
       setLoanPendingHash(hash);
+      toast.success('Loan request submitted', {
+        description: `${parseInt(loanAmount).toLocaleString()} stroops against collateral #${collateralId}. Waiting for confirmation…`,
+      });
     } catch (e) {
       const { variant, message } = classifyApiError(e);
-      toast[variant](message);
+      toast[variant](message, {
+        description: 'Your loan request was not submitted. Please try again.',
+        action: {
+          label: 'Retry',
+          onClick: () => {
+            void requestLoan();
+          },
+        },
+      });
     } finally {
       setLoading(false);
     }
@@ -192,10 +225,27 @@ export default function LoanForm({ walletAddress, initialCollateralId }: Props) 
   function handleLoanTxTerminal(status: TransactionStatus, errorCode?: string) {
     if (status === 'confirmed' && loanPendingHash) {
       setSuccessLoanId(loanPendingHash);
+      toast.success('Loan requested successfully', {
+        description: `${parseInt(loanAmount).toLocaleString()} stroops against collateral #${collateralId}.`,
+        action: {
+          label: 'View My Loans',
+          href: '/loans',
+        },
+      });
     } else if (status === 'failed') {
-      const msg = errorCode ? `Transaction failed: ${errorCode}` : 'Transaction failed';
+      const msg = errorCode
+        ? `Loan request failed: ${errorCode}`
+        : 'Loan request failed. Please try again.';
       setPendingError(msg);
-      toast.error(msg);
+      toast.error(msg, {
+        description: 'The transaction did not go through. No loan was requested.',
+        action: {
+          label: 'Retry',
+          onClick: () => {
+            void requestLoan();
+          },
+        },
+      });
     }
     setLoanPendingHash(null);
   }

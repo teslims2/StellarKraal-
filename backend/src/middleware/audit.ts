@@ -188,6 +188,23 @@ function resolveUserId(req: Request): string {
  * @param res - Express response object.
  * @param next - Next middleware callback.
  */
+/**
+ * Log an audit entry flagging a mutating request that arrived without an
+ * `Idempotency-Key` header. This does not fail the request; it only records
+ * the omission so retries can be correlated during incident review.
+ * @param req - Express request object for the request missing the header.
+ */
+export function logMissingIdempotencyKey(req: Request): void {
+  auditLogger.info("idempotency_key_missing", {
+    action: "idempotency_key_missing",
+    requestId: (req as any).requestId,
+    userId: resolveUserId(req),
+    method: req.method,
+    path: req.path,
+    ip: req.ip,
+  });
+}
+
 export function auditMiddleware(req: Request, res: Response, next: NextFunction): void {
   const start = process.hrtime.bigint();
 
