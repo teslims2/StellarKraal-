@@ -11,13 +11,27 @@ import HealthFactorAlert from '@/components/HealthFactorAlert';
 import RepaymentCountdown from '@/components/RepaymentCountdown';
 import { useHealthFactor } from '@/hooks/useHealthFactor';
 import PrintButton from '@/components/PrintButton';
-import PrintButton from '@/components/PrintButton';
 
 // Heavy component — loaded lazily to reduce initial JS bundle (#1070)
 const LoanRepaymentCalculator = dynamic(() => import('@/components/LoanRepaymentCalculator'), {
   ssr: false,
   loading: () => <DetailSkeleton />,
 });
+
+interface CollateralItem {
+  id: string;
+  asset: string;
+  amount: number;
+  value?: number;
+}
+
+interface TransactionRecord {
+  id: string;
+  type: string;
+  amount: number;
+  timestamp: string;
+  txHash?: string;
+}
 
 interface LoanRecord {
   id: string;
@@ -31,9 +45,13 @@ interface LoanRecord {
   createdAt: string;
   /** ISO 8601 deadline for repayment, used to drive the countdown timer (closes #1250). */
   repaymentDeadline?: string | null;
+  /** Itemised collateral positions backing the loan. */
+  collateral?: CollateralItem[];
+  /** Lifecycle transaction history (disbursement, repayments, liquidations…). */
+  transactions?: TransactionRecord[];
 }
 
-type ErrorType = '404' | 'network' | null;
+type ErrorType = '404' | '403' | 'network' | null;
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -192,6 +210,9 @@ export default function LoanDetailPage() {
       if (res.status === 404) {
         setError('404');
         setLoan(null);
+      } else if (res.status === 403) {
+        setError('403');
+        setLoan(null);
       } else if (!res.ok) {
         setError('network');
         setLoan(null);
@@ -229,6 +250,32 @@ export default function LoanDetailPage() {
           <h1 className="text-2xl font-bold text-brown mb-2">Loan Not Found</h1>
           <p className="text-brown/60 mb-6">
             No loan record exists for ID <code className="bg-brown/10 px-1 rounded">{id}</code>.
+          </p>
+          <Link
+            href="/loans"
+            className="inline-block bg-brown text-cream px-5 py-2 rounded-xl font-semibold hover:bg-brown/80 transition focus:outline-none focus:ring-2 focus:ring-brown focus:ring-offset-2"
+          >
+            ← Back to Loans
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
+  if (error === '403') {
+    return (
+      <main className="max-w-2xl mx-auto px-4 py-10">
+        <Link href="/loans" className="text-brown/60 hover:text-brown text-sm mb-6 inline-block">
+          ← Back to Loans
+        </Link>
+        <div className="rounded-2xl border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/20 p-6 text-center">
+          <p className="text-5xl mb-4" aria-hidden="true">
+            🔒
+          </p>
+          <h1 className="text-2xl font-bold text-brown mb-2">Access Denied</h1>
+          <p className="text-brown/60 mb-6">
+            You are not authorized to view loan{' '}
+            <code className="bg-brown/10 px-1 rounded">{id}</code>.
           </p>
           <Link
             href="/loans"
@@ -329,6 +376,10 @@ export default function LoanDetailPage() {
           <dd className="font-medium text-brown">{loan.collateral_id}</dd>
           <dt className="text-brown/50">Amount</dt>
           <dd className="font-medium text-brown">{(loan.amount / 1e7).toFixed(2)} XLM</dd>
+          <dt className="text-brown/50">Outstanding Balance</dt>
+          <dd className="font-medium text-brown">
+            {((loan.outstanding ?? loan.amount) / 1e7).toFixed(2)} XLM
+          </dd>
           <dt className="text-brown/50">Status</dt>
           <dd className="font-medium text-brown capitalize">{loan.status}</dd>
           <dt className="text-brown/50">Created</dt>
@@ -336,7 +387,80 @@ export default function LoanDetailPage() {
             {new Date(loan.createdAt).toLocaleDateString()}
           </dd>
         </dl>
+
+        {/* Conditional actions based on loan state */}
+        <div className="mt-6 flex flex-wrap gap-3">
+          {loan.status === 'active' && (
+            <Link
+              href={`/loans/${loan.id}/repay`}
+              className="inline-block bg-brown text-cream px-5 py-2 rounded-xl font-semibold hover:bg-brown/80 transition focus:outline-none focus:ring-2 focus:ring-brown focus:ring-offset-2"
+            >
+              Repay
+            </Link>
+          )}
+          {loan.collateral_id && (
+            <Link
+              href={`/collateral/${loan.collateral_id}`}
+              className="inline-block border border-brown/30 text-brown px-5 py-2 rounded-xl font-semibold hover:bg-brown/5 transition focus:outline-none focus:ring-2 focus:ring-brown focus:ring-offset-2"
+            >
+              View Collateral
+            </Link>
+          )}
+        </div>
       </div>
+
+      {/* Collateral list */}
+      <section aria-label="Collateral" className="mb-6" data-testid="collateral-section">
+        <div className="bg-white rounded-2xl p-6 shadow">
+          <h2 className="text-lg font-semibold text-brown mb-3">Collateral</h2>
+          {loan.collateral && loan.collateral.length > 0 ? (
+            <ul className="divide-y divide-brown/10">
+              {loan.collateral.map((item) => (
+                <li key={item.id} className="flex items-center justify-between py-2 text-sm">
+                  <span className="font-medium text-brown">{item.asset}</span>
+                  <span className="text-brown/60">
+                    {(item.amount / 1e7).toFixed(2)}
+                    {typeof item.value === 'number' && (
+                      <span className="ml-2 text-brown/40">
+                        ({(item.value / 1e7).toFixed(2)} XLM)
+                      </span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-brown/60">
+              Collateral ID{' '}
+              <code className="bg-brown/10 px-1 rounded">{loan.collateral_id}</code>
+            </p>
+          )}
+        </div>
+      </section>
+
+      {/* Transaction history */}
+      <section aria-label="Transaction history" className="mb-6" data-testid="transactions-section">
+        <div className="bg-white rounded-2xl p-6 shadow">
+          <h2 className="text-lg font-semibold text-brown mb-3">Transaction History</h2>
+          {loan.transactions && loan.transactions.length > 0 ? (
+            <ul className="divide-y divide-brown/10">
+              {loan.transactions.map((tx) => (
+                <li key={tx.id} className="flex items-center justify-between py-2 text-sm">
+                  <div>
+                    <span className="font-medium text-brown capitalize">{tx.type}</span>
+                    <span className="ml-2 text-brown/40">
+                      {new Date(tx.timestamp).toLocaleString()}
+                    </span>
+                  </div>
+                  <span className="text-brown/60">{(tx.amount / 1e7).toFixed(2)} XLM</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-brown/60">No transactions recorded yet.</p>
+          )}
+        </div>
+      </section>
 
       {loan.status === 'active' && (
         <>

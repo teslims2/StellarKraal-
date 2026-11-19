@@ -17,7 +17,7 @@ import { Request, Response, NextFunction, Router } from 'express';
 import { createHmac, randomBytes } from 'crypto';
 import { Keypair } from '@stellar/stellar-sdk';
 import { config } from '../config';
-import { getProfile, updateProfile } from '../db/store';
+import { getProfile, updateProfile, getUserRole } from '../db/store';
 import { insertRefreshToken, rotateRefreshToken, _clearRefreshTokens } from '../db/refreshTokens';
 import { hashRefreshToken, revokeToken, isTokenBlocked } from '../utils/tokenBlocklist';
 import { asyncHandler } from '../utils/asyncHandler';
@@ -320,6 +320,58 @@ authRouter.post('/refresh', asyncHandler(async (req: Request, res: Response) => 
 
   res.json({ accessToken, refreshToken: rawRefresh, expiresIn: ACCESS_TTL_MS / 1000 });
 }));
+
+// ── RBAC middleware ───────────────────────────────────────────────────────────
+
+/** Role values supported by the RBAC system. */
+export type Role = 'borrower' | 'admin';
+
+/** Error code returned when an authenticated user lacks the required role. */
+export const RBAC_FORBIDDEN_CODE = 'FORBIDDEN_ROLE';
+
+/**
+ * Guards a route so only users with the given role may proceed.
+ *
+ * The role is taken from the JWT claim when present, otherwise it is looked up
+ * from the user record via getUserRole(). Users without a matching role receive
+ * HTTP 403 with the RBAC error code.
+ *
+ * @param role - The role required to access the route (e.g. 'admin').
+ * @returns Express middleware enforcing the role requirement.
+ */
+export function requireRole(role: Role) {
+  return async function requireRoleMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
+    const user = (req as Request & { user?: { publicKey?: unknown; role?: string } }).user;
+    const publicKey = typeof user?.publicKey === 'string' ? user.publicKey : undefined;
+
+    if (!publicKey) {
+      res.status(401).json({ error: 'UNAUTHORIZED', message: 'Authentication required' });
+      return;
+    }
+
+    let actualRole: string | undefined = user?.role;
+    if (!actualRole) {
+      try {
+        actualRole = await getUserRole(publicKey);
+      } catch (err: unknown) {
+        logger.error('Failed to resolve user role', { publicKey, error: err instanceof Error ? err.message : 'unknown' });
+        res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Unable to resolve user role' });
+        return;
+      }
+    }
+
+    if (actualRole !== role) {
+      logger.warn('RBAC: access denied', { publicKey, requiredRole: role, actualRole: actualRole ?? 'none', path: req.path });
+      res.status(403).json({
+        error: RBAC_FORBIDDEN_CODE,
+        message: `This operation requires the '${role}' role`,
+      });
+      return;
+    }
+
+    next();
+  };
+}
 
 // ── JWT middleware ────────────────────────────────────────────────────────────
 

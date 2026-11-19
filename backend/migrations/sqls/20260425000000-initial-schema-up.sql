@@ -1,5 +1,5 @@
 -- Migration: 001-initial-schema (up)
--- Creates the initial StellarKraal schema: collaterals, loans, idempotency_keys
+-- Creates the initial StellarKraal schema: collaterals, loans, idempotency_keys, users
 
 CREATE TABLE IF NOT EXISTS collaterals (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,5 +34,13 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
   created_at  INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
 );
 
+CREATE TABLE IF NOT EXISTS users (
+  wallet_address TEXT    PRIMARY KEY,
+  role           TEXT    NOT NULL DEFAULT 'borrower' CHECK (role IN ('borrower', 'admin')),
+  created_at     INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+  updated_at     INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_loans_borrower ON loans(borrower);
 CREATE INDEX IF NOT EXISTS idx_collaterals_owner ON collaterals(owner);
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);

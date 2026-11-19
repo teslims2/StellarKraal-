@@ -209,4 +209,32 @@ export function auditMiddleware(req: Request, res: Response, next: NextFunction)
   next();
 }
 
+// ── Role change audit helper ──────────────────────────────────────────────────
+
+/**
+ * Write a structured audit entry for a user role change.
+ *
+ * Role assignment is a privileged operation, so every change must be recorded
+ * with the acting admin, the affected user, and the before/after roles.
+ * Wallet addresses are passed through `redact` so they are masked in production.
+ *
+ * @param actor - Identifier (Stellar public key) of the admin performing the change.
+ * @param target - Identifier (Stellar public key) of the user whose role changed.
+ * @param oldRole - The role held before the change (or null if previously unset).
+ * @param newRole - The role assigned by the change.
+ */
+export function logRoleChange(
+  actor: string,
+  target: string,
+  oldRole: string | null,
+  newRole: string
+): void {
+  auditLogger.info("role_change", {
+    actor: redact(actor),
+    target: redact(target),
+    oldRole,
+    newRole,
+  });
+}
+
 export { auditLogger, BASE_REDACTED_FIELDS };

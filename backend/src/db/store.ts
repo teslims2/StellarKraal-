@@ -836,9 +836,13 @@ export function listAuditEntries(filters?: {
 
 // ── User Profiles ─────────────────────────────────────────────────────────────
 
+export type UserRole = 'borrower' | 'admin';
+
 export interface UserProfile {
   walletAddress: string;
   displayName?: string;
+  /** Access-control role. Defaults to 'borrower' for new profiles. */
+  role: UserRole;
   notificationPreferences?: {
     loanApproved?: boolean;
     loanRepaid?: boolean;
@@ -885,12 +889,35 @@ export function updateProfile(
 
   const profile: UserProfile = {
     walletAddress,
+    role: 'borrower',
     createdAt: now,
     updatedAt: now,
     ...updates,
   };
   profileTable.set(walletAddress, profile);
   return profile;
+}
+
+/**
+ * Resolve the access-control role for a wallet address.
+ * Wallets without a stored profile are treated as borrowers.
+ * @param walletAddress - Stellar wallet address.
+ * @returns The user's {@link UserRole}.
+ */
+export function getUserRole(walletAddress: string): UserRole {
+  return profileTable.get(walletAddress)?.role ?? 'borrower';
+}
+
+/**
+ * Assign an access-control role to a wallet address, creating the profile if
+ * it does not yet exist. Callers are responsible for authorising the change
+ * and recording an audit entry.
+ * @param walletAddress - Stellar wallet address.
+ * @param role - Role to assign.
+ * @returns The created or updated {@link UserProfile}.
+ */
+export function setUserRole(walletAddress: string, role: UserRole): UserProfile {
+  return updateProfile(walletAddress, { role });
 }
 
 // ── Ledger Cursor (event listener replay) ────────────────────────────────────
