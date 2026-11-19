@@ -9,10 +9,12 @@ on:
       - "backend/src/index.ts"
       - "backend/openapi.json"
       - "backend/package.json"
+      - "backend/scripts/sync-openapi-version.js"
       - "docs/api-changelog.md"
   push:
     branches:
       - main
+      - develop
 
 jobs:
   validate-spec:
@@ -53,6 +55,57 @@ jobs:
             exit 1
           fi
           echo "info.version matches package.json ($PKG_VERSION)"
+
+  spec-drift-check:
+    name: Spec drift check (generate + diff)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci --legacy-peer-deps
+        working-directory: backend
+
+      - name: Regenerate OpenAPI spec from route annotations
+        run: npm run openapi:generate
+        working-directory: backend
+
+      - name: Sync spec version with package.json
+        run: node scripts/sync-openapi-version.js
+        working-directory: backend
+
+      - name: Fail if generated spec differs from committed spec
+        run: |
+          if ! git diff --exit-code backend/openapi.json; then
+            echo ""
+            echo "================================================================"
+            echo "ERROR: backend/openapi.json is out of sync with route annotations."
+            echo ""
+            echo "The committed spec does not match the spec generated from the"
+            echo "current code. This usually means an endpoint was added or"
+            echo "modified without regenerating the spec."
+            echo ""
+            echo "To fix this, run the following from the repository root:"
+            echo ""
+            echo "  cd backend"
+            echo "  npm run openapi:generate"
+            echo "  node scripts/sync-openapi-version.js"
+            echo "  git add openapi.json"
+            echo "  git commit -m \"chore: regenerate openapi.json\""
+            echo ""
+            echo "Then push your changes. See README.md for details."
+            echo "================================================================"
+            exit 1
+          fi
+          echo "openapi.json is in sync with route annotations."
 
   validate-spec-against-server:
     runs-on: ubuntu-latest

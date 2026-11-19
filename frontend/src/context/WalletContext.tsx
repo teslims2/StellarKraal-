@@ -20,6 +20,7 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useRouter } from "next/navigation";
@@ -28,6 +29,12 @@ import { useWallet, type WalletState } from "@/hooks/useWallet";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface WalletContextValue extends WalletState {
+  /** The connected wallet's public key, or null when disconnected. */
+  publicKey: string | null;
+  /** True when a wallet is connected. */
+  isConnected: boolean;
+  /** The active Stellar network (e.g. "PUBLIC", "TESTNET"), or null. */
+  network: string | null;
   /** True when a wallet address is present (user is connected). */
   isAuthenticated: boolean;
   /** True when the Freighter browser extension is available. */
@@ -52,6 +59,8 @@ export interface WalletContextValue extends WalletState {
 
 const STORAGE_KEY = "freighter_public_key";
 const FREIGHTER_URL = "https://www.freighter.app/";
+/** How often (ms) to poll Freighter for lock/disconnect/network changes. */
+const POLL_INTERVAL_MS = 2500;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -109,6 +118,61 @@ async function requestFreighterPublicKey(): Promise<string> {
   return publicKey;
 }
 
+/**
+ * Polls Freighter for its current connection state and network.
+ * Returns `{ connected, network }`. When the extension is missing or its API
+ * does not expose the probes, `connected` is reported as `true` so we never
+ * spuriously clear state.
+ */
+async function probeFreighter(): Promise<{
+  connected: boolean;
+  network: string | null;
+}> {
+  const w = window as unknown as {
+    freighter?: {
+      isConnected?: () => Promise<boolean>;
+      getNetworkDetails?: () => Promise<{ network?: string }>;
+      getNetwork?: () => Promise<string>;
+    };
+    freighterApi?: {
+      isConnected?: () => Promise<boolean>;
+      getNetworkDetails?: () => Promise<{ network?: string }>;
+      getNetwork?: () => Promise<string>;
+    };
+  };
+  const api = w.freighter ?? w.freighterApi;
+  if (!api) {
+    return { connected: false, network: null };
+  }
+
+  let connected = true;
+  if (typeof api.isConnected === "function") {
+    try {
+      connected = Boolean(await api.isConnected());
+    } catch {
+      connected = false;
+    }
+  }
+
+  let network: string | null = null;
+  if (typeof api.getNetworkDetails === "function") {
+    try {
+      const details = await api.getNetworkDetails();
+      network = details?.network ?? null;
+    } catch {
+      network = null;
+    }
+  } else if (typeof api.getNetwork === "function") {
+    try {
+      network = (await api.getNetwork()) ?? null;
+    } catch {
+      network = null;
+    }
+  }
+
+  return { connected, network };
+}
+
 // ─── Context ──────────────────────────────────────────────────────────────────
 
 const WalletContext = createContext<WalletContextValue | null>(null);
@@ -122,6 +186,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [isFreighterInstalled, setIsFreighterInstalled] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [network, setNetwork] = useState<string | null>(null);
+
+  // Keep a ref to the latest wallet so the polling effect does not need to
+  // re-subscribe on every render.
+  const walletRef = useRef(wallet);
+  walletRef.current = wallet;
 
   // Detect the extension on mount and restore any persisted public key.
   useEffect(() => {
@@ -134,6 +204,46 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * Poll Freighter while connected to detect:
+   *  - the extension being locked / disconnected (clears context state)
+   *  - a network change (updates `network`)
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!wallet.address) return;
+
+    let cancelled = false;
+
+    const tick = async () => {
+      const result = await probeFreighter();
+      if (cancelled) return;
+
+      if (!result.connected) {
+        // Freighter locked or disconnected — clear context state.
+        walletRef.current.disconnect();
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem(STORAGE_KEY);
+        }
+        setNetwork(null);
+        return;
+      }
+
+      setNetwork((prev) => (prev === result.network ? prev : result.network));
+    };
+
+    // Probe immediately, then on an interval.
+    void tick();
+    const id = window.setInterval(() => {
+      void tick();
+    }, POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [wallet.address]);
 
   /**
    * Connect flow:
@@ -183,15 +293,21 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(STORAGE_KEY);
     }
+    setNetwork(null);
     clearSessionCookie();
     router.push("/");
   }, [wallet, router]);
 
-  const isAuthenticated = Boolean(wallet.address);
+  const publicKey = wallet.address ?? null;
+  const isConnected = Boolean(publicKey);
+  const isAuthenticated = isConnected;
 
   const value = useMemo<WalletContextValue>(
     () => ({
       ...wallet,
+      publicKey,
+      isConnected,
+      network,
       isAuthenticated,
       isFreighterInstalled,
       isConnecting,
@@ -201,6 +317,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       wallet,
+      publicKey,
+      isConnected,
+      network,
       isAuthenticated,
       isFreighterInstalled,
       isConnecting,
@@ -231,4 +350,37 @@ export function useWalletContext(): WalletContextValue {
     throw new Error("useWalletContext must be used within a WalletProvider");
   }
   return ctx;
+}
+
+/**
+ * useWalletSelector — subscribe to a single slice of wallet state so the
+ * consuming component only re-renders when that slice changes.
+ *
+ * @example
+ *   const publicKey = useWalletSelector((w) => w.publicKey);
+ *   const network = useWalletSelector((w) => w.network);
+ */
+export function useWalletSelector<T>(
+  selector: (value: WalletContextValue) => T
+): T {
+  const ctx = useContext(WalletContext);
+  if (!ctx) {
+    throw new Error("useWalletSelector must be used within a WalletProvider");
+  }
+  return selector(ctx);
+}
+
+/** Convenience hook: only the connected public key. */
+export function usePublicKey(): string | null {
+  return useWalletSelector((w) => w.publicKey);
+}
+
+/** Convenience hook: only the connection status. */
+export function useIsConnected(): boolean {
+  return useWalletSelector((w) => w.isConnected);
+}
+
+/** Convenience hook: only the active network. */
+export function useNetwork(): string | null {
+  return useWalletSelector((w) => w.network);
 }

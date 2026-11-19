@@ -6,7 +6,10 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "openapi:generate": "ts-node scripts/generate-openapi.ts",
+    "openapi:sync": "node scripts/sync-openapi-version.js",
+    "openapi:check": "npm run openapi:generate && npm run openapi:sync && git diff --exit-code openapi.json || (echo \"ERROR: openapi.json is out of sync with route annotations. Run 'npm run openapi:generate && npm run openapi:sync' and commit the updated openapi.json.\" && exit 1)"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -22,7 +25,10 @@
   },
   "devDependencies": {
     "jest": "^29.7.0",
+    "js-yaml": "^4.1.0",
     "nodemon": "^3.1.0",
-    "supertest": "^7.0.0"
+    "supertest": "^7.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
   }
 }

@@ -24,6 +24,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
     "@chromatic-com/storybook": "^3.2.6",
+    "@next/bundle-analyzer": "^14.2.35",
     "@playwright/test": "^1.63.0",
     "@storybook/addon-a11y": "^8.4.7",
     "@storybook/addon-essentials": "^8.4.7",
@@ -55,6 +56,9 @@
     "tailwindcss": "^4.3.1",
     "ts-jest": "^29.4.12",
     "typescript": "^5.7.3"
+  },
+  "scripts": {
+    "analyze": "ANALYZE=true next build"
   },
   "jest": {
     "testEnvironment": "jsdom",

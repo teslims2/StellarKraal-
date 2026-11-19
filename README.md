@@ -359,6 +359,7 @@ npm run test:frontend
 
 | Document | Description |
 |---|---|
+| [User Guides — start here](docs/guides/README.md) | Landing page for the borrower journey, flow diagram, recommended reading order, and Getting Started checklist |
 | [Loan State Machine](docs/protocol/loan-state-machine.md) | All loan states, valid transitions, triggering events, and on-chain event mapping |
 | [API Quickstart](docs/guides/api-quickstart.md) | Base URL, auth flow, and common `/api/v1` operations |
 | [Freighter Wallet Integration](docs/guides/freighter-integration.md) | `freighterClient.ts` API, connect/sign/disconnect flow, mock API for testing, and network mismatch detection |
@@ -375,6 +376,18 @@ npm run test:frontend
 | [Docker Compose Services](docs/docker-compose-services.md) | Service dependencies, startup order, health checks, and volumes |
 | [Performance Tuning Guide](docs/performance-tuning.md) | Environment variables, DB tuning, caching, and profiling guidance |
 | [Threat Model](docs/security/threat-model.md) | Key attack surfaces (JWT forgery, oracle manipulation, re-entrancy, webhook replay), mitigations, and residual risk register |
+
+### Regenerating the OpenAPI spec
+
+`backend/openapi.json` is generated from the `@openapi` annotations on the route handlers. Whenever you add, change, or remove an endpoint (or edit its annotations), regenerate the spec **before committing**:
+
+```bash
+cd backend
+npm run openapi:generate   # regenerate openapi.json from route annotations
+npm run openapi:sync       # sync the spec version with package.json (if needed)
+```
+
+Commit the updated `backend/openapi.json` alongside your code changes. CI runs `npm run openapi:generate` and diffs the result against the committed spec — **the build fails if `backend/openapi.json` is out of sync** with the route annotations or the `package.json` version.
 
 ## User Guides
 
