@@ -168,7 +168,13 @@ stellar --version # 22.x or higher
 git clone https://github.com/<your-username>/StellarKraal-.git
 cd StellarKraal-
 cp .env.example .env
+# Edit .env and fill in required values, then validate before starting:
+./scripts/check-env.sh
 ```
+
+The validation script confirms all required variables are set, warns about
+insecure defaults, and checks that the core ports are free. Fix any reported
+issues before running `docker compose up`.
 
 ### Environment Variables
 
@@ -181,7 +187,7 @@ Create a `.env` file in the project root containing:
 | `CONTRACT_ID` | Deployed Soroban contract ID | `G...` |
 | `PORT` | Backend service port | `3001` |
 | `NEXT_PUBLIC_API_URL` | Frontend API base URL | `http://localhost:3001` |
-| `SHUTDOWN_TIMEOUT_MS` | Graceful shutdown drain timeout (ms, min 1000, default 10000). On SIGTERM/SIGINT the server stops accepting new connections and waits up to this duration for in-flight requests to complete before forcing exit. | `10000` |
+| `SHUTDOWN_TIMEOUT_MS` | Graceful shutdown drain timeout (ms, min 1000, default 10000). On SIGTERM/SIGINT the server stops accepting new connections and waits up to this duration for in-flight requests to complete before forcing exit. See [docs/backend/graceful-shutdown.md](docs/backend/graceful-shutdown.md) for the full shutdown sequence. | `10000` |
 
 ### Run with Docker Compose
 

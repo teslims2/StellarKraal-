@@ -405,6 +405,138 @@ curl, check [Stellar Status](https://status.stellar.org/), and consider a local 
 The frontend waits for the backend health check. Inspect `docker compose logs backend`, fix
 the underlying error, then `docker compose restart backend`. See item 10 above.
 
+---
+
+## Docker Compose
+
+### 24. Missing or incomplete `.env` file — services fail to start
+
+**Symptom:** One or more containers exit immediately after `docker compose up`, with errors
+like `Error: config validation failed` or `invalid input syntax for type integer`.
+
+**Cause:** One or more required environment variables are missing from `.env`, or `.env`
+was not copied from `.env.example` before starting.
+
+**Resolution:**
+1. Create `.env` if it does not exist:
+   ```bash
+   cp .env.example .env
+   ```
+2. Run the env pre-flight check to identify every missing variable:
+   ```bash
+   ./scripts/check-env.sh
+   ```
+3. Set the missing values in `.env`, then restart:
+   ```bash
+   docker compose up --build
+   ```
+
+---
+
+### 25. Port already in use — container fails to bind
+
+**Symptom:** A container exits with `Error starting userland proxy: listen tcp 0.0.0.0:<PORT>: bind: address already in use`, or `docker compose up` reports `Ports are not available`.
+
+**Cause:** Another process on the host already holds the port that a service is trying to bind.
+
+| Service | Default port |
+|---------|-------------|
+| `frontend` | 3000 |
+| `backend` | 3001 |
+| `postgres` | 5432 |
+| `redis` | 6379 |
+| `loki` | 3100 |
+| `prometheus` | 9090 |
+| `grafana` | 3200 |
+
+**Resolution:**
+
+Option A — stop the conflicting process:
+```bash
+# Find the process (Linux/macOS)
+lsof -i :<PORT>
+kill -9 <PID>
+```
+
+Option B — remap the host port in a `docker-compose.override.yml` (without editing the
+base file):
+```yaml
+# docker-compose.override.yml
+services:
+  backend:
+    ports:
+      - "3002:3001"   # maps host:3002 → container:3001
+```
+
+If you remap the backend port, also update `NEXT_PUBLIC_API_URL` in `.env` to match.
+
+---
+
+### 26. `contract-builder` exits without producing the WASM artifact
+
+**Symptom:** The `contract-builder` container stops and no `.wasm` file appears under
+`contracts/stellarkraal/target/wasm32-unknown-unknown/release/`.
+
+**Cause:** Rust or the `wasm32-unknown-unknown` target is missing, or the Cargo build
+failed due to a compile error.
+
+**Resolution:**
+1. Check the container logs for the actual error:
+   ```bash
+   docker compose logs contract-builder
+   ```
+2. If the target is missing, the container installs it automatically at first run. If the
+   image is cached from before the `rustup target add` step was added, force a rebuild:
+   ```bash
+   docker compose build --no-cache contract-builder
+   docker compose up contract-builder
+   ```
+3. If there is a compile error, reproduce it locally:
+   ```bash
+   cd contracts/stellarkraal
+   cargo build --target wasm32-unknown-unknown --release
+   ```
+
+---
+
+### 27. `docker compose down -v` deleted database data
+
+**Symptom:** After running `docker compose down -v`, the application starts with an empty
+database and all previously registered collateral and loans are gone.
+
+**Cause:** The `-v` flag removes all named volumes, including `postgres_data` which holds
+the PostgreSQL data directory.
+
+**Resolution:** There is no automatic recovery once the volume is deleted. To prevent this:
+- Use `docker compose down` (without `-v`) to stop containers while preserving data.
+- Use `docker compose down -v` only when you explicitly want a clean slate (e.g. in CI or
+  after a breaking schema change).
+- Take a database backup before destructive operations:
+  ```bash
+  docker compose exec postgres pg_dump -U postgres stellarkraal > backup.sql
+  ```
+
+---
+
+### 28. Monitoring stack (`loki`, `grafana`, `prometheus`) does not start
+
+**Symptom:** Running `docker compose up` starts the core stack but Grafana/Prometheus/Loki
+are not available.
+
+**Cause:** These services are grouped under the `monitoring` Docker Compose profile and are
+not started by default.
+
+**Resolution:**
+```bash
+# Start the full stack including observability
+docker compose --profile monitoring up --build
+```
+
+To verify which profiles are active:
+```bash
+docker compose config --profiles
+```
+
 ### Q5. Why does `npm install` fail with `ERESOLVE`?
 
 Usually a Node.js version mismatch or stale lockfile. Confirm Node.js 20+, then remove

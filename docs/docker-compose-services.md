@@ -114,6 +114,17 @@ via `env_file: .env`. Copy `.env.example` to create your local file:
 cp .env.example .env
 ```
 
+Before running `docker compose up`, validate that all required variables are
+set by running the env pre-flight script:
+
+```bash
+./scripts/check-env.sh
+```
+
+The script checks every required variable, warns about insecure defaults, and
+confirms that the core ports (3000, 3001, 5432, 6379) are free. Fix any
+reported issues before starting the stack.
+
 Key variables consumed by each service:
 
 | Variable | Service | Description |
