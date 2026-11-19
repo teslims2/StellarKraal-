@@ -21,6 +21,14 @@ import {
 
 const { Server } = SorobanRpc;
 
+// Optional: node-postgres is only required when a direct DB migration check is
+// performed. It is loaded lazily so the contract checks still work without it.
+type PgClient = {
+  connect: () => Promise<void>;
+  query: (sql: string) => Promise<{ rows: Record<string, unknown>[] }>;
+  end: () => Promise<void>;
+};
+
 // ── Config ────────────────────────────────────────────────────────────────────
 const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = process.env.CONTRACT_ID || "";
@@ -29,6 +37,15 @@ const NETWORK =
   process.env.NEXT_PUBLIC_NETWORK === "mainnet" ? "mainnet" : "testnet";
 const NETWORK_PASSPHRASE =
   NETWORK === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
+
+// Migration status sources (checked in order of preference):
+//   1. MIGRATION_STATUS_URL — HTTP endpoint exposing migration state
+//   2. DATABASE_URL         — direct query of the knex_migrations table
+const MIGRATION_STATUS_URL = process.env.MIGRATION_STATUS_URL || "";
+const DATABASE_URL = process.env.DATABASE_URL || "";
+const MIGRATIONS_TABLE = process.env.MIGRATIONS_TABLE || "knex_migrations";
+const MIGRATIONS_LOCK_TABLE =
+  process.env.MIGRATIONS_LOCK_TABLE || "knex_migrations_lock";
 
 // Fee-less read-only account (well-known testnet/mainnet horizon account)
 const READ_ACCOUNT =
@@ -141,6 +158,139 @@ async function checkHealthFactor(server: SorobanRpc.Server) {
   }
 }
 
+async function checkMigrationStatus() {
+  console.log("\n[6] Database migration status");
+
+  if (!MIGRATION_STATUS_URL && !DATABASE_URL) {
+    fail(
+      "Migration status available",
+      "set MIGRATION_STATUS_URL or DATABASE_URL to verify schema state"
+    );
+    return;
+  }
+
+  try {
+    const status = MIGRATION_STATUS_URL
+      ? await fetchMigrationStatusFromUrl()
+      : await fetchMigrationStatusFromDb();
+
+    if (status.pending.length > 0) {
+      fail(
+        "No pending migrations",
+        `${status.pending.length} pending: ${status.pending.join(", ")}`
+      );
+    } else {
+      ok("No pending migrations");
+    }
+
+    if (status.locked) {
+      fail("Migrations not locked", "a migration is currently running or was interrupted");
+    } else {
+      ok("Migrations not locked");
+    }
+
+    if (status.applied.length > 0) {
+      const latest = status.applied[status.applied.length - 1];
+      ok(
+        `${status.applied.length} migration(s) applied; latest = ${latest.name} (batch ${latest.batch})`
+      );
+    } else {
+      fail("Migration history present", "no applied migrations recorded");
+    }
+  } catch (e) {
+    fail("Migration status check", (e as Error).message);
+  }
+}
+
+type AppliedMigration = { name: string; batch: number };
+
+async function fetchMigrationStatusFromUrl(): Promise<{
+  applied: AppliedMigration[];
+  pending: string[];
+  locked: boolean;
+}> {
+  const res = await fetch(MIGRATION_STATUS_URL, {
+    headers: process.env.MIGRATION_STATUS_TOKEN
+      ? { Authorization: `Bearer ${process.env.MIGRATION_STATUS_TOKEN}` }
+      : undefined,
+  });
+  if (!res.ok) {
+    throw new Error(
+      `GET ${MIGRATION_STATUS_URL} returned ${res.status} ${res.statusText}`
+    );
+  }
+  const body = (await res.json()) as {
+    applied?: AppliedMigration[];
+    pending?: string[];
+    locked?: boolean;
+  };
+  return {
+    applied: body.applied ?? [],
+    pending: body.pending ?? [],
+    locked: body.locked ?? false,
+  };
+}
+
+async function fetchMigrationStatusFromDb(): Promise<{
+  applied: AppliedMigration[];
+  pending: string[];
+  locked: boolean;
+}> {
+  // Lazy require so the script does not hard-depend on pg being installed.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { Client } = require("pg") as {
+    Client: new (config: { connectionString: string }) => PgClient;
+  };
+  const client = new Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    const appliedRes = await client.query(
+      `SELECT name, batch FROM ${MIGRATIONS_TABLE} ORDER BY id ASC`
+    );
+    const applied: AppliedMigration[] = appliedRes.rows.map((row) => ({
+      name: String(row.name),
+      batch: Number(row.batch),
+    }));
+
+    // Pending migrations are files on disk that have no row in the table.
+    // The DB alone cannot know about them, so compare against the local
+    // migrations directory when it exists.
+    const pending = await findPendingMigrationFiles(
+      applied.map((m) => m.name)
+    );
+
+    let locked = false;
+    try {
+      const lockRes = await client.query(
+        `SELECT is_locked FROM ${MIGRATIONS_LOCK_TABLE} LIMIT 1`
+      );
+      locked = Boolean(lockRes.rows[0]?.is_locked);
+    } catch {
+      // Lock table may not exist yet on a fresh database — treat as unlocked.
+      locked = false;
+    }
+
+    return { applied, pending, locked };
+  } finally {
+    await client.end();
+  }
+}
+
+async function findPendingMigrationFiles(applied: string[]): Promise<string[]> {
+  const fs = await import("fs");
+  const path = await import("path");
+  const dir = process.env.MIGRATIONS_DIR || path.join(process.cwd(), "migrations");
+  if (!fs.existsSync(dir)) {
+    return [];
+  }
+  const appliedSet = new Set(applied);
+  return fs
+    .readdirSync(dir)
+    .filter((f) => /\.(js|ts)$/.test(f))
+    .filter((f) => !appliedSet.has(f.replace(/\.(js|ts)$/, "")))
+    .sort();
+}
+
 async function checkInitializedState(server: SorobanRpc.Server) {
   console.log("\n[5] Initialized state");
   try {
@@ -174,6 +324,7 @@ async function main() {
   await checkContractResponds(server);
   await checkHealthFactor(server);
   await checkInitializedState(server);
+  await checkMigrationStatus();
 
   console.log("\n═══════════════════════════════════════════════");
   console.log(`  Results: ${passed} passed, ${failed} failed`);

@@ -141,10 +141,10 @@ Migrations use `database.json` for configuration:
 - Safe because development data is disposable
 
 ### Production Mode
-- Migrations require **manual execution**
-- Run `npm run migrate:prod` before deploying new code
-- Provides control over when schema changes occur
-- Prevents automatic changes to production data
+- Migrations run **automatically** as part of the deployment pipeline
+- A pre-deploy one-off ECS task applies pending migrations before the new service version goes live
+- The deployment aborts if migrations fail, so the running service is never updated against an out-of-date schema
+- See [Automated Deployment Migrations](#automated-deployment-migrations) below
 
 ## CI Integration
 
@@ -228,16 +228,61 @@ npm run migrate:reset
 3. Fix data issues before retrying
 4. Consider writing a new migration to fix the issue
 
-### Production Migration Checklist
+## Automated Deployment Migrations
 
-- [ ] Test migration in development
-- [ ] Test rollback in development
-- [ ] Backup production database
-- [ ] Schedule maintenance window if needed
-- [ ] Run `npm run migrate:prod`
-- [ ] Verify migration status
-- [ ] Deploy new application code
-- [ ] Monitor for errors
+Database migrations are executed automatically by the deployment pipeline. There is no manual `npm run migrate:prod` step in staging or production.
+
+### Pipeline Flow
+
+1. **Build & push image** — the new application image is built and pushed to the registry.
+2. **Pre-deploy migration task** — the pipeline launches a **one-off ECS task** using the new image (same task definition family, overridden command `npm run migrate:prod`). This task runs to completion before any service update begins.
+3. **Migration gate** — the pipeline waits for the migration task to exit:
+   - **Exit code 0** → the pipeline proceeds to update the ECS service to the new image.
+   - **Non-zero exit code** → the pipeline **fails immediately** and the ECS service is **not updated**. The previously running version stays live against the unchanged schema.
+4. **Service update** — only after migrations succeed is the ECS service updated (rolling deployment) to the new image.
+5. **Verification** — post-deploy health checks confirm the new version is serving traffic.
+
+### Migration History in Deployment Logs
+
+- Migration history is tracked in the database by db-migrate in the `migrations` table (one row per applied migration, with name and run timestamp).
+- The pre-deploy task streams its output to the deployment logs, including:
+  - `npm run migrate:status` output (applied vs. pending migrations) before and after the run
+  - Each migration applied during the run, in order
+  - The final exit status of the migration task
+- The pipeline also prints the contents of the `migrations` table after the run so the applied history is visible directly in the deployment log.
+
+### Rollback Procedure
+
+If a deployment must be reverted, revert the migration **before** re-deploying the previous image:
+
+1. **Identify the last applied migration**
+   ```bash
+   npm run migrate:status
+   ```
+   Note the most recent migration listed as applied.
+
+2. **Revert the last migration**
+   ```bash
+   npm run migrate:down
+   ```
+   This runs the migration's `down` SQL. Equivalently, run db-migrate directly against production:
+   ```bash
+   npx db-migrate down --config database.json -e production
+   ```
+   Run this as a one-off ECS task using the **currently deployed** image (the one whose schema expectations match the migration being reverted).
+
+3. **Verify the rollback**
+   ```bash
+   npm run migrate:status
+   ```
+   Confirm the reverted migration is no longer listed as applied and the remaining history matches the target version. Check the `migrations` table in the database to confirm the row was removed.
+
+4. **Re-deploy the previous image**
+   Update the ECS service to the previous image tag (or re-run the pipeline for the previous commit). Because the schema has already been reverted, the previous version starts against a matching schema.
+
+5. **Monitor** application logs and health checks after the rollback deployment.
+
+⚠️ **Warning:** Rollbacks are destructive. Back up the database before reverting a migration in production, and prefer writing a new forward migration when data must be preserved.
 
 ## CLI Reference
 
@@ -246,7 +291,7 @@ npm run migrate:reset
 | `npm run migrate:status` | Show migration status | Current |
 | `npm run migrate:dev` | Run pending migrations | Development |
 | `npm run migrate:prod` | Run pending migrations | Production |
-| `npm run migrate:down` | Rollback last migration | Development |
+| `npm run migrate:down` | Rollback last migration | Development / emergency production rollback |
 | `npm run migrate:create <name>` | Create new migration | Any |
 | `npm run migrate:reset` | Reset database | Development |
 

@@ -89,7 +89,8 @@ const envSchema = z.object({
     .default('10000')
     .refine((v) => parseInt(v, 10) >= 1000, {
       message: 'SHUTDOWN_TIMEOUT_MS must be at least 1000 ms',
-    }),
+    })
+    .transform((v) => parseInt(v, 10)),
   // Audit log directory path
   AUDIT_LOG_DIR: z.string().optional(),
   // Comma-separated list of additional field names to redact from audit log bodies.
@@ -169,3 +170,6 @@ if (parsed.data.NODE_ENV === 'production') {
 }
 
 export const config = parsed.data;
+
+/** Graceful shutdown drain timeout in milliseconds (parsed from SHUTDOWN_TIMEOUT_MS). */
+export const SHUTDOWN_TIMEOUT_MS: number = config.SHUTDOWN_TIMEOUT_MS;

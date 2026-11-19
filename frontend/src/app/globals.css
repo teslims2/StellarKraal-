@@ -768,6 +768,48 @@ video {
   background-size: 20px 20px;
 }
 
+/* ── Micro-animations (#1470) ────────────────────────────────────────────────
+   Purposeful motion feedback for interactions:
+   • `.animate-fade-slide-in` — list items fade + slide in on load / addition.
+   • `.panel-transition` — smooth height/opacity transition for panels and
+     accordions (pair with a height change, e.g. via grid-template-rows or
+     max-height, to animate expansion).
+   All motion is disabled under prefers-reduced-motion (see block below).
+*/
+@keyframes fade-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-slide-in {
+  animation: fade-slide-in 200ms ease-out both;
+}
+
+.panel-transition {
+  overflow: hidden;
+  transition:
+    height 200ms ease-out,
+    max-height 200ms ease-out,
+    opacity 200ms ease-out;
+}
+
+/* Reduced-motion: disable all micro-animations and transitions globally */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-slide-in {
+    animation: none;
+  }
+
+  .panel-transition {
+    transition: none;
+  }
+}
+
 /* ── Print / Save as PDF layout (#1247) ──────────────────────────────────────
    Optimised layout for the loan detail page when the browser's print
    dialog is triggered (including "Save as PDF").
