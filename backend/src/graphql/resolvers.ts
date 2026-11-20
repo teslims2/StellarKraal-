@@ -1,12 +1,14 @@
 /**
- * GraphQL resolvers for StellarKraal API v2 (proof-of-concept).
+ * GraphQL resolvers for StellarKraal API v2 (ADR-011).
  *
  * All resolvers delegate to the existing service and store layer so that
- * business logic is not duplicated between REST and GraphQL surfaces
- * (see ADR-009 and docs/adr/ADR-009-api-v2-design.md).
+ * business logic is not duplicated between REST and GraphQL surfaces.
  *
- * Query  { loans, loan, collateral, collateralById }
+ * Query  { loans, loan, collateral, collateralById, user, me }
  * Mutation { requestLoan, repayLoan }
+ *
+ * DataLoader instances are created per-request (inside GraphQLContext) to
+ * batch and cache all foreign-key lookups, preventing N+1 queries (#1537).
  */
 import { GraphQLScalarType, Kind } from 'graphql';
 import {
@@ -14,6 +16,9 @@ import {
   listCollateral,
   getLoan,
   getCollateral,
+  getProfile,
+  type LoanRecord,
+  type UserProfile,
 } from '../db/store';
 import {
   requestLoan,
@@ -22,6 +27,83 @@ import {
   loanRepaySchema,
 } from '../services/loanService';
 import { GraphQLError } from 'graphql';
+
+// ---------------------------------------------------------------------------
+// DataLoader factory
+// ---------------------------------------------------------------------------
+// DataLoader is an optional peer-dependency. When unavailable (e.g. in older
+// test environments that haven't installed it), we fall back to plain single
+// lookups so the resolver file remains importable everywhere.
+
+let DataLoader: (new <K, V>(batchFn: (keys: readonly K[]) => Promise<(V | Error)[]>) => {
+  load: (key: K) => Promise<V | null>;
+  loadMany: (keys: readonly K[]) => Promise<(V | Error | null)[]>;
+}) | null = null;
+
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  DataLoader = require('dataloader');
+} catch {
+  // dataloader not installed — resolvers fall back to direct store calls
+}
+
+/**
+ * Per-request DataLoader instances.  One object is created in the GraphQL
+ * context factory and shared across all resolvers within a single request so
+ * that batching works correctly.
+ */
+export interface RequestLoaders {
+  /** Batch-load user profiles by wallet address. */
+  userByAddress: ReturnType<typeof createUserLoader>;
+  /** Batch-load all loans for a list of borrower addresses. */
+  loansByBorrower: ReturnType<typeof createLoansByBorrowerLoader>;
+}
+
+function createUserLoader() {
+  if (DataLoader) {
+    return new DataLoader<string, UserProfile | null>(async (addresses) => {
+      return addresses.map((addr) => getProfile(addr) ?? null);
+    });
+  }
+  // Fallback: mimic DataLoader interface without actual batching
+  return {
+    load: async (addr: string) => getProfile(addr) ?? null,
+    loadMany: async (addrs: readonly string[]) =>
+      addrs.map((a) => getProfile(a) ?? null),
+  };
+}
+
+function createLoansByBorrowerLoader() {
+  if (DataLoader) {
+    return new DataLoader<string, LoanRecord[]>(async (borrowers) => {
+      // Fetch all active loans once and partition by borrower address.
+      const result = listLoans({ limit: 10_000, page: 1 });
+      const byBorrower = new Map<string, LoanRecord[]>();
+      for (const loan of result.data) {
+        const bucket = byBorrower.get(loan.borrower) ?? [];
+        bucket.push(loan);
+        byBorrower.set(loan.borrower, bucket);
+      }
+      return borrowers.map((b) => byBorrower.get(b) ?? []);
+    });
+  }
+  return {
+    load: async (borrower: string) =>
+      listLoans({ borrowerAddress: borrower, limit: 100, page: 1 }).data,
+    loadMany: async (borrowers: readonly string[]) =>
+      borrowers.map((b) =>
+        listLoans({ borrowerAddress: b, limit: 100, page: 1 }).data
+      ),
+  };
+}
+
+/** Create a fresh set of DataLoader instances for one request. */
+export function createLoaders(): RequestLoaders {
+  return {
+    userByAddress: createUserLoader(),
+    loansByBorrower: createLoansByBorrowerLoader(),
+  };
+}
 
 /** Custom DateTime scalar — passes through ISO strings unchanged. */
 const DateTimeScalar = new GraphQLScalarType({
@@ -157,6 +239,74 @@ export const resolvers = {
       const record = getCollateral(args.id);
       if (!record) return null;
       return record;
+    },
+
+    /**
+     * Fetch a user profile by Stellar wallet address.
+     * Uses the per-request DataLoader to avoid N+1 when called from nested resolvers.
+     */
+    async user(
+      _parent: unknown,
+      args: { walletAddress: string },
+      context: { loaders?: RequestLoaders }
+    ) {
+      if (context.loaders) {
+        return context.loaders.userByAddress.load(args.walletAddress);
+      }
+      return getProfile(args.walletAddress) ?? null;
+    },
+
+    /**
+     * Return the authenticated user's own profile.
+     * Requires a valid JWT (userPublicKey is set by the auth middleware).
+     * Returns null when called without authentication.
+     */
+    async me(
+      _parent: unknown,
+      _args: Record<string, never>,
+      context: { userPublicKey?: string; loaders?: RequestLoaders }
+    ) {
+      if (!context.userPublicKey) return null;
+      if (context.loaders) {
+        return context.loaders.userByAddress.load(context.userPublicKey);
+      }
+      return getProfile(context.userPublicKey) ?? null;
+    },
+  },
+
+  // ── Field-level resolvers ──────────────────────────────────────────────────
+
+  /**
+   * Loan.borrowerProfile — resolved via DataLoader so a list of loans does not
+   * trigger one profile lookup per row.
+   */
+  Loan: {
+    async borrowerProfile(
+      parent: { borrower: string },
+      _args: Record<string, never>,
+      context: { loaders?: RequestLoaders }
+    ) {
+      if (context.loaders) {
+        return context.loaders.userByAddress.load(parent.borrower);
+      }
+      return getProfile(parent.borrower) ?? null;
+    },
+  },
+
+  /**
+   * User.loans — resolved via DataLoader so fetching multiple users does not
+   * trigger one list query per user.
+   */
+  User: {
+    async loans(
+      parent: { walletAddress: string },
+      _args: Record<string, never>,
+      context: { loaders?: RequestLoaders }
+    ) {
+      if (context.loaders) {
+        return context.loaders.loansByBorrower.load(parent.walletAddress);
+      }
+      return listLoans({ borrowerAddress: parent.walletAddress, limit: 100, page: 1 }).data;
     },
   },
 

@@ -1,9 +1,13 @@
 /**
- * Deep health check route
- * GET /api/v1/health/deep
+ * Health check routes (closes #1536).
  *
- * Verifies DB connectivity, Soroban RPC reachability, and available disk space.
- * Excluded from JWT auth and rate-limit middleware — registered before those are applied.
+ * GET /api/v1/health      — structured dependency health check
+ * GET /api/v1/health/live — liveness probe (process is up)
+ * GET /api/v1/health/ready — readiness probe (DB + RPC reachable)
+ * GET /api/v1/health/deep  — deep check including disk space
+ *
+ * All dependency checks use a 2-second timeout so the response never blocks
+ * container restarts. Returns HTTP 503 when any critical dependency is unreachable.
  */
 
 import { Router, Request, Response } from "express";
@@ -14,8 +18,17 @@ import logger from "../utils/logger";
 /** Minimum free disk bytes before reporting degraded (500 MB) */
 const DISK_MIN_FREE_BYTES = 500 * 1024 * 1024;
 
-/** Per-component timeout for the aggregated /health check (ms) */
-const COMPONENT_TIMEOUT_MS = 3000;
+/**
+ * Per-component timeout for the aggregated /health check (ms).
+ * Set to 2 s to satisfy the acceptance criterion that checks complete within
+ * 2 seconds to avoid blocking container restarts (issue #1536).
+ */
+const COMPONENT_TIMEOUT_MS = 2000;
+
+const APP_VERSION = process.env.npm_package_version ?? '0.0.0';
+
+/** Epoch at which this process started, used to compute uptime. */
+const startTime = Date.now();
 
 type ComponentStatus = "ok" | "degraded";
 
@@ -23,17 +36,6 @@ interface DeepHealthResponse {
   db: ComponentStatus;
   rpc: ComponentStatus;
   disk: ComponentStatus;
-}
-
-type AggregatedStatus = "healthy" | "degraded" | "unhealthy";
-
-interface HealthResponse {
-  status: AggregatedStatus;
-  components: {
-    db: ComponentStatus;
-    rpc: ComponentStatus;
-    eventListener: ComponentStatus;
-  };
 }
 
 /**
@@ -122,39 +124,43 @@ async function checkEventListenerHealth(): Promise<boolean> {
 const healthRouter = Router();
 
 /**
- * GET /health
+ * GET /api/v1/health
  *
- * Aggregated health check for Docker / ECS health probes. Reports the status
- * of all critical dependencies with a per-component timeout.
+ * Structured dependency health check for Docker / ECS / Kubernetes probes.
+ * Reports status for each critical dependency with a 2-second per-component
+ * timeout. Returns 503 when any critical dependency (database or Soroban RPC)
+ * is unreachable (closes #1536).
  *
- * @returns 200 `{ status: "healthy", components: { db, rpc, eventListener } }`
- * @returns 503 `{ status: "degraded" | "unhealthy", components }`
+ * @returns 200 `{ status: "healthy", database, sorobanRpc, uptime, version, timestamp }`
+ * @returns 503 `{ status: "degraded" | "unhealthy", database, sorobanRpc, uptime, version, timestamp }`
  */
 healthRouter.get("/", async (_req: Request, res: Response) => {
-  const [dbHealthy, rpcHealthy, listenerHealthy] = await Promise.all([
+  const [dbHealthy, rpcHealthy] = await Promise.all([
     withTimeout(checkDbHealth),
     withTimeout(() => rpcClient.getHealth().then(() => true).catch(() => false)),
-    withTimeout(checkEventListenerHealth),
   ]);
 
-  const components = {
-    db: (dbHealthy ? "ok" : "degraded") as ComponentStatus,
-    rpc: (rpcHealthy ? "ok" : "degraded") as ComponentStatus,
-    eventListener: (listenerHealthy ? "ok" : "degraded") as ComponentStatus,
-  };
+  const database: ComponentStatus = dbHealthy ? "ok" : "degraded";
+  const sorobanRpc: ComponentStatus = rpcHealthy ? "ok" : "degraded";
 
-  const healthyCount = [dbHealthy, rpcHealthy, listenerHealthy].filter(Boolean).length;
+  type AggregatedStatus = "healthy" | "degraded" | "unhealthy";
   let status: AggregatedStatus;
-  if (healthyCount === 3) {
+  if (dbHealthy && rpcHealthy) {
     status = "healthy";
-  } else if (healthyCount === 0) {
+  } else if (!dbHealthy && !rpcHealthy) {
     status = "unhealthy";
   } else {
     status = "degraded";
   }
 
-  const body: HealthResponse = { status, components };
-  res.status(status === "healthy" ? 200 : 503).json(body);
+  res.status(status === "healthy" ? 200 : 503).json({
+    status,
+    database,
+    sorobanRpc,
+    uptime: Math.floor((Date.now() - startTime) / 1000),
+    version: APP_VERSION,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 /**

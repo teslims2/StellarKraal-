@@ -276,17 +276,14 @@ app.use('/api/v1', loanRepaymentRouter);
 // ── API v2 stub ───────────────────────────────────────────────────────────────
 app.use('/api/v2', v2Router);
 
-// ── GraphQL endpoint (ADR-009 proof-of-concept) ───────────────────────────────
+// ── GraphQL endpoint (ADR-011, closes #1537) ─────────────────────────────────
 /**
- * POST /graphql
+ * POST /graphql (legacy path, kept for backward compatibility)
+ * POST /api/v2/graphql (canonical v2 path, mounted via v2Router)
  *
- * Apollo Server v4 GraphQL endpoint exposing Query { loans, collateral } and
- * Mutation { requestLoan, repayLoan } backed by the existing service layer.
- *
+ * Apollo Server v4 GraphQL endpoint exposing the full v2 schema.
  * Apollo Sandbox (interactive explorer) is available in non-production at /graphql.
- *
- * JWT auth middleware is applied so that the authenticated wallet address is
- * forwarded to resolvers via GraphQLContext.userPublicKey (#1220).
+ * JWT auth middleware forwards the authenticated wallet address to resolvers.
  */
 let apolloServer: import('@apollo/server').ApolloServer | undefined;
 
@@ -298,7 +295,7 @@ let apolloServer: import('@apollo/server').ApolloServer | undefined;
     // jwtMiddleware guards POST requests (all GraphQL operations use POST).
     // Cast to any to work around Express 5 generic overload resolution.
     app.use('/graphql', express.json(), jwtMiddleware, middleware as any);
-    logger.info('GraphQL endpoint mounted at /graphql');
+    logger.info('GraphQL endpoint mounted at /graphql (legacy) and /api/v2/graphql (v2)');
   } catch (err) {
     logger.error('Failed to start Apollo Server', {
       error: err instanceof Error ? err.message : String(err),

@@ -151,8 +151,11 @@ export default function DashboardClient() {
     setActiveTab(TABS[nextIndex].id);
   };
 
-  // Fetch loans to check for at-risk health factors
-  const { loans, isLoading: isLoansLoading } = useLoans({ refreshInterval: 60_000 });
+  // Fetch loans with real-time polling. The interval defaults to 15 s
+  // (NEXT_PUBLIC_LOAN_POLL_INTERVAL_MS) and pauses when the tab is hidden
+  // so health factor badges and loan state stay current without manual refresh
+  // (closes #1535).
+  const { loans, isLoading: isLoansLoading } = useLoans();
   const loansWithHealth = loans as unknown as LoanWithHealth[];
 
   const { shouldShow: showLiquidationWarning, atRiskLoans, dismiss: dismissWarning } =

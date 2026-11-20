@@ -2,7 +2,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { usePolling } from './usePolling';
 
-const POLL_INTERVAL = 30_000;
+const POLL_INTERVAL =
+  parseInt(process.env.NEXT_PUBLIC_LOAN_POLL_INTERVAL_MS ?? '', 10) || 15_000;
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 export type HealthFactorZone = 'safe' | 'at-risk' | 'liquidation';

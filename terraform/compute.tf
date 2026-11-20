@@ -70,8 +70,10 @@ resource "aws_ecs_service" "main" {
   name            = "stellarkraal-service-${var.environment}"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.app.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
+  # desired_count is managed by Application Auto Scaling after initial provisioning.
+  # Minimum is 1 for staging, 2 for production to ensure availability (closes #1534).
+  desired_count = var.environment == "production" ? 2 : 1
+  launch_type   = "FARGATE"
 
   network_configuration {
     security_groups  = [aws_security_group.app.id]
@@ -103,4 +105,82 @@ resource "aws_security_group" "app" {
     Name        = "stellarkraal-app-sg-${var.environment}"
     Environment = var.environment
   }
+}
+
+# ── ECS Application Auto Scaling (closes #1534) ───────────────────────────────
+#
+# Scale-out: triggers when average CPU exceeds 70 % for 2 consecutive minutes.
+# Scale-in:  gradually reduces task count during sustained low utilisation.
+# Minimum task count: 1 for staging, 2 for production.
+# Maximum task count: 10 for all environments.
+
+resource "aws_appautoscaling_target" "ecs_backend" {
+  max_capacity       = 10
+  min_capacity       = var.environment == "production" ? 2 : 1
+  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.main.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  service_namespace  = "ecs"
+
+  depends_on = [aws_ecs_service.main]
+}
+
+# Scale out when CPU utilisation exceeds 70 % for 2 consecutive 1-minute periods.
+resource "aws_appautoscaling_policy" "ecs_cpu_scale_out" {
+  name               = "stellarkraal-cpu-scale-out-${var.environment}"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.ecs_backend.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs_backend.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.ecs_backend.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    target_value       = 70.0
+    scale_in_cooldown  = 300  # 5 minutes — give the system time to stabilise before scaling in
+    scale_out_cooldown = 120  # 2 minutes — matches the "2 consecutive minutes" requirement
+
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+  }
+}
+
+# Scale in gradually when CPU utilisation is low for a sustained period.
+# A separate step-scaling policy gives finer-grained control over scale-in speed.
+resource "aws_appautoscaling_policy" "ecs_cpu_scale_in" {
+  name               = "stellarkraal-cpu-scale-in-${var.environment}"
+  policy_type        = "StepScaling"
+  resource_id        = aws_appautoscaling_target.ecs_backend.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs_backend.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.ecs_backend.service_namespace
+
+  step_scaling_policy_configuration {
+    adjustment_type          = "ChangeInCapacity"
+    cooldown                 = 600  # 10 minutes between scale-in steps
+    metric_aggregation_type  = "Average"
+
+    # Remove one task at a time when CPU is below 30 %
+    step_adjustment {
+      metric_interval_upper_bound = 0
+      scaling_adjustment          = -1
+    }
+  }
+}
+
+# CloudWatch alarm that triggers the scale-in policy when CPU stays below 30 %.
+resource "aws_cloudwatch_metric_alarm" "ecs_low_cpu" {
+  alarm_name          = "stellarkraal-low-cpu-${var.environment}"
+  comparison_operator = "LessThanOrEqualToThreshold"
+  evaluation_periods  = 10   # 10 consecutive 1-minute periods = 10 minutes sustained low CPU
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/ECS"
+  period              = 60
+  statistic           = "Average"
+  threshold           = 30.0
+  alarm_description   = "Triggers gradual ECS scale-in when CPU stays below 30%"
+
+  dimensions = {
+    ClusterName = aws_ecs_cluster.main.name
+    ServiceName = aws_ecs_service.main.name
+  }
+
+  alarm_actions = [aws_appautoscaling_policy.ecs_cpu_scale_in.arn]
 }

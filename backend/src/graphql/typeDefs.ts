@@ -1,8 +1,11 @@
 /**
- * GraphQL type definitions for StellarKraal API v2 (proof-of-concept).
+ * GraphQL type definitions for StellarKraal API v2 (ADR-011).
  *
- * Implements Query { loans, collateral } and Mutation { requestLoan, repayLoan }
- * backed by the existing service and store layer (ADR-009).
+ * Implements:
+ *   Query  { loans, loan, collateral, collateralById, user, me }
+ *   Mutation { requestLoan, repayLoan }
+ *
+ * Mounted at /api/v2/graphql (closes #1537).
  *
  * Full SDL is declared here rather than in a .graphql file so that the schema
  * is bundled with the TypeScript output without extra build steps.
@@ -52,6 +55,28 @@ export const typeDefs = `#graphql
     status: LoanStatus
     health_factor: Float
     createdAt: DateTime!
+    """The borrower's profile, resolved via DataLoader to prevent N+1 queries."""
+    borrowerProfile: User
+  }
+
+  """A registered user / borrower profile."""
+  type User {
+    """Stellar public key — also acts as the unique user identifier."""
+    walletAddress: ID!
+    displayName: String
+    notificationPreferences: NotificationPreferences
+    createdAt: DateTime!
+    updatedAt: DateTime!
+    """Active loans for this user, resolved via DataLoader."""
+    loans: [Loan!]!
+  }
+
+  """Per-event notification opt-in flags for a user."""
+  type NotificationPreferences {
+    loanApproved: Boolean
+    loanRepaid: Boolean
+    liquidationWarning: Boolean
+    loanDisbursed: Boolean
   }
 
   """Paginated list of loans (offset-based)."""
@@ -124,6 +149,15 @@ export const typeDefs = `#graphql
 
     """Fetch a single collateral record by its ID."""
     collateralById(id: ID!): Collateral
+
+    """Fetch a user profile by Stellar wallet address."""
+    user(walletAddress: ID!): User
+
+    """
+    Return the profile of the currently authenticated user.
+    Requires a valid JWT; returns null when unauthenticated.
+    """
+    me: User
   }
 
   # ── Mutations ──────────────────────────────────────────────────────────────
