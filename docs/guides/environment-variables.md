@@ -279,6 +279,16 @@ Maximum time the server waits for in-flight requests to complete after receiving
 
 Directory where structured audit log files are written. Each audit event (admin actions, loan state changes, authentication events) is appended as a JSON line. Ensure the backend process has write access to this directory. In production, use an absolute path (e.g., `/var/log/stellarkraal/audit`).
 
+### `AUDIT_REDACT_FIELDS`
+
+| | |
+|---|---|
+| Required | No |
+| Format | Comma-separated list of field names |
+| Default | — (no extra fields redacted) |
+
+Comma-separated list of additional field names to replace with `[REDACTED]` in audit log request bodies. Names are matched case-insensitively at any nesting depth and merged with the built-in list (for example `password`, `national_id`, `phone`). Example: `ssn,dob,card_number`.
+
 ### Logging
 
 These variables control the application logger. All are optional with safe defaults.
@@ -497,6 +507,7 @@ Staging frontend URL used to configure CORS on the staging backend. Overrides `F
 | `HEALTH_FACTOR_CRIT` | Backend | No | `10000` |
 | `SHUTDOWN_TIMEOUT_MS` | Backend | No | `10000` |
 | `AUDIT_LOG_DIR` | Backend | No | — |
+| `AUDIT_REDACT_FIELDS` | Backend | No | — |
 | `LOG_LEVEL` | Backend | No | `info` |
 | `LOG_MAX_SIZE` | Backend | No | `10m` |
 | `LOG_MAX_FILES` | Backend | No | `7` |
