@@ -4,6 +4,7 @@ import { LoanWizardProvider, useWizard, type SubmittedLoan } from '@/context/Loa
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { Button } from '@/components/ui';
 import { formatXlmFromStroops } from '@/lib/formatMoney';
+import { useOptionalWalletContext } from '@/context/WalletContext';
 import StepCollateral from './steps/StepCollateral';
 import StepAmount from './steps/StepAmount';
 import StepReview from './steps/StepReview';
@@ -27,6 +28,12 @@ function WizardInner({ walletAddress }: Props) {
   // go back to (#522).
   const [retryKey, setRetryKey] = useState(0);
   const [submitted, setSubmitted] = useState<SubmittedLoan | null>(null);
+
+  // #1509: if the wallet disconnects or the session expires mid-flow, pause
+  // the wizard (steps stay mounted, so no progress is lost) and prompt the
+  // user to reconnect instead of letting the next RPC/sign call crash.
+  const wallet = useOptionalWalletContext();
+  const paused = Boolean(wallet?.needsReconnect);
 
   function handleStepRetry() {
     setRetryKey((k) => k + 1);
@@ -126,83 +133,116 @@ function WizardInner({ walletAddress }: Props) {
           so a crash in one step doesn't take down the whole wizard. Retry
           navigates back to the previous step (or, on step 1 where there is
           none, simply remounts the step for another attempt). */}
-      <div className="p-6">
-        {submitted && (
+      <div className="relative p-6">
+        {paused && wallet && (
           <div
-            role="status"
-            className="mb-6 rounded-2xl border border-green-200 bg-green-50 p-5 text-center"
+            role="alert"
+            data-testid="wizard-paused"
+            className="mb-6 rounded-2xl border border-gold bg-cream p-5 text-center"
           >
-            <p className="text-4xl" aria-hidden="true">
-              ✅
+            <h2 className="text-lg font-bold text-brown">Loan request paused</h2>
+            <p className="mt-2 text-sm text-brown/70">
+              {wallet.sessionExpired ? 'Your session expired.' : 'Your wallet was disconnected.'}{' '}
+              Reconnect to continue — your progress has been saved.
             </p>
-            <h2 className="mt-2 text-2xl font-bold text-brown">Loan Disbursed!</h2>
-            <p className="mt-2 text-sm text-brown/60">
-              Your loan request has been submitted to the network.
-            </p>
-            <dl className="mt-4 space-y-2 rounded-xl border border-brown/20 bg-white p-4 text-left text-sm">
-              <div className="flex justify-between gap-4">
-                <dt className="font-medium text-green-700">Loan ID</dt>
-                <dd className="break-all font-mono font-semibold text-brown">{submitted.loanId}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-brown/60">Amount received</dt>
-                <dd className="font-semibold text-brown">
-                  {formatXlmFromStroops(submitted.amount)}
-                </dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-brown/60">Due in</dt>
-                <dd className="font-semibold text-brown">{submitted.termDays} days</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-brown/60">Total to repay</dt>
-                <dd className="font-bold text-brown">
-                  {formatXlmFromStroops(submitted.totalRepay)}
-                </dd>
-              </div>
-            </dl>
+            {wallet.reconnectError && (
+              <p className="mt-2 text-sm text-red-700">{wallet.reconnectError}</p>
+            )}
+            <div className="mt-4 flex justify-center">
+              <Button
+                onClick={() => void wallet.reconnect()}
+                disabled={wallet.reconnecting}
+                data-testid="wizard-reconnect-btn"
+              >
+                {wallet.reconnecting ? 'Reconnecting…' : 'Reconnect wallet'}
+              </Button>
+            </div>
           </div>
         )}
-        {step === 1 && (
-          <ErrorBoundary
-            key={`collateral-${retryKey}`}
-            section="Collateral"
-            onRetry={handleStepRetry}
-            retryLabel="↻ Try again"
-          >
-            <StepCollateral walletAddress={walletAddress} />
-          </ErrorBoundary>
-        )}
-        {step === 2 && (
-          <ErrorBoundary
-            key={`amount-${retryKey}`}
-            section="Amount"
-            onRetry={handleStepRetry}
-            retryLabel="← Back to previous step"
-          >
-            <StepAmount />
-          </ErrorBoundary>
-        )}
-        {step === 3 && (
-          <ErrorBoundary
-            key={`review-${retryKey}`}
-            section="Review"
-            onRetry={handleStepRetry}
-            retryLabel="← Back to previous step"
-          >
-            <StepReview />
-          </ErrorBoundary>
-        )}
-        {step === 4 && (
-          <ErrorBoundary
-            key={`confirm-${retryKey}`}
-            section="Confirm"
-            onRetry={handleStepRetry}
-            retryLabel="← Back to previous step"
-          >
-            <StepConfirm walletAddress={walletAddress} onSubmitted={setSubmitted} />
-          </ErrorBoundary>
-        )}
+        <div
+          inert={paused}
+          aria-hidden={paused || undefined}
+          className={paused ? 'opacity-40 pointer-events-none select-none' : undefined}
+        >
+          {submitted && (
+            <div
+              role="status"
+              className="mb-6 rounded-2xl border border-green-200 bg-green-50 p-5 text-center"
+            >
+              <p className="text-4xl" aria-hidden="true">
+                ✅
+              </p>
+              <h2 className="mt-2 text-2xl font-bold text-brown">Loan Disbursed!</h2>
+              <p className="mt-2 text-sm text-brown/60">
+                Your loan request has been submitted to the network.
+              </p>
+              <dl className="mt-4 space-y-2 rounded-xl border border-brown/20 bg-white p-4 text-left text-sm">
+                <div className="flex justify-between gap-4">
+                  <dt className="font-medium text-green-700">Loan ID</dt>
+                  <dd className="break-all font-mono font-semibold text-brown">
+                    {submitted.loanId}
+                  </dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-brown/60">Amount received</dt>
+                  <dd className="font-semibold text-brown">
+                    {formatXlmFromStroops(submitted.amount)}
+                  </dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-brown/60">Due in</dt>
+                  <dd className="font-semibold text-brown">{submitted.termDays} days</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-brown/60">Total to repay</dt>
+                  <dd className="font-bold text-brown">
+                    {formatXlmFromStroops(submitted.totalRepay)}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          )}
+          {step === 1 && (
+            <ErrorBoundary
+              key={`collateral-${retryKey}`}
+              section="Collateral"
+              onRetry={handleStepRetry}
+              retryLabel="↻ Try again"
+            >
+              <StepCollateral walletAddress={walletAddress} />
+            </ErrorBoundary>
+          )}
+          {step === 2 && (
+            <ErrorBoundary
+              key={`amount-${retryKey}`}
+              section="Amount"
+              onRetry={handleStepRetry}
+              retryLabel="← Back to previous step"
+            >
+              <StepAmount />
+            </ErrorBoundary>
+          )}
+          {step === 3 && (
+            <ErrorBoundary
+              key={`review-${retryKey}`}
+              section="Review"
+              onRetry={handleStepRetry}
+              retryLabel="← Back to previous step"
+            >
+              <StepReview />
+            </ErrorBoundary>
+          )}
+          {step === 4 && (
+            <ErrorBoundary
+              key={`confirm-${retryKey}`}
+              section="Confirm"
+              onRetry={handleStepRetry}
+              retryLabel="← Back to previous step"
+            >
+              <StepConfirm walletAddress={walletAddress} onSubmitted={setSubmitted} />
+            </ErrorBoundary>
+          )}
+        </div>
       </div>
     </div>
   );

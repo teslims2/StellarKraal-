@@ -13,6 +13,7 @@ import NetworkMismatchBanner from '@/components/NetworkMismatchBanner';
 import PrintDateScript from '@/components/PrintDateScript';
 import TopProgressBar from '@/components/TopProgressBar';
 import SessionTimeoutBanner from '@/components/SessionTimeoutBanner';
+import SessionExpiredModal from '@/components/SessionExpiredModal';
 import WhatsNewProvider from '@/components/WhatsNewProvider';
 import InitialLoadingScreen from '@/components/InitialLoadingScreen';
 // Global error boundary — Issue #1399
@@ -264,6 +265,8 @@ export default function RootLayout({
               <SkipToContent />
               <TopProgressBar />
               <SessionTimeoutBanner />
+              {/* Reconnect prompt on session expiry / external wallet disconnect — #1509 */}
+              <SessionExpiredModal />
               <NetworkMismatchBanner />
               <OfflineBanner />
               {/* Top utility nav — hidden when printing */}

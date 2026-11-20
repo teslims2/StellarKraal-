@@ -11,7 +11,8 @@ export type WalletState = {
   connecting: boolean;
   error: string | null;
   networkMismatch: boolean;
-  connect: () => Promise<void>;
+  /** Connects via Freighter. Resolves to the address on success, otherwise `null`. */
+  connect: () => Promise<string | null>;
   disconnect: () => void;
 };
 
@@ -48,7 +49,7 @@ export function useWallet(): WalletState {
     })();
   }, []);
 
-  async function connect() {
+  async function connect(): Promise<string | null> {
     setConnecting(true);
     setError(null);
     setNetworkMismatch(false);
@@ -57,13 +58,15 @@ export function useWallet(): WalletState {
       setFreighterInstalled(installed);
       if (!installed) {
         setError("Freighter wallet is not installed. Install the extension to connect.");
-        return;
+        return null;
       }
 
       await setAllowed();
       const { address: addr } = await getAddress();
+      if (!addr) throw new Error("Freighter did not return an address");
       setAddress(addr);
       localStorage.setItem(STORAGE_KEY, addr);
+      return addr;
     } catch (e: any) {
       if (detectNetworkMismatch(e)) {
         setNetworkMismatch(true);
@@ -73,6 +76,7 @@ export function useWallet(): WalletState {
       } else {
         setError(e?.message ?? "Connection failed");
       }
+      return null;
     } finally {
       setConnecting(false);
     }

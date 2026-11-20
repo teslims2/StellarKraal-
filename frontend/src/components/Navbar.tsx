@@ -13,10 +13,14 @@ import {
   X,
   User,
   HelpCircle,
+  Wallet,
+  LogOut,
+  ChevronDown,
 } from 'lucide-react';
 import { Icon } from '@/components/Icon';
 import ThemeToggle from './ThemeToggle';
 import { useWallet } from '@/hooks/useWallet';
+import { useOptionalWalletContext } from '@/context/WalletContext';
 import { useAtRiskLoans } from '@/hooks/useAtRiskLoans';
 import NotificationBadge from '@/components/NotificationBadge';
 import { NotificationBell, NotificationDrawer } from '@/components/NotificationDrawer';
@@ -79,14 +83,27 @@ export default function Navbar() {
   const walletDropdownRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
   const router = useRouter();
-  const { address, connect, disconnect } = useWallet();
+  // Prefer the shared WalletContext (single source of truth, Issue #1509);
+  // fall back to a local useWallet() when rendered outside a WalletProvider.
+  const walletCtx = useOptionalWalletContext();
+  const localWallet = useWallet();
+  const { address, connect, disconnect } = walletCtx ?? localWallet;
   const { atRiskCount } = useAtRiskLoans();
   const shortcutsHelp = useShortcutsHelp();
   const { notifications, unreadCount, markRead, markAllRead, dismiss, dismissAll } =
     useNotifications();
 
-  /** Full auth-clearing disconnect — Issue #1208. */
+  /**
+   * Full auth-clearing disconnect — Issue #1208 / #1509.
+   * Clears wallet state, persisted keys and the session cookie, then
+   * redirects to the connect screen.
+   */
   function handleDisconnect() {
+    setWalletDropdownOpen(false);
+    if (walletCtx) {
+      walletCtx.disconnectAndClear();
+      return;
+    }
     disconnect();
     clearSessionCookie();
     router.push('/');
@@ -100,9 +117,17 @@ export default function Navbar() {
       }
     }
 
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setWalletDropdownOpen(false);
+    }
+
     if (walletDropdownOpen) {
       document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleEscape);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+        document.removeEventListener('keydown', handleEscape);
+      };
     }
   }, [walletDropdownOpen]);
 
@@ -139,12 +164,6 @@ export default function Navbar() {
   }, [mobileMenuOpen]);
 
   const truncatedAddress = address ? `${address.slice(0, 4)}…${address.slice(-4)}` : null;
-
-  // Suppress unused-var lint warnings for wallet actions used in future UI
-  void connect;
-  void disconnect;
-  void truncatedAddress;
-  void handleDisconnect;
 
   return (
     <nav
@@ -248,6 +267,66 @@ export default function Navbar() {
             onDismiss={dismiss}
             onDismissAll={dismissAll}
           />
+
+          {/* Wallet menu — #1509: connect / disconnect */}
+          {address ? (
+            <div className="relative" ref={walletDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setWalletDropdownOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={walletDropdownOpen}
+                aria-label={`Wallet menu for ${truncatedAddress}`}
+                data-testid="wallet-menu-trigger"
+                className="flex items-center gap-1 px-2 min-h-[44px] rounded-lg text-sm font-mono transition hover:bg-[var(--color-border)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--token-accent)]"
+                style={{ color: 'var(--color-text)' }}
+              >
+                <Icon icon={Wallet} size="sm" className="text-current" />
+                <span className="hidden sm:inline">{truncatedAddress}</span>
+                <Icon icon={ChevronDown} size="sm" className="text-current" />
+              </button>
+              {walletDropdownOpen && (
+                <div
+                  role="menu"
+                  aria-label="Wallet"
+                  className="absolute right-0 top-full mt-1 z-50 w-52 rounded-xl border shadow-lg p-1"
+                  style={{
+                    backgroundColor: 'var(--color-nav-bg)',
+                    borderColor: 'var(--color-nav-border)',
+                  }}
+                >
+                  <p
+                    className="px-3 py-2 text-xs font-mono break-all"
+                    style={{ color: 'var(--token-text-muted)' }}
+                  >
+                    {address}
+                  </p>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={handleDisconnect}
+                    data-testid="navbar-disconnect-btn"
+                    className="flex items-center gap-2 w-full px-3 min-h-[44px] rounded-lg text-sm transition hover:bg-[var(--color-border)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--token-accent)]"
+                    style={{ color: 'var(--color-text)' }}
+                  >
+                    <Icon icon={LogOut} size="sm" className="text-current" />
+                    Disconnect
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void (walletCtx ? walletCtx.connectFreighter() : connect())}
+              data-testid="navbar-connect-btn"
+              className="hidden sm:flex items-center gap-1 px-3 min-h-[44px] rounded-lg text-sm font-semibold transition hover:bg-[var(--color-border)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--token-accent)]"
+              style={{ color: 'var(--color-text)' }}
+            >
+              <Icon icon={Wallet} size="sm" className="text-current" />
+              Connect
+            </button>
+          )}
 
           {/* Theme toggle — visible on all screen sizes */}
           <ThemeToggle />
