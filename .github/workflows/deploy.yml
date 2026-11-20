@@ -8,6 +8,10 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Lets the job mint a GitHub OIDC token for cosign keyless signing.
+      id-token: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -33,6 +37,36 @@ jobs:
           docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          # Capture the pushed digest so cosign can sign/verify a precise ref.
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" | cut -d@ -f2)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      # Sign the image that this workflow will deploy. cosign reads the ECR
+      # credentials populated by amazon-ecr-login above to push the signature.
+      - name: Sign ECR image with GitHub OIDC
+        env:
+          IMAGE: ${{ steps.build-image.outputs.image }}
+          DIGEST: ${{ steps.build-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "$IMAGE@$DIGEST"
+
+      # Refuse to deploy if the image was not signed by this workflow's OIDC
+      # identity. This proves the image was built in CI and not tampered with.
+      - name: Verify image signature before deploying
+        env:
+          IMAGE: ${{ steps.build-image.outputs.image }}
+          DIGEST: ${{ steps.build-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign verify "$IMAGE@$DIGEST" \
+            --certificate-identity-regexp "https://github\.com/${{ github.repository }}/.github/workflows/deploy\.yml@.*" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
       - name: Download current task definition
         run: |

@@ -101,7 +101,7 @@ export async function transition(
   next: LoanStatus,
   history: TransitionRecord[],
   context: TransitionLogContext = {}
-): LoanStatus {
+): Promise<LoanStatus> {
   if (!TRANSITIONS[current].includes(next)) {
     throw new InvalidTransitionError(current, next);
   }

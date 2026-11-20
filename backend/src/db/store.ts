@@ -43,6 +43,14 @@ export interface LoanRecord {
   health_factor?: number | null;
   /** ISO 8601 timestamp of the repayment deadline, if set by the origination flow. */
   repaymentDeadline?: string | null;
+  /**
+   * Origination fee charged when the loan was created, denominated in stroops.
+   * Snapshotted at origination so a later change to the fee configuration never
+   * alters an already-disbursed loan (#1533).
+   */
+  origination_fee?: number | null;
+  /** Origination fee in basis points active when the loan was created (#1533). */
+  fee_percentage_bps?: number | null;
   createdAt: string;
   deletedAt: string | null;
 }
@@ -77,6 +85,56 @@ export interface TransactionRecord {
 const collateralTable: Map<string, CollateralRecord> = new Map();
 const loanTable: Map<string, LoanRecord> = new Map();
 const transactionTable: Map<string, TransactionRecord> = new Map();
+
+// ── Loan configuration (origination fee) ────────────────────────────────────────
+// Mirrors the loan_config SQL table (see migration 20261119000000). The fee is
+// read at runtime so it can change without a redeploy; loans snapshot the
+// value active at origination (see insertLoan) so already-disbursed loans are
+// unaffected by later changes (#1533).
+let originationFeeBps: number | null = null;
+
+/**
+ * Read the configured origination fee (basis points) at runtime.
+ *
+ * Seeded lazily from `ORIG_FEE_BPS` (default 50 == 0.5%) on first use, then
+ * updated in-memory by {@link setOriginationFeeBps}. This is the runtime
+ * source of truth for both the loan estimate and loan creation endpoints.
+ */
+export function getOriginationFeeBps(): number {
+  if (originationFeeBps === null) {
+    const parsed = parseInt(process.env.ORIG_FEE_BPS ?? '50', 10);
+    originationFeeBps = Number.isFinite(parsed) && parsed >= 0 ? parsed : 50;
+  }
+  return originationFeeBps;
+}
+
+/**
+ * Update the runtime origination fee (basis points) and record an audit entry.
+ *
+ * @param bps   New fee in basis points (0–10000, i.e. 0%–100%).
+ * @param updatedBy  Identifier of the admin making the change.
+ * @returns The new fee and the id of the created audit entry.
+ * @throws when `bps` is out of range.
+ */
+export function setOriginationFeeBps(
+  bps: number,
+  updatedBy: string
+): { feeBps: number; auditId: string } {
+  if (!Number.isInteger(bps) || bps < 0 || bps > 10_000) {
+    throw new Error('origination_fee_bps must be an integer between 0 and 10000');
+  }
+  const previous = getOriginationFeeBps();
+  originationFeeBps = bps;
+  const audit = insertAuditEntry({
+    userId: updatedBy,
+    action: 'UPDATE_LOAN_CONFIG',
+    resource: 'loan_config',
+    resourceId: 'origination_fee_bps',
+    requestBody: { previous, next: bps },
+  });
+  return { feeBps: bps, auditId: audit.id };
+}
+
 
 // ── Collateral ────────────────────────────────────────────────────────────────
 

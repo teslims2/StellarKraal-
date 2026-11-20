@@ -27,11 +27,86 @@ env:
   FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/stellarkraal-frontend
 
 jobs:
+  # Sign the published images with Sigstore Cosign using GitHub OIDC keyless
+  # signing. The signature and SBOM attestation are pushed to GHCR alongside
+  # the image so deployments can verify provenance before pulling. See
+  # docs/security/image-signing.md for the end-to-end flow and verification.
+  sign-images:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # Required for cosign keyless signing — lets the job mint a GitHub OIDC
+      # token that cosign uses to sign without a long-lived private key.
+      id-token: write
+    strategy:
+      matrix:
+        include:
+          - service: backend
+            image_env: BACKEND_IMAGE
+          - service: frontend
+            image_env: FRONTEND_IMAGE
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `needs.build-and-push.outputs.<service>-digest` carries the multi-arch
+      # manifest digest produced by each matrix leg of the build job.
+      - name: Sign image with GitHub OIDC
+        env:
+          IMAGE: ${{ env[matrix.image_env] }}
+          DIGEST: ${{ needs.build-and-push.outputs[format('{0}-digest', matrix.service)] }}
+        run: |
+          set -euo pipefail
+          echo "Signing ${IMAGE}@${DIGEST}"
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      - name: Generate SBOM (CycloneDX) for attestation
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env[matrix.image_env] }}@${{ needs.build-and-push.outputs[format('{0}-digest', matrix.service)] }}
+          format: cyclonedx-json
+          output-file: sbom-${{ matrix.service }}.cyclonedx.json
+
+      - name: Attach SBOM attestation
+        env:
+          IMAGE: ${{ env[matrix.image_env] }}
+          DIGEST: ${{ needs.build-and-push.outputs[format('{0}-digest', matrix.service)] }}
+        run: |
+          set -euo pipefail
+          cosign attest --yes \
+            --predicate sbom-${{ matrix.service }}.cyclonedx.json \
+            --type cyclonedx \
+            "${IMAGE}@${DIGEST}"
+
+      - name: Report signed digest
+        run: |
+          echo "### Signed ${{ matrix.service }} image" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image: \`${{ env[matrix.image_env] }}@${{ needs.build-and-push.outputs[format('{0}-digest', matrix.service)] }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Signature & CycloneDX SBOM attestation pushed to GHCR." >> "$GITHUB_STEP_SUMMARY"
+
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    # Expose the multi-arch manifest digest for each service so the sign job
+    # can sign a precise, immutable reference (image@digest) rather than a tag.
+    outputs:
+      backend-digest: ${{ steps.publish-digest.outputs.backend-digest }}
+      frontend-digest: ${{ steps.publish-digest.outputs.frontend-digest }}
 
     strategy:
       matrix:
@@ -123,6 +198,13 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo "${{ steps.meta.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # Surface the manifest digest as a job output keyed per service so the
+      # sign-images job can reference the exact image@digest it should sign.
+      - name: Publish digest as job output
+        id: publish-digest
+        run: |
+          echo "${{ matrix.service }}-digest=${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
 
   # Attach the generated SBOMs to the GitHub release on tagged releases.
   publish-sbom:
