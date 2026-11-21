@@ -42,7 +42,7 @@ const NAV_SECTIONS = [
   { href: '/settings', label: 'Settings', icon: Settings },
 ] as const;
 
-/** Extra links that live in the desktop utility bar; shown in the mobile menu (#1415). */
+/** Extra links shown in the mobile drawer (#1498). */
 const MOBILE_EXTRA_LINKS = [
   { href: '/profile', label: 'Profile', icon: User },
   { href: '/help/faq', label: 'Help & FAQ', icon: HelpCircle },
@@ -66,15 +66,19 @@ const MOBILE_EXTRA_LINKS = [
  *
  * Notification badge — #803: a red badge on the Dashboard link when any loan
  * has health factor < 1.2.
+ *
+ * Mobile drawer — #1498: hamburger button opens a full-height slide-in drawer
+ * on mobile viewports. The drawer closes on outside click, Escape key, and
+ * route change. The toggle button carries aria-expanded and aria-controls.
  */
 
-const MOBILE_MENU_ID = 'mobile-nav-menu';
+const MOBILE_DRAWER_ID = 'mobile-nav-drawer';
 
 export default function Navbar() {
   const [walletDropdownOpen, setWalletDropdownOpen] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
-  const mobileMenuRef = useRef<HTMLDivElement>(null);
+  const drawerRef = useRef<HTMLDivElement>(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const walletDropdownRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
@@ -92,7 +96,7 @@ export default function Navbar() {
     router.push('/');
   }
 
-  // Close wallet dropdown when clicking outside
+  // Close wallet dropdown when clicking outside.
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (walletDropdownRef.current && !walletDropdownRef.current.contains(event.target as Node)) {
@@ -106,213 +110,281 @@ export default function Navbar() {
     }
   }, [walletDropdownOpen]);
 
-  // Close the mobile menu whenever the route changes.
+  // Close the drawer whenever the route changes — #1498.
   useEffect(() => {
-    setMobileMenuOpen(false);
+    setDrawerOpen(false);
   }, [pathname]);
 
-  // Mobile menu: move focus into the panel on open, close on Escape or outside click.
+  // Mobile drawer: move focus into the panel on open, close on Escape or outside click — #1498.
   useEffect(() => {
-    if (!mobileMenuOpen) return;
+    if (!drawerOpen) {
+      document.body.style.overflow = '';
+      return;
+    }
 
-    mobileMenuRef.current?.querySelector<HTMLElement>('a, button')?.focus();
+    // Prevent background scroll while the drawer is open.
+    document.body.style.overflow = 'hidden';
+    drawerRef.current?.querySelector<HTMLElement>('a, button')?.focus();
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
-        setMobileMenuOpen(false);
+        setDrawerOpen(false);
         menuButtonRef.current?.focus();
       }
     }
+
     function handlePointerDown(event: MouseEvent) {
       const target = event.target as Node;
-      if (!mobileMenuRef.current?.contains(target) && !menuButtonRef.current?.contains(target)) {
-        setMobileMenuOpen(false);
+      if (!drawerRef.current?.contains(target) && !menuButtonRef.current?.contains(target)) {
+        setDrawerOpen(false);
       }
     }
 
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('mousedown', handlePointerDown);
     return () => {
+      document.body.style.overflow = '';
       document.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('mousedown', handlePointerDown);
     };
-  }, [mobileMenuOpen]);
+  }, [drawerOpen]);
 
   const truncatedAddress = address ? `${address.slice(0, 4)}…${address.slice(-4)}` : null;
 
-  // Suppress unused-var lint warnings for wallet actions used in future UI
+  // Suppress unused-var lint warnings for wallet actions used in future UI.
   void connect;
   void disconnect;
   void truncatedAddress;
   void handleDisconnect;
 
   return (
-    <nav
-      aria-label="Main navigation"
-      className="relative border-b px-3 sm:px-4"
-      style={{
-        backgroundColor: 'var(--color-nav-bg)',
-        borderColor: 'var(--color-nav-border)',
-      }}
-    >
-      <div className="max-w-5xl mx-auto flex items-center justify-between gap-2 h-14">
-        {/* Brand */}
-        <Link
-          href="/"
-          className="font-bold text-base sm:text-lg flex items-center gap-2 min-h-[44px] min-w-0 shrink"
-          style={{ color: 'var(--color-text)' }}
-        >
-          <Icon icon={Beef} size="md" aria-hidden="true" className="text-current shrink-0" />
-          <span className="truncate">StellarKraal</span>
-        </Link>
-
-        {/* Desktop nav */}
-        <ul className="hidden lg:flex items-center gap-1" role="list">
-          {NAV_SECTIONS.map(({ href, label, icon }) => {
-            const active = pathname === href || pathname.startsWith(href + '/');
-            const isDashboard = href === '/dashboard';
-            return (
-              <li key={href}>
-                {/*
-                 * Active state (#781):
-                 * — bottom border acts as a prominent underline-pill indicator
-                 * — uses --token-primary so it automatically flips in dark mode
-                 * — text colour also uses the token; background adds a subtle pill
-                 */}
-                <Link
-                  href={href}
-                  aria-current={active ? 'page' : undefined}
-                  className={[
-                    'relative flex items-center gap-1.5 px-3 min-h-[44px] rounded-lg transition font-medium',
-                    active ? 'border-b-[3px] font-bold' : 'hover:bg-[color:var(--token-primary)]/5',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  style={
-                    active
-                      ? {
-                          color: 'var(--token-primary)',
-                          borderBottomColor: 'var(--token-primary)',
-                          backgroundColor:
-                            'color-mix(in srgb, var(--token-primary) 10%, transparent)',
-                          borderRadius: '8px 8px 0 0',
-                        }
-                      : {
-                          color: 'var(--token-text-muted)',
-                        }
-                  }
-                >
-                  {/* lucide icon — decorative, label is the visible text */}
-                  <Icon icon={icon} size="sm" className="text-current" />
-                  {label}
-                  {/* #803: notification badge on dashboard link */}
-                  {isDashboard && atRiskCount > 0 && <NotificationBadge count={atRiskCount} />}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-
-        {/* Right side: shortcuts help + notification bell + theme toggle + hamburger */}
-        <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
-          {/* Keyboard shortcuts trigger — #531 */}
-          <button
-            onClick={() => shortcutsHelp?.openShortcutsHelp()}
-            aria-label="Show keyboard shortcuts"
-            title="Keyboard shortcuts (?)"
-            className="hidden sm:flex items-center justify-center min-h-[44px] min-w-[44px] rounded-lg transition hover:bg-[var(--color-border)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--token-accent)]"
-          >
-            <Icon icon={Keyboard} size="sm" className="text-[color:var(--color-text-muted)]" />
-          </button>
-
-          {/* Language switcher — #1207 (moves into the mobile menu below sm) */}
-          <div className="hidden sm:block">
-            <LanguageSwitcher />
-          </div>
-
-          {/* Notification bell — #1066 */}
-          <NotificationBell
-            unreadCount={unreadCount}
-            onClick={() => setNotifOpen((v) => !v)}
-            isOpen={notifOpen}
-          />
-
-          {/* Notification drawer — #1066 */}
-          <NotificationDrawer
-            open={notifOpen}
-            onClose={() => setNotifOpen(false)}
-            notifications={notifications}
-            unreadCount={unreadCount}
-            onMarkRead={markRead}
-            onMarkAllRead={markAllRead}
-            onDismiss={dismiss}
-            onDismissAll={dismissAll}
-          />
-
-          {/* Theme toggle — visible on all screen sizes */}
-          <ThemeToggle />
-
-          {/* Hamburger toggle — mobile only (#1415) */}
-          <button
-            ref={menuButtonRef}
-            type="button"
-            onClick={() => setMobileMenuOpen((open) => !open)}
-            aria-expanded={mobileMenuOpen}
-            aria-controls={MOBILE_MENU_ID}
-            aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
-            className="lg:hidden flex items-center justify-center min-h-[44px] min-w-[44px] rounded-lg transition hover:bg-[var(--color-border)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--token-accent)]"
-            style={{ color: 'var(--color-text)' }}
-          >
-            <Icon icon={mobileMenuOpen ? X : Menu} size="md" className="text-current" />
-          </button>
-        </div>
-      </div>
-
-      {/* Mobile menu panel (#1415) */}
-      <div
-        id={MOBILE_MENU_ID}
-        ref={mobileMenuRef}
-        hidden={!mobileMenuOpen}
-        className="lg:hidden absolute inset-x-0 top-full z-40 border-b shadow-lg"
+    <>
+      <nav
+        aria-label="Main navigation"
+        className="relative border-b px-3 sm:px-4"
         style={{
           backgroundColor: 'var(--color-nav-bg)',
           borderColor: 'var(--color-nav-border)',
         }}
       >
-        <ul className="flex flex-col px-3 py-2" role="list">
-          {[...NAV_SECTIONS, ...MOBILE_EXTRA_LINKS].map(({ href, label, icon }) => {
-            const active = pathname === href || pathname.startsWith(href + '/');
-            return (
-              <li key={href}>
-                <Link
-                  href={href}
-                  aria-current={active ? 'page' : undefined}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className={`flex items-center gap-3 px-3 min-h-[48px] rounded-lg font-medium transition ${
-                    active ? 'font-bold' : 'hover:bg-[color:var(--token-primary)]/5'
-                  }`}
-                  style={
-                    active
-                      ? {
-                          color: 'var(--token-primary)',
-                          backgroundColor:
-                            'color-mix(in srgb, var(--token-primary) 10%, transparent)',
-                        }
-                      : { color: 'var(--token-text-muted)' }
-                  }
-                >
-                  <Icon icon={icon} size="sm" className="text-current" />
-                  {label}
-                  {href === '/dashboard' && atRiskCount > 0 && (
-                    <NotificationBadge count={atRiskCount} />
-                  )}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-2 h-14">
+          {/* Brand */}
+          <Link
+            href="/"
+            className="font-bold text-base sm:text-lg flex items-center gap-2 min-h-[44px] min-w-0 shrink"
+            style={{ color: 'var(--color-text)' }}
+          >
+            <Icon icon={Beef} size="md" aria-hidden="true" className="text-current shrink-0" />
+            <span className="truncate">StellarKraal</span>
+          </Link>
+
+          {/* Desktop nav */}
+          <ul className="hidden lg:flex items-center gap-1" role="list">
+            {NAV_SECTIONS.map(({ href, label, icon }) => {
+              const active = pathname === href || pathname.startsWith(href + '/');
+              const isDashboard = href === '/dashboard';
+              return (
+                <li key={href}>
+                  <Link
+                    href={href}
+                    aria-current={active ? 'page' : undefined}
+                    className={[
+                      'relative flex items-center gap-1.5 px-3 min-h-[44px] rounded-lg transition font-medium',
+                      active ? 'border-b-[3px] font-bold' : 'hover:bg-[color:var(--token-primary)]/5',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    style={
+                      active
+                        ? {
+                            color: 'var(--token-primary)',
+                            borderBottomColor: 'var(--token-primary)',
+                            backgroundColor:
+                              'color-mix(in srgb, var(--token-primary) 10%, transparent)',
+                            borderRadius: '8px 8px 0 0',
+                          }
+                        : {
+                            color: 'var(--token-text-muted)',
+                          }
+                    }
+                  >
+                    <Icon icon={icon} size="sm" className="text-current" />
+                    {label}
+                    {isDashboard && atRiskCount > 0 && <NotificationBadge count={atRiskCount} />}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+
+          {/* Right side: shortcuts help + notification bell + theme toggle + hamburger */}
+          <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+            {/* Keyboard shortcuts trigger — #531 */}
+            <button
+              onClick={() => shortcutsHelp?.openShortcutsHelp()}
+              aria-label="Show keyboard shortcuts"
+              title="Keyboard shortcuts (?)"
+              className="hidden sm:flex items-center justify-center min-h-[44px] min-w-[44px] rounded-lg transition hover:bg-[var(--color-border)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--token-accent)]"
+            >
+              <Icon icon={Keyboard} size="sm" className="text-[color:var(--color-text-muted)]" />
+            </button>
+
+            {/* Language switcher — #1207 (moves into the mobile drawer below sm) */}
+            <div className="hidden sm:block">
+              <LanguageSwitcher />
+            </div>
+
+            {/* Notification bell — #1066 */}
+            <NotificationBell
+              unreadCount={unreadCount}
+              onClick={() => setNotifOpen((v) => !v)}
+              isOpen={notifOpen}
+            />
+
+            {/* Notification drawer — #1066 */}
+            <NotificationDrawer
+              open={notifOpen}
+              onClose={() => setNotifOpen(false)}
+              notifications={notifications}
+              unreadCount={unreadCount}
+              onMarkRead={markRead}
+              onMarkAllRead={markAllRead}
+              onDismiss={dismiss}
+              onDismissAll={dismissAll}
+            />
+
+            {/* Theme toggle — visible on all screen sizes */}
+            <ThemeToggle />
+
+            {/* Hamburger toggle — mobile only (#1498) */}
+            <button
+              ref={menuButtonRef}
+              type="button"
+              onClick={() => setDrawerOpen((open) => !open)}
+              aria-expanded={drawerOpen}
+              aria-controls={MOBILE_DRAWER_ID}
+              aria-label={drawerOpen ? 'Close navigation menu' : 'Open navigation menu'}
+              className="lg:hidden flex items-center justify-center min-h-[44px] min-w-[44px] rounded-lg transition hover:bg-[var(--color-border)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--token-accent)]"
+              style={{ color: 'var(--color-text)' }}
+            >
+              <Icon icon={drawerOpen ? X : Menu} size="md" className="text-current" />
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      {/*
+       * Mobile navigation drawer — #1498
+       *
+       * Rendered as a sibling of <nav> so it can be fixed/full-height without
+       * being clipped by the navbar's layout context.
+       *
+       * Backdrop: semi-transparent overlay. Clicking it closes the drawer via
+       * the mousedown listener above (click target is outside drawerRef).
+       *
+       * Drawer panel: slides in from the right using a CSS transform transition.
+       * No external animation library required.
+       *
+       * Accessibility:
+       *   - role="dialog" + aria-modal="true" signals a modal-like region.
+       *   - Escape key and outside-click both close the drawer.
+       *   - Active items carry aria-current="page".
+       *   - Hamburger aria-expanded reflects open/closed state.
+       */}
+
+      {/* Backdrop */}
+      <div
+        aria-hidden="true"
+        className={`lg:hidden fixed inset-0 z-40 transition-opacity duration-300 ${
+          drawerOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+        }`}
+        style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
+      />
+
+      {/* Drawer panel */}
+      <div
+        id={MOBILE_DRAWER_ID}
+        ref={drawerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Navigation menu"
+        className={[
+          'lg:hidden fixed top-0 right-0 h-[100dvh] w-72 max-w-[85vw] z-50 flex flex-col',
+          'shadow-2xl transition-transform duration-300 ease-in-out',
+          drawerOpen ? 'translate-x-0' : 'translate-x-full',
+        ].join(' ')}
+        style={{
+          backgroundColor: 'var(--color-nav-bg)',
+          borderLeft: '1px solid var(--color-nav-border)',
+        }}
+      >
+        {/* Drawer header */}
         <div
-          className="flex items-center justify-between gap-3 border-t px-6 py-3 sm:hidden"
+          className="flex items-center justify-between px-4 h-14 border-b shrink-0"
+          style={{ borderColor: 'var(--color-nav-border)' }}
+        >
+          <Link
+            href="/"
+            onClick={() => setDrawerOpen(false)}
+            className="font-bold text-base flex items-center gap-2"
+            style={{ color: 'var(--color-text)' }}
+          >
+            <Icon icon={Beef} size="md" aria-hidden="true" className="text-current" />
+            <span>StellarKraal</span>
+          </Link>
+          <button
+            type="button"
+            onClick={() => {
+              setDrawerOpen(false);
+              menuButtonRef.current?.focus();
+            }}
+            aria-label="Close navigation menu"
+            className="flex items-center justify-center min-h-[44px] min-w-[44px] rounded-lg transition hover:bg-[var(--color-border)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--token-accent)]"
+            style={{ color: 'var(--color-text)' }}
+          >
+            <Icon icon={X} size="md" className="text-current" />
+          </button>
+        </div>
+
+        {/* Nav links */}
+        <nav aria-label="Mobile navigation" className="flex-1 overflow-y-auto py-2">
+          <ul className="flex flex-col px-3" role="list">
+            {[...NAV_SECTIONS, ...MOBILE_EXTRA_LINKS].map(({ href, label, icon }) => {
+              const active = pathname === href || pathname.startsWith(href + '/');
+              return (
+                <li key={href}>
+                  <Link
+                    href={href}
+                    aria-current={active ? 'page' : undefined}
+                    onClick={() => setDrawerOpen(false)}
+                    className={`flex items-center gap-3 px-3 min-h-[48px] rounded-lg font-medium transition ${
+                      active ? 'font-bold' : 'hover:bg-[color:var(--token-primary)]/5'
+                    }`}
+                    style={
+                      active
+                        ? {
+                            color: 'var(--token-primary)',
+                            backgroundColor:
+                              'color-mix(in srgb, var(--token-primary) 10%, transparent)',
+                          }
+                        : { color: 'var(--token-text-muted)' }
+                    }
+                  >
+                    <Icon icon={icon} size="sm" className="text-current" />
+                    {label}
+                    {href === '/dashboard' && atRiskCount > 0 && (
+                      <NotificationBadge count={atRiskCount} />
+                    )}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+
+        {/* Drawer footer — language switcher on small screens */}
+        <div
+          className="flex items-center justify-between gap-3 border-t px-6 py-3 sm:hidden shrink-0"
           style={{ borderColor: 'var(--color-nav-border)' }}
         >
           <span className="text-sm" style={{ color: 'var(--token-text-muted)' }}>
@@ -321,6 +393,6 @@ export default function Navbar() {
           <LanguageSwitcher />
         </div>
       </div>
-    </nav>
+    </>
   );
 }

@@ -16,7 +16,7 @@ const meta: Meta<typeof StatusBadge> = {
   argTypes: {
     status: {
       control: 'select',
-      options: ['active', 'repaid', 'defaulted', 'liquidated', 'available', 'pledged'],
+      options: ['pending', 'active', 'at_risk', 'repaid', 'defaulted', 'liquidated', 'available', 'pledged'],
       description: 'The loan or collateral status to display',
     },
   },
@@ -27,8 +27,17 @@ type Story = StoryObj<typeof StatusBadge>;
 
 // ── Individual status stories ──────────────────────────────────────────────
 
+export const Pending: Story = {
+  args: { status: 'pending' },
+};
+
 export const Active: Story = {
   args: { status: 'active' },
+};
+
+export const AtRisk: Story = {
+  args: { status: 'at_risk' },
+  name: 'At Risk',
 };
 
 export const Repaid: Story = {
@@ -59,7 +68,9 @@ export const Unknown: Story = {
 // ── All states at once ─────────────────────────────────────────────────────
 
 const ALL_STATUSES: BadgeStatus[] = [
+  'pending',
   'active',
+  'at_risk',
   'repaid',
   'defaulted',
   'liquidated',

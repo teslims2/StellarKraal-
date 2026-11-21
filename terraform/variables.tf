@@ -62,3 +62,45 @@ variable "backup_kms_key_arn" {
   type        = string
   default     = ""
 }
+
+# ---------------------------------------------------------------------------
+# ECS Fargate task resource allocations — issue #1497
+# ---------------------------------------------------------------------------
+# Defaults are set to the minimum acceptable values per the acceptance criteria
+# and are sized from observed CloudWatch Container Insights data. Review and
+# adjust quarterly following docs/runbooks/ecs-resource-review.md.
+# ---------------------------------------------------------------------------
+
+variable "backend_task_cpu" {
+  description = "CPU units for the backend Fargate task (1 vCPU = 1024 units). Minimum 512."
+  type        = number
+  default     = 512
+
+  validation {
+    condition     = var.backend_task_cpu >= 512
+    error_message = "backend_task_cpu must be at least 512 CPU units per the right-sizing runbook."
+  }
+}
+
+variable "backend_task_memory" {
+  description = "Memory (MB) for the backend Fargate task. Minimum 1024 MB."
+  type        = number
+  default     = 1024
+
+  validation {
+    condition     = var.backend_task_memory >= 1024
+    error_message = "backend_task_memory must be at least 1024 MB per the right-sizing runbook."
+  }
+}
+
+variable "frontend_task_cpu" {
+  description = "CPU units for the frontend Fargate task (1 vCPU = 1024 units)."
+  type        = number
+  default     = 256
+}
+
+variable "frontend_task_memory" {
+  description = "Memory (MB) for the frontend Fargate task."
+  type        = number
+  default     = 512
+}
