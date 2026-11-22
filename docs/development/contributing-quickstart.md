@@ -16,7 +16,7 @@ Install the following tools before you begin. Version numbers are minimums.
 | npm | **10.x** | Bundled with Node 20 |
 | Git | **2.x** | `sudo apt install git` / `brew install git` |
 | Rust | **1.78+** | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
-| stellar-cli | **22+** | `cargo install --locked stellar-cli --features opt` |
+| stellar-cli | **22+** | `cargo install --locked stellar-cli@22 --features opt` |
 | Docker & Compose | **24+** (optional) | [docs.docker.com](https://docs.docker.com/get-docker/) |
 | Freighter wallet | latest | [freighter.app](https://www.freighter.app/) (browser extension) |
 
@@ -34,14 +34,35 @@ xcode-select --install        # command-line tools (includes git, clang)
 brew install sqlite           # SQLite (optional — usually pre-installed)
 ```
 
-### Verify your environment
+### Verify Your Setup
+
+Run each command and confirm the output matches the expected range before continuing. A mismatch here is the most common cause of hard-to-debug failures later.
 
 ```bash
-node --version     # v20.x or higher
-npm --version      # 10.x or higher
-rustc --version    # 1.78.x or higher
-stellar --version  # 22.x or higher
-git --version      # 2.x or higher
+node --version
+# Expected: v20.x.x or higher (e.g. v20.19.1 or v22.x.x)
+
+npm --version
+# Expected: 10.x.x or higher (e.g. 10.9.0)
+
+rustc --version
+# Expected: rustc 1.78.0 or higher (e.g. rustc 1.82.0 (f6e511eec 2024-10-15))
+
+stellar --version
+# Expected: stellar 22.x.x or higher (e.g. stellar 22.3.1)
+# If 'stellar' is not found, try 'stellar-cli --version' or check that ~/.cargo/bin is on PATH
+
+git --version
+# Expected: git version 2.x.x (e.g. git version 2.43.0)
+```
+
+If `stellar` returns "command not found", add Cargo's bin directory to your shell PATH:
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+# Make it permanent:
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc   # or ~/.zshrc
+source ~/.bashrc
 ```
 
 ---
@@ -238,6 +259,17 @@ Then open a PR on GitHub. The PR template prompts you for:
 - A description of the change and the linked issue.
 - What you tested.
 - Any known limitations.
+
+### Branch protection rules
+
+The `main` branch has the following protection rules enabled. Your PR must satisfy all of them before it can be merged:
+
+| Rule | Requirement |
+|------|-------------|
+| Required status checks | All CI jobs must pass: `test-backend`, `test-frontend`, `test-contract`, `lint` |
+| Required reviews | At least **1** approving review from a code owner |
+| No direct pushes | Force-push and direct push to `main` are disabled |
+| Up-to-date branch | Your branch must be current with `main` before merge (rebase or merge `main` in) |
 
 **Before marking ready for review, confirm:**
 

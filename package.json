@@ -9,7 +9,8 @@
     "verify:deployment": "NODE_PATH=./backend/node_modules npx ts-node --project scripts/tsconfig.json scripts/verify-deployment.ts",
     "secret:scan": "gitleaks dir --config .gitleaks.toml --redact .",
     "secret:scan:staged": "git diff --cached --patch --binary | gitleaks stdin --config .gitleaks.toml --redact",
-    "prepare": "husky"
+    "prepare": "husky",
+    "check:env-parity": "node scripts/check-environment-parity.js"
   },
   "devDependencies": {
     "husky": "^9.1.7",

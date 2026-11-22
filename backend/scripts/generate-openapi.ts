@@ -22,11 +22,27 @@ function scanDirectory(dir: string, fileList: string[] = []): string[] {
   return fileList;
 }
 
+// Recursively sort object keys so generated JSON is deterministic and CI diffs are meaningful
+function sortKeysDeep(value: any): any {
+  if (Array.isArray(value)) {
+    return value.map(sortKeysDeep);
+  }
+  if (value && typeof value === 'object') {
+    const sorted: Record<string, any> = {};
+    for (const key of Object.keys(value).sort()) {
+      sorted[key] = sortKeysDeep(value[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
 // Parse @openapi JSDoc blocks from code files
 function parseOpenApiAnnotations(): Record<string, any> {
   const srcDir = path.join(backendRoot, 'src');
   const files = scanDirectory(srcDir);
   const paths: Record<string, any> = {};
+  const parseErrors: string[] = [];
 
   for (const filePath of files) {
     const content = fs.readFileSync(filePath, 'utf8');
@@ -67,9 +83,18 @@ function parseOpenApiAnnotations(): Record<string, any> {
           }
         }
       } catch (err: any) {
-        console.error(`Error parsing @openapi block in ${filePath}:`, err.message);
+        parseErrors.push(`Error parsing @openapi block in ${filePath}: ${err.message}`);
       }
     }
+  }
+
+  if (parseErrors.length > 0) {
+    for (const message of parseErrors) {
+      console.error(message);
+    }
+    throw new Error(
+      `Failed to parse ${parseErrors.length} @openapi annotation block(s). Fix the annotations and re-run the generator.`
+    );
   }
 
   return paths;
@@ -102,10 +127,15 @@ function main() {
     }
   }
 
-  // Write out formatted spec
-  const formattedJson = JSON.stringify(spec, null, 2) + '\n';
+  // Write out formatted spec with deterministically sorted keys so CI diffs are meaningful
+  const formattedJson = JSON.stringify(sortKeysDeep(spec), null, 2) + '\n';
   fs.writeFileSync(openapiPath, formattedJson);
   console.log(`Generated openapi.json (version ${pkg.version}) containing ${Object.keys(spec.paths).length} routes.`);
 }
 
-main();
+try {
+  main();
+} catch (err: any) {
+  console.error(`OpenAPI generation failed: ${err?.message ?? err}`);
+  process.exit(1);
+}

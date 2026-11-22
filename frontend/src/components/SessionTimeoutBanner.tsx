@@ -7,8 +7,9 @@
  * Acceptance criteria:
  *  ✓ Appears when token has < 5 min remaining
  *  ✓ Countdown timer shows minutes and seconds remaining
- *  ✓ "Refresh Session" calls the token refresh endpoint
- *  ✓ On expiry without refresh, user is redirected to login (handled by hook)
+ *  ✓ "Extend session" calls the token refresh endpoint
+ *  ✓ On expiry without refresh, SessionExpiredModal prompts a reconnect
+ *    (Issue #1509) instead of redirecting away from the current page
  */
 "use client";
 
@@ -70,9 +71,9 @@ export default function SessionTimeoutBanner() {
             backgroundColor: "var(--token-warning, #D97706)",
             color: "var(--token-on-warning, #FFFFFF)",
           }}
-          aria-label="Refresh your session to stay logged in"
+          aria-label="Extend session — refresh your session to stay signed in"
         >
-          {refreshing ? "Refreshing…" : "Refresh Session"}
+          {refreshing ? "Extending…" : "Extend session"}
         </button>
       </div>
     </div>

@@ -135,14 +135,23 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       aria-disabled={isDisabled || undefined}
       onPointerDown={handlePointerDown}
       className={[
-        'inline-flex items-center justify-center gap-2 font-semibold transition',
+        'inline-flex items-center justify-center gap-2 font-semibold',
+        // Consistent interaction motion (#1470): 150–200ms ease-out for
+        // hover/active feedback. `motion-reduce:transition-none` disables the
+        // transition when the user requests reduced motion.
+        'transition-[background-color,border-color,color,box-shadow,transform]',
+        'duration-150 ease-out motion-reduce:transition-none',
+        // Subtle press feedback; suppressed under prefers-reduced-motion.
+        'active:scale-[0.98] motion-reduce:active:scale-100',
         // Focus-visible ring: 2px ring + 2px offset for WCAG 2.1 AA visibility
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
         'focus-visible:ring-[color:var(--token-accent)]',
         // Disabled: dim, non-interactive cursor, and no hover/active feedback
         'disabled:opacity-50 disabled:cursor-not-allowed',
         'disabled:hover:bg-inherit disabled:active:bg-inherit',
-        // Ripple class adds `position:relative; overflow:hidden` for primary only
+        // Ripple class adds `position:relative; overflow:hidden` for primary only.
+        // The ripple animation itself is disabled under prefers-reduced-motion
+        // in CSS, and the useRipple hook skips creating the wave node.
         isPrimary ? 'btn-ripple' : '',
         state === 'idle' ? variantClasses[variant] : '',
         stateClasses[state],

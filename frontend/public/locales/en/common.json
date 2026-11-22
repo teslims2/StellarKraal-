@@ -92,7 +92,14 @@
     },
     "priceHistory": "Price History",
     "locationUnknown": "Location not recorded",
-    "id": "ID"
+    "id": "ID",
+    "linkedLoans": "Active Loans Backed by This Collateral",
+    "noLinkedLoans": "No active loans are backed by this collateral.",
+    "loadingLoans": "Loading loans…",
+    "outstandingBalance": "Outstanding (XLM)",
+    "healthFactor": "Health Factor",
+    "editCollateral": "Edit",
+    "editDisabledTooltip": "Collateral is active and cannot be edited while backing a loan"
   },
   "wallet": {
     "connect": "Connect Wallet",

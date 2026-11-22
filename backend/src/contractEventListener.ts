@@ -33,6 +33,8 @@ const POLL_INTERVAL_MS = parseInt(process.env.EVENT_POLL_INTERVAL_MS || "5000", 
 
 let lastLedger = 0;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
+let inFlightProcessing: Promise<void> | null = null;
+let isStopping = false;
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -52,6 +54,29 @@ const eventLogSchema = z.object({
 });
 
 export type EventLogEntry = z.infer<typeof eventLogSchema>;
+
+/**
+ * Stop the contract event listener: clear the polling timer so no new polls are
+ * scheduled, and await any in-progress event processing so the listener is
+ * fully flushed before process exit.
+ */
+export async function stopContractEventListener(): Promise<void> {
+  isStopping = true;
+  if (pollTimer !== null) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+  if (inFlightProcessing) {
+    try {
+      await inFlightProcessing;
+    } catch (err) {
+      logger.warn("contract_event_listener", {
+        eventType: "contract.listener.stop_error",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+}
 
 function getConfiguredLogLevel(): LogLevel {
   const raw = (process.env.EVENT_LISTENER_LOG_LEVEL ?? "info").toLowerCase();

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import CurrencySettings from "@/components/CurrencySettings";
 import NotificationPreferences from "@/components/NotificationPreferences";
+import WebhookNotificationSettings from "@/components/WebhookNotificationSettings";
 import DensityToggle from "@/components/DensityToggle";
 import ToastPositionSelector from "@/components/ToastPositionSelector";
 import Link from "next/link";
@@ -28,6 +29,7 @@ export default function SettingsPage() {
         <CurrencySettings />
         <DensityToggle />
         <NotificationPreferences />
+        <WebhookNotificationSettings />
         <ToastPositionSelector />
       </div>
     </main>

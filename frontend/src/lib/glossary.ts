@@ -140,6 +140,24 @@ export const glossaryTerms = {
     definition:
       'An access control list for liquidators. When empty, the protocol operates in open mode (anyone can liquidate).',
   },
+  stroops: {
+    id: 'stroops',
+    term: 'Stroops',
+    definition:
+      'The smallest unit of XLM. 1 XLM = 10,000,000 stroops. Loan amounts and fees are expressed in stroops for precision.',
+  },
+  sorobanRpc: {
+    id: 'soroban-rpc',
+    term: 'Soroban RPC',
+    definition:
+      'The JSON-RPC endpoint used to submit transactions and query Soroban smart contract state on the Stellar network.',
+  },
+  collateralLock: {
+    id: 'collateral-lock',
+    term: 'Collateral Lock',
+    definition:
+      'An on-chain mechanism preventing pledged livestock from being used in multiple loans simultaneously. Released when a loan is repaid or liquidated.',
+  },
 } as const;
 
 export const glossaryArray = Object.values(glossaryTerms);

@@ -25,3 +25,7 @@ This caps each container's log footprint at **50 MB** (5 × 10 MB). Older files 
 ## Accessing and Searching Container Logs
 
 See the [ops runbook — container logs](../runbooks/container-logs.md) for commands to view, follow, and search logs in production.
+
+## Full Production Deployment
+
+For provisioning with Terraform and deploying to ECS Fargate, follow the [production deployment guide](./production-deployment-guide.md).

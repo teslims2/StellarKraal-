@@ -35,7 +35,8 @@ jest.mock('framer-motion', () => ({
   useReducedMotion: jest.fn().mockReturnValue(false),
 }));
 
-global.fetch = jest.fn();
+const fetchMock = jest.fn();
+global.fetch = fetchMock as unknown as typeof fetch;
 
 function renderWithToast(ui: React.ReactElement) {
   return render(
