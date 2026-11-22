@@ -1,6 +1,7 @@
 import { Server } from 'http';
 import logger from './logger';
 import { pool } from './connectionPool';
+import config from '../config';
 
 /**
  * Graceful shutdown manager for HTTP server and in-flight requests.
@@ -9,6 +10,28 @@ import { pool } from './connectionPool';
 
 let isShuttingDown = false;
 let inFlightRequests = 0;
+let signalHandlersRegistered = false;
+
+/**
+ * Optional cleanup hooks that must be flushed before the process exits.
+ * These are wired up by registerSignalHandlers so that the event listener
+ * and webhook retry service can drain their queues during shutdown.
+ */
+export interface ShutdownHooks {
+  /** Stops the contract event listener and flushes any pending events. */
+  stopEventListener?: () => Promise<void> | void;
+  /** Flushes the webhook retry queue and stops the retry worker. */
+  flushWebhookQueue?: () => Promise<void> | void;
+  /** Stops background jobs (e.g. health factor task). */
+  stopBackgroundJobs?: () => Promise<void> | void;
+  /** Any additional custom cleanup. */
+  onShutdownComplete?: () => Promise<void> | void;
+}
+
+export interface RegisterSignalHandlersOptions extends ShutdownHooks {
+  /** Overrides config.SHUTDOWN_TIMEOUT_MS when provided. */
+  shutdownTimeoutMs?: number;
+}
 
 export function isServerShuttingDown(): boolean {
   return isShuttingDown;
@@ -28,21 +51,24 @@ export function getInFlightRequestCount(): number {
 
 /**
  * Initiates graceful shutdown of the HTTP server.
- * 1. Stops accepting new connections
- * 2. Waits up to SHUTDOWN_TIMEOUT_MS for in-flight requests to complete
- * 3. Closes database connections and background jobs
- * 4. Exits with code 0 on success or 1 on timeout/error
+ * 1. Sets the draining flag so shutdownGuardMiddleware rejects new work with 503
+ * 2. Stops accepting new connections (httpServer.close)
+ * 3. Waits up to SHUTDOWN_TIMEOUT_MS for in-flight requests to complete
+ * 4. Flushes the event listener and webhook queue
+ * 5. Closes database connections and background jobs
+ * 6. Exits with code 0 on success or 1 on timeout/error
+ *
+ * Note: closeAllConnections() is intentionally NOT called before draining,
+ * because it would abort in-flight requests.
  *
  * @param httpServer Express HTTP server instance
  * @param shutdownTimeoutMs Timeout in milliseconds (should be >= 1000)
- * @param onShutdownComplete Optional callback before exit (for cleanup hooks)
- * @param healthFactorTask Optional health factor job to stop
+ * @param hooks Optional cleanup hooks (event listener, webhook queue, etc.)
  */
 export async function gracefulShutdown(
   httpServer: Server,
   shutdownTimeoutMs: number,
-  onShutdownComplete?: () => Promise<void>,
-  healthFactorTask?: { stop: () => void }
+  hooks: ShutdownHooks = {}
 ): Promise<void> {
   if (isShuttingDown) {
     logger.warn('Shutdown already in progress, ignoring signal');
@@ -55,13 +81,17 @@ export async function gracefulShutdown(
     inFlightRequests,
   });
 
-  // Stop accepting new connections immediately
-  httpServer.close(() => {
-    logger.info('HTTP server closed, no longer accepting new connections');
+  // Stop accepting new connections immediately. Existing connections
+  // (and therefore in-flight requests) are allowed to finish.
+  httpServer.close((err) => {
+    if (err) {
+      logger.error('Error closing HTTP server', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } else {
+      logger.info('HTTP server closed, no longer accepting new connections');
+    }
   });
-
-  // Prevent new connections from being accepted
-  httpServer.closeAllConnections?.();
 
   // Set a timeout to force shutdown if graceful shutdown takes too long
   const forceShutdownTimer = setTimeout(() => {
@@ -69,8 +99,14 @@ export async function gracefulShutdown(
       timeoutMs: shutdownTimeoutMs,
       inFlightRequests,
     });
+    // Only now is it safe to abort any remaining connections.
+    httpServer.closeAllConnections?.();
     process.exit(1);
   }, shutdownTimeoutMs);
+  // Do not keep the event loop alive solely because of this timer.
+  if (typeof forceShutdownTimer.unref === 'function') {
+    forceShutdownTimer.unref();
+  }
 
   try {
     // Wait for in-flight requests to complete (with polling)
@@ -80,21 +116,33 @@ export async function gracefulShutdown(
       finalInFlightCount: inFlightRequests,
     });
 
-    // Close database connections
-    pool.close();
-    logger.info('Database connection pool closed');
+    // Flush the contract event listener before shutting down the DB pool.
+    if (hooks.stopEventListener) {
+      await hooks.stopEventListener();
+      logger.info('Contract event listener stopped and flushed');
+    }
+
+    // Flush the webhook retry queue.
+    if (hooks.flushWebhookQueue) {
+      await hooks.flushWebhookQueue();
+      logger.info('Webhook queue flushed');
+    }
 
     // Stop background jobs
-    if (healthFactorTask?.stop) {
-      healthFactorTask.stop();
-      logger.info('Health factor job stopped');
+    if (hooks.stopBackgroundJobs) {
+      await hooks.stopBackgroundJobs();
+      logger.info('Background jobs stopped');
     }
 
     // Run any custom cleanup hooks
-    if (onShutdownComplete) {
-      await onShutdownComplete();
+    if (hooks.onShutdownComplete) {
+      await hooks.onShutdownComplete();
       logger.info('Custom shutdown cleanup completed');
     }
+
+    // Close database connections last, once all work has drained.
+    pool.close();
+    logger.info('Database connection pool closed');
 
     clearTimeout(forceShutdownTimer);
     logger.info('Graceful shutdown complete');
@@ -146,20 +194,37 @@ async function waitForInFlightRequests(timeoutMs: number): Promise<void> {
 /**
  * Register signal handlers for graceful shutdown.
  *
+ * This is idempotent: calling it more than once (e.g. from multiple startup
+ * paths) will not attach duplicate listeners. The first server passed in wins.
+ *
  * @param httpServer Express HTTP server instance
- * @param shutdownTimeoutMs Timeout in milliseconds
- * @param onShutdownComplete Optional callback before exit
- * @param healthFactorTask Optional health factor job to stop
+ * @param opts Shutdown hooks and optional timeout override
  */
 export function registerSignalHandlers(
   httpServer: Server,
-  shutdownTimeoutMs: number,
-  onShutdownComplete?: () => Promise<void>,
-  healthFactorTask?: { stop: () => void }
+  opts: RegisterSignalHandlersOptions = {}
 ): void {
+  if (signalHandlersRegistered) {
+    logger.warn('Signal handlers already registered, ignoring duplicate registration');
+    return;
+  }
+  signalHandlersRegistered = true;
+
+  const shutdownTimeoutMs =
+    typeof opts.shutdownTimeoutMs === 'number' && opts.shutdownTimeoutMs > 0
+      ? opts.shutdownTimeoutMs
+      : config.SHUTDOWN_TIMEOUT_MS;
+
+  const hooks: ShutdownHooks = {
+    stopEventListener: opts.stopEventListener,
+    flushWebhookQueue: opts.flushWebhookQueue,
+    stopBackgroundJobs: opts.stopBackgroundJobs,
+    onShutdownComplete: opts.onShutdownComplete,
+  };
+
   const handleSignal = (signal: string) => {
     logger.info(`Received ${signal}, initiating graceful shutdown`);
-    gracefulShutdown(httpServer, shutdownTimeoutMs, onShutdownComplete, healthFactorTask);
+    void gracefulShutdown(httpServer, shutdownTimeoutMs, hooks);
   };
 
   process.on('SIGTERM', () => handleSignal('SIGTERM'));
@@ -181,4 +246,14 @@ export function registerSignalHandlers(
     });
     handleSignal('unhandledRejection');
   });
+}
+
+/**
+ * Test-only helper to reset module state between test runs.
+ * Not intended for production use.
+ */
+export function __resetGracefulShutdownStateForTests(): void {
+  isShuttingDown = false;
+  inFlightRequests = 0;
+  signalHandlersRegistered = false;
 }

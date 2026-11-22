@@ -107,3 +107,68 @@ export const loanLiquidatedTotal = new Counter({
   labelNames: ["collateral_type", "status"] as const,
   registers: [registry],
 });
+
+// ── Active loan gauge ─────────────────────────────────────────────────────────
+
+/** Label values for the `state` label on {@link activeLoansTotal}. */
+export type ActiveLoanState = "Active" | "AtRisk";
+
+/**
+ * Number of open loans, segmented by state.
+ * Labels: state (Active, AtRisk)
+ *
+ * Refreshed on every `/metrics` scrape via {@link updateActiveLoansGauge}.
+ */
+export const activeLoansTotal = new Gauge({
+  name: "active_loans_total",
+  help: "Number of open loans segmented by state (Active, AtRisk)",
+  labelNames: ["state"] as const,
+  registers: [registry],
+});
+
+/**
+ * Recompute {@link activeLoansTotal} from a list of loans. Loans in any status
+ * other than `active` / `at_risk` are ignored. Both label values are always
+ * set (to 0 when empty) so the series never disappears from Prometheus.
+ */
+export function updateActiveLoansGauge(loans: ReadonlyArray<{ status: string }>): void {
+  let active = 0;
+  let atRisk = 0;
+  for (const loan of loans) {
+    if (loan.status === "active") active++;
+    else if (loan.status === "at_risk") atRisk++;
+  }
+  activeLoansTotal.set({ state: "Active" }, active);
+  activeLoansTotal.set({ state: "AtRisk" }, atRisk);
+}
+
+// ── Soroban RPC latency ───────────────────────────────────────────────────────
+
+/**
+ * Latency of individual Soroban RPC calls in seconds.
+ * Labels: method (getAccount, prepareTransaction, simulateTransaction, ...),
+ *         status (success, error)
+ */
+export const contractRpcDurationSeconds = new Histogram({
+  name: "contract_rpc_duration_seconds",
+  help: "Soroban RPC call latency in seconds",
+  labelNames: ["method", "status"] as const,
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+  registers: [registry],
+});
+
+/**
+ * Run `fn` and record its duration in {@link contractRpcDurationSeconds}
+ * under the given RPC `method`, labelled `success` or `error`.
+ */
+export async function timeContractRpc<T>(method: string, fn: () => Promise<T>): Promise<T> {
+  const end = contractRpcDurationSeconds.startTimer({ method });
+  try {
+    const result = await fn();
+    end({ status: "success" });
+    return result;
+  } catch (err) {
+    end({ status: "error" });
+    throw err;
+  }
+}

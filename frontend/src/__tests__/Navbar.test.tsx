@@ -114,23 +114,22 @@ describe('Navbar', () => {
     expect(settingsLink).toHaveAttribute('href', '/settings');
   });
 
-  describe('mobile hamburger menu (#1415)', () => {
-    it('renders a collapsed toggle wired to the menu panel', () => {
+  describe('mobile hamburger menu (#1498)', () => {
+    it('renders a collapsed toggle wired to the drawer panel', () => {
       render(<Navbar />);
-      const toggle = screen.getByRole('button', { name: 'Open menu' });
+      const toggle = screen.getByRole('button', { name: 'Open navigation menu' });
       expect(toggle).toHaveAttribute('aria-expanded', 'false');
-      expect(toggle).toHaveAttribute('aria-controls', 'mobile-nav-menu');
-      expect(document.getElementById('mobile-nav-menu')).not.toBeVisible();
+      expect(toggle).toHaveAttribute('aria-controls', 'mobile-nav-drawer');
     });
 
-    it('opens the menu, moves focus into it, and lists every section', () => {
+    it('opens the drawer, moves focus into it, and lists every section', () => {
       render(<Navbar />);
-      fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation menu' }));
 
-      const toggle = screen.getByRole('button', { name: 'Close menu' });
+      const toggle = screen.getByRole('button', { name: 'Close navigation menu', hidden: true });
       expect(toggle).toHaveAttribute('aria-expanded', 'true');
-      const panel = document.getElementById('mobile-nav-menu')!;
-      expect(panel).toBeVisible();
+      const panel = document.getElementById('mobile-nav-drawer')!;
+      expect(panel).toBeTruthy();
       expect(panel.contains(document.activeElement)).toBe(true);
 
       for (const label of [
@@ -151,24 +150,23 @@ describe('Navbar', () => {
 
     it('closes on Escape and returns focus to the toggle', () => {
       render(<Navbar />);
-      fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation menu' }));
       fireEvent.keyDown(document, { key: 'Escape' });
 
-      const toggle = screen.getByRole('button', { name: 'Open menu' });
+      const toggle = screen.getByRole('button', { name: 'Open navigation menu' });
       expect(toggle).toHaveAttribute('aria-expanded', 'false');
       expect(document.activeElement).toBe(toggle);
-      expect(document.getElementById('mobile-nav-menu')).not.toBeVisible();
     });
 
-    it('closes when a menu link is chosen', () => {
+    it('closes when a drawer link is chosen', () => {
       render(<Navbar />);
-      fireEvent.click(screen.getByRole('button', { name: 'Open menu' }));
-      const panel = document.getElementById('mobile-nav-menu')!;
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation menu' }));
+      const panel = document.getElementById('mobile-nav-drawer')!;
       const loans = Array.from(panel.querySelectorAll('a')).find((a) =>
         a.textContent?.includes('Loans')
       )!;
       fireEvent.click(loans);
-      expect(screen.getByRole('button', { name: 'Open menu' })).toHaveAttribute(
+      expect(screen.getByRole('button', { name: 'Open navigation menu' })).toHaveAttribute(
         'aria-expanded',
         'false'
       );

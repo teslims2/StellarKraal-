@@ -1,5 +1,7 @@
 # Understanding Liquidation
 
+> 🌍 **Language / Lugha:** You are reading the English version. | [Kiswahili →](../sw/understanding-liquidation-sw.md)
+
 This guide explains liquidation in plain language — what it is, when it happens, how the health factor works, and what you can do to protect your position.
 
 ---

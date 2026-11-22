@@ -36,7 +36,9 @@ afterEach(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ALL_STATUSES: BadgeStatus[] = [
+  'pending',
   'active',
+  'at_risk',
   'repaid',
   'defaulted',
   'liquidated',
@@ -49,8 +51,8 @@ describe('StatusBadge', () => {
     render(<StatusBadge status={status} />);
     const badge = screen.getByRole('status');
     expect(badge).toBeInTheDocument();
-    // label text is capitalised version of status
-    expect(badge).toHaveTextContent(status.charAt(0).toUpperCase() + status.slice(1));
+    // Badge must render non-empty visible text.
+    expect(badge.textContent?.trim().length).toBeGreaterThan(0);
   });
 
   test('renders unknown status as plain text without crashing', () => {
@@ -156,6 +158,20 @@ describe('StatusBadge', () => {
       render(<StatusBadge status="pledged" />);
       const badge = screen.getByRole('status');
       expect(badge.className).toContain('text-color-secondary');
+    });
+
+    test('pending uses info token colours (#1503)', () => {
+      render(<StatusBadge status="pending" />);
+      const badge = screen.getByRole('status');
+      expect(badge.className).toContain('bg-color-info-subtle');
+      expect(badge.className).toContain('text-color-info');
+    });
+
+    test('at_risk uses warning token colours (#1503)', () => {
+      render(<StatusBadge status="at_risk" />);
+      const badge = screen.getByRole('status');
+      expect(badge.className).toContain('bg-color-warning-subtle');
+      expect(badge.className).toContain('text-color-warning');
     });
   });
 

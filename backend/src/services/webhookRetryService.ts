@@ -77,10 +77,27 @@ export class WebhookRetryService {
   private readonly baseDelayMs: number;
   private readonly maxDelayMs: number;
 
+  /** Tracks in-flight delivery promises so shutdown can drain them. */
+  private readonly inFlight = new Set<Promise<unknown>>();
+
+  /** When true, no new retries are scheduled (set during graceful shutdown). */
+  private shuttingDown = false;
+
   constructor(options: WebhookRetryServiceOptions = {}) {
     this.maxAttempts = options.maxAttempts ?? 5;
     this.baseDelayMs = options.baseDelayMs ?? 1000;
     this.maxDelayMs = options.maxDelayMs ?? 16_000;
+  }
+
+  /**
+   * Track an in-flight promise so {@link flush} can await it.
+   */
+  private track<T>(promise: Promise<T>): Promise<T> {
+    this.inFlight.add(promise);
+    promise.finally(() => {
+      this.inFlight.delete(promise);
+    });
+    return promise;
   }
 
   /**
@@ -114,6 +131,9 @@ export class WebhookRetryService {
     payload: object,
     attemptNumber: number
   ): Promise<WebhookDelivery> {
+    if (this.shuttingDown) {
+      throw new Error("WebhookRetryService is shutting down; no new retries scheduled");
+    }
     const now = new Date();
     const backoffMs = this.calculateBackoff(attemptNumber);
     const nextRetryAt = new Date(now.getTime() + backoffMs);
@@ -179,6 +199,10 @@ export class WebhookRetryService {
    * @throws Error if the delivery is not found.
    */
   async processDelivery(deliveryId: string): Promise<WebhookDelivery> {
+    return this.track(this.processDeliveryInternal(deliveryId));
+  }
+
+  private async processDeliveryInternal(deliveryId: string): Promise<WebhookDelivery> {
     const delivery = inMemoryStore.get(deliveryId);
     if (!delivery) {
       throw new Error(`Delivery ${deliveryId} not found`);
@@ -353,13 +377,68 @@ export class WebhookRetryService {
   }
 
   /**
+   * Stop accepting new retries and drain all in-flight deliveries.
+   *
+   * Called by the graceful-shutdown orchestrator before process exit so the
+   * webhook queue is flushed. Resolves once every tracked delivery promise
+   * has settled (or the optional timeout elapses).
+   *
+   * @param timeoutMs - Maximum time to wait for in-flight work (default: 10 000).
+   * @returns `true` if fully drained, `false` if the timeout was hit.
+   */
+  async flush(timeoutMs = 10_000): Promise<boolean> {
+    this.shuttingDown = true;
+
+    if (this.inFlight.size === 0) {
+      return true;
+    }
+
+    const pending = Array.from(this.inFlight).map((p) =>
+      p.catch(() => undefined)
+    );
+
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+      if (typeof timer.unref === "function") {
+        timer.unref();
+      }
+    });
+
+    const drained = Promise.all(pending).then(() => true as const);
+
+    try {
+      return await Promise.race([drained, timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Whether the service has begun shutting down.
+   */
+  isShuttingDown(): boolean {
+    return this.shuttingDown;
+  }
+
+  /**
    * Reset the in-memory stores — **only for use in unit tests**.
    */
   __resetForTests(): void {
     inMemoryStore.clear();
     deadLetterStore.clear();
+    this.inFlight.clear();
+    this.shuttingDown = false;
   }
 }
 
 /** Default singleton instance. */
 export const webhookRetryService = new WebhookRetryService();
+
+/**
+ * Accessor for the shared webhook retry service, used by the graceful
+ * shutdown orchestrator to flush the webhook queue before exit.
+ */
+export function getWebhookRetryService(): WebhookRetryService {
+  return webhookRetryService;
+}

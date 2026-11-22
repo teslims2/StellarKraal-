@@ -111,3 +111,92 @@ describe("corsMiddleware preflight caching", () => {
     expect(res.headers["access-control-max-age"]).toBe("600");
   });
 });
+
+describe("corsMiddleware allowlist — per-environment origin enforcement (#1522)", () => {
+  const origEnv = process.env.NODE_ENV;
+  const origAllowedOrigins = process.env.ALLOWED_ORIGINS;
+  const origFrontendUrl = process.env.FRONTEND_URL;
+
+  afterEach(() => {
+    process.env.NODE_ENV = origEnv;
+    process.env.ALLOWED_ORIGINS = origAllowedOrigins;
+    process.env.FRONTEND_URL = origFrontendUrl;
+  });
+
+  function makeApp(allowedOriginsEnv: string) {
+    // Build a fresh module environment by directly using the parsed middleware
+    const { parseAllowedOrigins } = require("./cors");
+    const origins = parseAllowedOrigins(allowedOriginsEnv);
+    const app = express();
+    // Inline the same logic corsMiddleware uses so we can test with specific origins
+    const cors = require("cors");
+    app.use(
+      cors({
+        origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+          if (!origins) return cb(null, false);
+          if (origins.includes("*")) return cb(null, true);
+          if (!origin || origins.includes(origin)) return cb(null, true);
+          cb(null, false);
+        },
+        credentials: true,
+        maxAge: 600,
+      })
+    );
+    app.get("/api/v1/loans", (_req, res) => res.json({ ok: true }));
+    return app;
+  }
+
+  it("returns ACAO header for an explicitly allowlisted origin", async () => {
+    const app = makeApp("https://app.stellarkraal.example.com");
+    const res = await request(app)
+      .options("/api/v1/loans")
+      .set("Origin", "https://app.stellarkraal.example.com")
+      .set("Access-Control-Request-Method", "GET");
+    expect(res.headers["access-control-allow-origin"]).toBe("https://app.stellarkraal.example.com");
+  });
+
+  it("omits ACAO header for an origin not in the allowlist", async () => {
+    const app = makeApp("https://app.stellarkraal.example.com");
+    const res = await request(app)
+      .options("/api/v1/loans")
+      .set("Origin", "https://evil.example.com")
+      .set("Access-Control-Request-Method", "GET");
+    expect(res.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("allows all origins listed in a comma-separated ALLOWED_ORIGINS", async () => {
+    const app = makeApp(
+      "https://app.stellarkraal.example.com,https://staging.stellarkraal.example.com"
+    );
+    for (const origin of [
+      "https://app.stellarkraal.example.com",
+      "https://staging.stellarkraal.example.com",
+    ]) {
+      const res = await request(app)
+        .options("/api/v1/loans")
+        .set("Origin", origin)
+        .set("Access-Control-Request-Method", "GET");
+      expect(res.headers["access-control-allow-origin"]).toBe(origin);
+    }
+  });
+
+  it("preflight OPTIONS returns 204 within acceptable time", async () => {
+    const app = makeApp("https://app.stellarkraal.example.com");
+    const start = Date.now();
+    const res = await request(app)
+      .options("/api/v1/loans")
+      .set("Origin", "https://app.stellarkraal.example.com")
+      .set("Access-Control-Request-Method", "GET")
+      .set("Access-Control-Request-Headers", "Authorization,Content-Type");
+    const elapsed = Date.now() - start;
+    // Preflight must respond quickly (well under 200ms in process)
+    expect(elapsed).toBeLessThan(200);
+    expect([200, 204]).toContain(res.status);
+  });
+
+  it("rejects wildcard in production", () => {
+    process.env.NODE_ENV = "production";
+    const { parseAllowedOrigins } = require("./cors");
+    expect(() => parseAllowedOrigins("*")).toThrow(/wildcard.*not permitted in production/i);
+  });
+});
