@@ -1,0 +1,44 @@
+name: Environment parity
+
+on:
+  pull_request:
+    paths:
+      - ".nvmrc"
+      - "backend/Dockerfile"
+      - "frontend/Dockerfile"
+      - "docker-compose*.yml"
+      - ".env.example"
+      - "terraform/compute.tf"
+      - "terraform/variables.tf"
+      - ".github/workflows/**"
+      - "scripts/check-environment-parity.js"
+      - "scripts/validate-env-example.js"
+      - "docs/development/environment-parity.md"
+      - "docs/guides/environment-variables.md"
+      - "backend/src/config.ts"
+  push:
+    branches: [main]
+    paths:
+      - ".nvmrc"
+      - "backend/Dockerfile"
+      - "frontend/Dockerfile"
+      - "docker-compose*.yml"
+      - ".env.example"
+      - "terraform/compute.tf"
+      - "terraform/variables.tf"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    name: Check Node, image tag and env parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check environment parity
+        run: node scripts/check-environment-parity.js
+      - name: Check .env.example vs config.ts and docs
+        run: node scripts/validate-env-example.js

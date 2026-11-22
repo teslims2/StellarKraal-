@@ -84,7 +84,7 @@ describe('csvFilename', () => {
     expect(name.startsWith('loans-')).toBe(true);
   });
 
-  it('includes today's date in YYYY-MM-DD format', () => {
+  it("includes today's date in YYYY-MM-DD format", () => {
     const today = new Date().toISOString().slice(0, 10);
     expect(csvFilename('loans')).toBe(`loans-${today}.csv`);
   });

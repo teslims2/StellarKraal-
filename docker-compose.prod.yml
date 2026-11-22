@@ -54,6 +54,7 @@ services:
         max-file: "3"
 
   backend:
+    image: stellarkraal-backend:${IMAGE_TAG:-latest}
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -91,6 +92,7 @@ services:
         max-file: "3"
 
   frontend:
+    image: stellarkraal-frontend:${IMAGE_TAG:-latest}
     build:
       context: ./frontend
       dockerfile: Dockerfile

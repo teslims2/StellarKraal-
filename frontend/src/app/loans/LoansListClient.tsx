@@ -19,6 +19,8 @@ import PageTransition from '@/components/PageTransition';
 import Card from '@/components/Card';
 import ScrollToTopButton from '@/components/ScrollToTopButton';
 import Spinner from '@/components/Spinner';
+import Pagination from '@/components/Pagination';
+import { usePaginationParams } from '@/hooks/usePagination';
 import { badgeVariants } from '@/lib/animations';
 import { useScrollPosition } from '@/hooks/useScrollPosition';
 import { useSearchFilter } from '@/hooks/useSearchFilter';
@@ -60,7 +62,10 @@ const LOAN_CSV_COLUMNS: CsvColumn<Loan>[] = [
   { header: 'Loan ID', value: (loan) => loan.id },
   { header: 'Status', value: (loan) => loan.status },
   { header: 'Amount (XLM)', value: (loan) => String(loan.amount) },
-  { header: 'Health Factor', value: (loan) => loan.health_factor != null ? String(loan.health_factor) : '' },
+  {
+    header: 'Health Factor',
+    value: (loan) => (loan.health_factor != null ? String(loan.health_factor) : ''),
+  },
   { header: 'Collateral ID', value: (loan) => loan.collateralId ?? '' },
   { header: 'Created At', value: (loan) => loan.createdAt },
   { header: 'Updated At', value: (loan) => loan.updatedAt ?? '' },
@@ -166,13 +171,23 @@ function ExportCsvButton({ loans }: { loans: Loan[] }) {
 
 // ── Sort indicator icon ────────────────────────────────────────────────────────
 
-function SortIcon({ column, sortBy, sortDir }: { column: SortKey; sortBy: SortKey; sortDir: SortDir }) {
+function SortIcon({
+  column,
+  sortBy,
+  sortDir,
+}: {
+  column: SortKey;
+  sortBy: SortKey;
+  sortDir: SortDir;
+}) {
   if (column !== sortBy) {
     return <ChevronsUpDown className="h-3.5 w-3.5 opacity-40" aria-hidden="true" />;
   }
-  return sortDir === 'asc'
-    ? <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
-    : <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />;
+  return sortDir === 'asc' ? (
+    <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+  ) : (
+    <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+  );
 }
 
 // ── Table (≥ 640 px) ───────────────────────────────────────────────────────────
@@ -210,11 +225,7 @@ function LoansTable({
                 key={key}
                 scope="col"
                 aria-sort={
-                  sortBy === key
-                    ? sortDir === 'asc'
-                      ? 'ascending'
-                      : 'descending'
-                    : 'none'
+                  sortBy === key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'
                 }
                 className="px-4 py-3 text-left font-semibold text-brown/70 dark:text-cream/70 whitespace-nowrap"
               >
@@ -265,8 +276,8 @@ function LoansTable({
               <td className="px-4 py-3 text-brown/70 dark:text-cream/70 tabular-nums">
                 {loan.health_factor != null
                   ? (loan.health_factor > 100
-                    ? (loan.health_factor / 10_000).toFixed(2)
-                    : loan.health_factor.toFixed(2)) + 'x'
+                      ? (loan.health_factor / 10_000).toFixed(2)
+                      : loan.health_factor.toFixed(2)) + 'x'
                   : '—'}
               </td>
               <td className="px-4 py-3 font-mono text-xs text-brown/60 dark:text-cream/60 truncate max-w-[10rem]">
@@ -295,7 +306,10 @@ function LoansCardList({
     <ul className="space-y-2" aria-label={t('loans.title', 'Loans')}>
       {loans.map((loan) => (
         <li key={loan.id}>
-          <Link href={`/loans/${loan.id}`} className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold rounded-xl">
+          <Link
+            href={`/loans/${loan.id}`}
+            className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold rounded-xl"
+          >
             <Card
               title={`${t('loans.loanId', 'Loan')} #${loan.id}`}
               subtitle={`${loan.borrower.slice(0, 6)}…${loan.borrower.slice(-4)}`}
@@ -307,9 +321,11 @@ function LoansCardList({
                   </p>
                   {loan.health_factor != null && (
                     <p className="text-xs text-brown/50 dark:text-cream/50 tabular-nums">
-                      HF {loan.health_factor > 100
+                      HF{' '}
+                      {loan.health_factor > 100
                         ? (loan.health_factor / 10_000).toFixed(2)
-                        : loan.health_factor.toFixed(2)}x
+                        : loan.health_factor.toFixed(2)}
+                      x
                     </p>
                   )}
                 </div>
@@ -326,7 +342,11 @@ function LoansCardList({
 // ── Main list content ──────────────────────────────────────────────────────────
 
 function LoanListContent() {
-  const [loans, setLoans] = useState<Loan[]>([]);
+  // Server-driven pagination (#1467): page and pageSize come from the URL and
+  // only the requested page is fetched from the API.
+  const { page, pageSize, setPage, setPageSize } = usePaginationParams(10);
+  const [pageLoans, setPageLoans] = useState<Loan[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const reduced = useReducedMotion();
   const { t } = useI18n();
@@ -345,8 +365,7 @@ function LoanListContent() {
 
   const handleSort = useCallback(
     (key: SortKey) => {
-      const newDir: SortDir =
-        sortBy === key ? (sortDir === 'asc' ? 'desc' : 'asc') : 'asc';
+      const newDir: SortDir = sortBy === key ? (sortDir === 'asc' ? 'desc' : 'asc') : 'asc';
 
       const params = new URLSearchParams(searchParams.toString());
       params.set('sortBy', key);
@@ -357,33 +376,51 @@ function LoanListContent() {
   );
 
   // Filter state from URL
-  const {
-    filters,
-    debouncedQuery,
-    clearAll,
-  } = useSearchFilter();
+  const { filters, debouncedQuery, clearAll } = useSearchFilter();
 
   useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
-    fetch(`${API}/api/loans`)
+    fetch(`${API}/api/loans?page=${page}&pageSize=${pageSize}`, { signal: controller.signal })
       .then((r) => r.json())
-      .then((data: Loan[]) => {
-        const list = Array.isArray(data) ? data : [];
-        setLoans(list);
+      .then((data: Loan[] | { data?: Loan[]; total?: number }) => {
+        if (Array.isArray(data)) {
+          // Unpaginated response (older API): slice the page on the client.
+          const start = (page - 1) * pageSize;
+          setPageLoans(data.slice(start, start + pageSize));
+          setTotal(data.length);
+          return;
+        }
+        const items = Array.isArray(data?.data) ? data.data : [];
+        setPageLoans(items);
+        setTotal(typeof data?.total === 'number' ? data.total : items.length);
       })
-      .catch(() => setLoans([]))
-      .finally(() => setLoading(false));
-  }, []);
+      .catch((err: unknown) => {
+        if ((err as Error)?.name === 'AbortError') return;
+        setPageLoans([]);
+        setTotal(0);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [page, pageSize]);
 
-  // Filter
-  const filtered = loans.filter((loan) => {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  // If the URL points past the last page (e.g. after rows were removed), move to the last page.
+  useEffect(() => {
+    if (!loading && total > 0 && page > totalPages) setPage(totalPages);
+  }, [loading, total, page, totalPages, setPage]);
+
+  // Filter (applied to the current page; server-side filters are not yet supported)
+  const filtered = pageLoans.filter((loan) => {
     const matchesQuery =
       !debouncedQuery ||
       loan.id.toLowerCase().includes(debouncedQuery.toLowerCase()) ||
       loan.borrower.toLowerCase().includes(debouncedQuery.toLowerCase());
 
-    const matchesStatus =
-      filters.statuses.length === 0 || filters.statuses.includes(loan.status);
+    const matchesStatus = filters.statuses.length === 0 || filters.statuses.includes(loan.status);
 
     const loanDate = new Date(loan.createdAt);
     const matchesDateFrom = !filters.dateFrom || loanDate >= new Date(filters.dateFrom);
@@ -406,7 +443,7 @@ function LoanListContent() {
         <ExportCsvButton loans={sorted} />
       </div>
 
-      {loading ? (
+      {loading && pageLoans.length === 0 ? (
         <p className="text-brown/60 text-sm" role="status" aria-live="polite">
           {t('loans.loading', 'Loading…')}
         </p>
@@ -415,7 +452,10 @@ function LoanListContent() {
           {t('loans.noResults', 'No loans match your filters.')}
         </p>
       ) : (
-        <>
+        <div
+          aria-busy={loading}
+          className={loading ? 'opacity-60 transition-opacity' : 'transition-opacity'}
+        >
           {/* Table layout — visible on sm and up (≥ 640 px) */}
           <div className="hidden sm:block" data-testid="loans-table">
             <LoansTable
@@ -432,7 +472,18 @@ function LoanListContent() {
           <div className="block sm:hidden" data-testid="loans-cards">
             <LoansCardList loans={sorted} reduced={reduced} t={t} />
           </div>
-        </>
+        </div>
+      )}
+
+      {total > 0 && (
+        <Pagination
+          page={Math.min(page, totalPages)}
+          totalPages={totalPages}
+          limit={pageSize}
+          onPageChange={setPage}
+          onLimitChange={setPageSize}
+          loading={loading}
+        />
       )}
     </div>
   );

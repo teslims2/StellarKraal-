@@ -49,8 +49,12 @@ const DEFAULT_RETRIES = 2;
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 
 function resolveBaseUrl(): string {
-  const env = typeof import.meta !== 'undefined' ? (import.meta as { env?: Record<string, string> }).env : undefined;
-  return env?.VITE_API_BASE_URL ?? '';
+  // Next.js exposes client-side env vars via process.env.NEXT_PUBLIC_*. The
+  // previous implementation read import.meta.env.VITE_API_BASE_URL, a Vite-only
+  // API that is never defined in this Next.js app (so the base URL was always
+  // empty). Reading process.env preserves that empty-string default when the
+  // variable is unset and actually honours NEXT_PUBLIC_API_URL when configured.
+  return process.env.NEXT_PUBLIC_API_URL ?? '';
 }
 
 function buildUrl(path: string): string {

@@ -24,6 +24,13 @@ env:
   CONTAINER_NAME: ${{ vars.ECS_CONTAINER_NAME }}
   BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/stellarkraal-backend
 
+# Concurrency (issue #1502): group runs by branch/ref. Production/staging
+# deploys and Terraform applies are NEVER cancelled (cancel-in-progress:
+# false) to prevent partial ECS deploys or partial infrastructure applies
+# — a queued run waits for the in-progress one to finish instead.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -35,6 +42,30 @@ jobs:
       id-token: write
 
     steps:
+      - name: Notify Slack — staging deployment started
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          IMAGE_REF: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL not set; skipping notification."
+            exit 0
+          fi
+          curl -sS -X POST -H 'Content-type: application/json' \
+            --data "{
+              \"text\": \":rocket: *Staging deployment started* — ${{ github.repository }}\",
+              \"attachments\": [{
+                \"color\": \"#439FE0\",
+                \"fields\": [
+                  {\"title\": \"Environment\",   \"value\": \"staging\",                              \"short\": true},
+                  {\"title\": \"Image tag\",      \"value\": \"${IMAGE_REF}\",                        \"short\": true},
+                  {\"title\": \"Triggered by\",   \"value\": \"${{ github.actor }}\",                 \"short\": true},
+                  {\"title\": \"Workflow run\",   \"value\": \"<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>\", \"short\": true}
+                ]
+              }]
+            }" \
+            "$SLACK_WEBHOOK_URL"
+
       - name: Resolve image digest
         id: image
         run: |
@@ -66,6 +97,10 @@ jobs:
           container-name: ${{ env.CONTAINER_NAME }}
           image: ${{ steps.image.outputs.image }}
 
+      - name: Record deployment start time
+        id: start-time
+        run: echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Deploy to ECS and wait for stability
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
@@ -75,15 +110,52 @@ jobs:
           # Blocks until the service reaches a steady state (rolling update).
           wait-for-service-stability: true
 
+      - name: Notify Slack — staging deployment succeeded
+        if: success()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL not set; skipping notification."
+            exit 0
+          fi
+          DURATION=$(( $(date +%s) - ${{ steps.start-time.outputs.start }} ))
+          curl -sS -X POST -H 'Content-type: application/json' \
+            --data "{
+              \"text\": \":white_check_mark: *Staging deployment succeeded* — ${{ github.repository }}\",
+              \"attachments\": [{
+                \"color\": \"good\",
+                \"fields\": [
+                  {\"title\": \"Environment\",        \"value\": \"staging\",                              \"short\": true},
+                  {\"title\": \"Image digest\",        \"value\": \"${{ steps.image.outputs.digest }}\",   \"short\": true},
+                  {\"title\": \"Duration\",            \"value\": \"${DURATION}s\",                        \"short\": true},
+                  {\"title\": \"Health check\",        \"value\": \"passed\",                              \"short\": true},
+                  {\"title\": \"Workflow run\",        \"value\": \"<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>\", \"short\": false}
+                ]
+              }]
+            }" \
+            "$SLACK_WEBHOOK_URL"
+
       - name: Notify Slack on failure
         if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           if [ -z "$SLACK_WEBHOOK_URL" ]; then
             echo "SLACK_WEBHOOK_URL not set; skipping notification."
             exit 0
           fi
           curl -sS -X POST -H 'Content-type: application/json' \
-            --data "{\"text\":\":rotating_light: Staging deploy failed for ${{ github.repository }} (${{ env.ECS_SERVICE }}). See ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            --data "{
+              \"text\": \":x: *Staging deployment failed* — ${{ github.repository }}\",
+              \"attachments\": [{
+                \"color\": \"danger\",
+                \"fields\": [
+                  {\"title\": \"Environment\",   \"value\": \"staging\",                                    \"short\": true},
+                  {\"title\": \"Service\",        \"value\": \"${{ env.ECS_SERVICE }}\",                    \"short\": true},
+                  {\"title\": \"Triggered by\",   \"value\": \"${{ github.actor }}\",                       \"short\": true},
+                  {\"title\": \"Failed run\",     \"value\": \"<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>\", \"short\": false}
+                ]
+              }]
+            }" \
             "$SLACK_WEBHOOK_URL"
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

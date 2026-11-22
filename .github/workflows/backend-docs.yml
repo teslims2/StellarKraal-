@@ -10,6 +10,13 @@ on:
       - "backend/src/**/*.ts"
       - "backend/typedoc.json"
 
+# Concurrency (issue #1502): group runs by branch/ref so a new push
+# cancels stale, in-progress runs on the same branch (PRs and feature
+# branches). Runs on the default branch (main) are never cancelled so
+# release CI always completes instead of being interrupted.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   typedoc:
     name: Generate TypeDoc

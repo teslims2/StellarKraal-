@@ -97,9 +97,9 @@ resource "aws_ecs_task_definition" "app" {
   container_definitions = jsonencode([
     {
       name      = "backend"
-      image     = "stellarkraal-backend:latest"
-      cpu       = var.backend_task_cpu
-      memory    = var.backend_task_memory
+      image     = "stellarkraal-backend:${var.image_tag}"
+      cpu       = 128
+      memory    = 256
       essential = true
       portMappings = [
         {
@@ -110,9 +110,9 @@ resource "aws_ecs_task_definition" "app" {
     },
     {
       name      = "frontend"
-      image     = "stellarkraal-frontend:latest"
-      cpu       = var.frontend_task_cpu
-      memory    = var.frontend_task_memory
+      image     = "stellarkraal-frontend:${var.image_tag}"
+      cpu       = 128
+      memory    = 256
       essential = true
       portMappings = [
         {

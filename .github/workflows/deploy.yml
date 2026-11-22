@@ -5,12 +5,46 @@ on:
     branches:
       - main
 
+# Concurrency (issue #1502): group runs by branch/ref. Production/staging
+# deploys and Terraform applies are NEVER cancelled (cancel-in-progress:
+# false) to prevent partial ECS deploys or partial infrastructure applies
+# — a queued run waits for the in-progress one to finish instead.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Lets the job mint a GitHub OIDC token for cosign keyless signing.
+      id-token: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Notify Slack — deployment started
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL not set; skipping notification"
+            exit 0
+          fi
+          curl -sS -X POST -H 'Content-type: application/json' \
+            --data "{
+              \"text\": \":rocket: *Deployment started* — ${{ github.repository }}\",
+              \"attachments\": [{
+                \"color\": \"#439FE0\",
+                \"fields\": [
+                  {\"title\": \"Environment\",   \"value\": \"production\",                              \"short\": true},
+                  {\"title\": \"Image tag\",      \"value\": \"${{ github.sha }}\",                      \"short\": true},
+                  {\"title\": \"Triggered by\",   \"value\": \"${{ github.actor }}\",                    \"short\": true},
+                  {\"title\": \"Workflow run\",   \"value\": \"<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>\", \"short\": true}
+                ]
+              }]
+            }" \
+            "$SLACK_WEBHOOK_URL"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -33,6 +67,36 @@ jobs:
           docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          # Capture the pushed digest so cosign can sign/verify a precise ref.
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" | cut -d@ -f2)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      # Sign the image that this workflow will deploy. cosign reads the ECR
+      # credentials populated by amazon-ecr-login above to push the signature.
+      - name: Sign ECR image with GitHub OIDC
+        env:
+          IMAGE: ${{ steps.build-image.outputs.image }}
+          DIGEST: ${{ steps.build-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "$IMAGE@$DIGEST"
+
+      # Refuse to deploy if the image was not signed by this workflow's OIDC
+      # identity. This proves the image was built in CI and not tampered with.
+      - name: Verify image signature before deploying
+        env:
+          IMAGE: ${{ steps.build-image.outputs.image }}
+          DIGEST: ${{ steps.build-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign verify "$IMAGE@$DIGEST" \
+            --certificate-identity-regexp "https://github\.com/${{ github.repository }}/.github/workflows/deploy\.yml@.*" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
       - name: Download current task definition
         run: |
@@ -48,6 +112,10 @@ jobs:
           container-name: ${{ secrets.ECS_CONTAINER_NAME }}
           image: ${{ steps.build-image.outputs.image }}
 
+      - name: Record deployment start time
+        id: start-time
+        run: echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Deploy to ECS Fargate
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
@@ -55,6 +123,32 @@ jobs:
           service: ${{ secrets.ECS_SERVICE }}
           cluster: ${{ secrets.ECS_CLUSTER }}
           wait-for-service-stability: true
+
+      - name: Notify Slack — deployment succeeded
+        if: success()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL not set; skipping notification"
+            exit 0
+          fi
+          DURATION=$(( $(date +%s) - ${{ steps.start-time.outputs.start }} ))
+          curl -sS -X POST -H 'Content-type: application/json' \
+            --data "{
+              \"text\": \":white_check_mark: *Deployment succeeded* — ${{ github.repository }}\",
+              \"attachments\": [{
+                \"color\": \"good\",
+                \"fields\": [
+                  {\"title\": \"Environment\",        \"value\": \"production\",                              \"short\": true},
+                  {\"title\": \"Image tag\",           \"value\": \"${{ github.sha }}\",                      \"short\": true},
+                  {\"title\": \"Duration\",            \"value\": \"${DURATION}s\",                            \"short\": true},
+                  {\"title\": \"Health check\",        \"value\": \"passed\",                                  \"short\": true},
+                  {\"title\": \"Workflow run\",        \"value\": \"<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>\", \"short\": false}
+                ]
+              }]
+            }" \
+            "$SLACK_WEBHOOK_URL"
 
       - name: Notify Slack on failure
         if: failure()
@@ -66,5 +160,16 @@ jobs:
             exit 0
           fi
           curl -sS -X POST -H 'Content-type: application/json' \
-            --data "{\"text\":\"ECS Fargate deployment to staging failed for ${{ github.repository }}@${{ github.sha }}. See ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            --data "{
+              \"text\": \":x: *Deployment failed* — ${{ github.repository }}\",
+              \"attachments\": [{
+                \"color\": \"danger\",
+                \"fields\": [
+                  {\"title\": \"Environment\",   \"value\": \"production\",  \"short\": true},
+                  {\"title\": \"Image tag\",      \"value\": \"${{ github.sha }}\",  \"short\": true},
+                  {\"title\": \"Triggered by\",   \"value\": \"${{ github.actor }}\",  \"short\": true},
+                  {\"title\": \"Failed run\",     \"value\": \"<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>\", \"short\": false}
+                ]
+              }]
+            }" \
             "$SLACK_WEBHOOK_URL"
