@@ -2396,6 +2396,13 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   errorHandler(err, req, res, next);
 });
 
+const healthFactorTask = scheduleHealthFactorJob();
+scheduleRepaymentReminderJob();
+
+// ── Graceful Shutdown ─────────────────────────────────────────────────────────
+
+const SHUTDOWN_TIMEOUT_MS = parseInt(config.SHUTDOWN_TIMEOUT_MS, 10);
+
 let httpServer: import('http').Server | undefined;
 if (process.env.NODE_ENV !== 'test') {
   const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -2406,19 +2413,13 @@ if (process.env.NODE_ENV !== 'test') {
       logLevel: process.env.LOG_LEVEL || 'info',
     });
   });
-  registerSignalHandlers(httpServer, SHUTDOWN_TIMEOUT_MS, undefined, healthFactorTask);
-}
 
-const healthFactorTask = scheduleHealthFactorJob();
-scheduleRepaymentReminderJob();
-
-// ── Graceful Shutdown ─────────────────────────────────────────────────────────
-
-const SHUTDOWN_TIMEOUT_MS = parseInt(config.SHUTDOWN_TIMEOUT_MS, 10);
-
-// Register signal handlers for graceful shutdown
-if (httpServer) {
-  registerSignalHandlers(httpServer, SHUTDOWN_TIMEOUT_MS, undefined, healthFactorTask);
+  // Register signal handlers exactly once, after the HTTP server is created.
+  // SHUTDOWN_TIMEOUT_MS is applied uniformly across all startup paths.
+  registerSignalHandlers(httpServer, {
+    shutdownTimeoutMs: SHUTDOWN_TIMEOUT_MS,
+    healthFactorTask,
+  });
 }
 
 // Redirect unversioned routes to v1 with deprecation warning

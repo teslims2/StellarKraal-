@@ -10,10 +10,13 @@ on:
     paths:
       - "contracts/**"
 
-# Allow one concurrent publish; cancel in-flight runs on the same branch.
+# Concurrency (issue #1502): group runs by branch/ref so a new push cancels
+# stale, in-progress runs on the same branch (PRs and feature branches). Runs
+# on the default branch (main) are never cancelled so the gh-pages publish
+# always completes instead of being interrupted mid-deploy.
 concurrency:
   group: rust-docs-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   doc:

@@ -16,6 +16,9 @@
  * liquidated  → danger   (bg-color-danger-subtle  / text-color-danger)
  * available   → success  (same as active)
  * pledged     → secondary(bg-color-secondary/15   / text-color-secondary)
+ * pending     → warning  (bg-color-warning-subtle / text-color-warning)
+ * confirmed   → success  (bg-color-success-subtle / text-color-success)
+ * failed      → danger   (bg-color-danger-subtle  / text-color-danger)
  *
  * All token colours pass WCAG AA (≥ 4.5:1) for normal text on both
  * light and dark backgrounds — verified in docs/guides/design-tokens.md.
@@ -38,7 +41,8 @@ import Tooltip from './Tooltip';
 
 export type LoanStatus = 'active' | 'repaid' | 'defaulted' | 'liquidated';
 export type CollateralStatus = 'available' | 'pledged';
-export type BadgeStatus = LoanStatus | CollateralStatus;
+export type TransactionStatus = 'pending' | 'confirmed' | 'failed';
+export type BadgeStatus = LoanStatus | CollateralStatus | TransactionStatus;
 
 export const STATUS_TOOLTIPS = {
   active: 'This loan is currently active with an outstanding balance',
@@ -47,6 +51,9 @@ export const STATUS_TOOLTIPS = {
   liquidated: 'This loan was liquidated due to insufficient collateral',
   available: 'This collateral is available to pledge',
   pledged: 'This collateral is pledged against a loan',
+  pending: 'This transaction is pending confirmation on the Stellar network',
+  confirmed: 'This transaction has been confirmed on the Stellar network',
+  failed: 'This transaction failed and was not applied on-chain',
 } as const satisfies Record<BadgeStatus, string>;
 
 interface Config {
@@ -100,6 +107,27 @@ const STATUS_CONFIG: Record<BadgeStatus, Config> = {
     icon: '⬡',
     ariaLabel: 'Status: Pledged',
     tooltip: STATUS_TOOLTIPS.pledged,
+  },
+  pending: {
+    label: 'Pending',
+    classes: 'bg-color-warning-subtle text-color-warning',
+    icon: '◷',
+    ariaLabel: 'Status: Pending',
+    tooltip: STATUS_TOOLTIPS.pending,
+  },
+  confirmed: {
+    label: 'Confirmed',
+    classes: 'bg-color-success-subtle text-color-success',
+    icon: '✓',
+    ariaLabel: 'Status: Confirmed',
+    tooltip: STATUS_TOOLTIPS.confirmed,
+  },
+  failed: {
+    label: 'Failed',
+    classes: 'bg-color-danger-subtle text-color-danger',
+    icon: '✕',
+    ariaLabel: 'Status: Failed',
+    tooltip: STATUS_TOOLTIPS.failed,
   },
 };
 

@@ -89,10 +89,10 @@
   --token-accent: #f8ca47;
   --token-danger: #f87171;
   --token-danger-subtle: #450a0a;
-  --token-on-danger: #ffffff;
+  --token-on-danger: #1a1007;
   --token-success: #4ade80;
   --token-success-subtle: #052e16;
-  --token-on-success: #ffffff;
+  --token-on-success: #1a1007;
   --token-warning: #fbd049;
   --token-warning-subtle: #451a03;
   --token-on-warning: #1a1007;
@@ -766,6 +766,48 @@ video {
 .dot-grid {
   background-image: radial-gradient(var(--token-border) 1px, transparent 1px);
   background-size: 20px 20px;
+}
+
+/* ── Micro-animations (#1470) ────────────────────────────────────────────────
+   Purposeful motion feedback for interactions:
+   • `.animate-fade-slide-in` — list items fade + slide in on load / addition.
+   • `.panel-transition` — smooth height/opacity transition for panels and
+     accordions (pair with a height change, e.g. via grid-template-rows or
+     max-height, to animate expansion).
+   All motion is disabled under prefers-reduced-motion (see block below).
+*/
+@keyframes fade-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-slide-in {
+  animation: fade-slide-in 200ms ease-out both;
+}
+
+.panel-transition {
+  overflow: hidden;
+  transition:
+    height 200ms ease-out,
+    max-height 200ms ease-out,
+    opacity 200ms ease-out;
+}
+
+/* Reduced-motion: disable all micro-animations and transitions globally */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-slide-in {
+    animation: none;
+  }
+
+  .panel-transition {
+    transition: none;
+  }
 }
 
 /* ── Print / Save as PDF layout (#1247) ──────────────────────────────────────

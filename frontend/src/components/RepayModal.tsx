@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useContractError } from '../hooks/useContractError';
-import { calculateHealthFactor, calculateMinimumRepayment } from '../lib/loanCalculations';
+import { useToast } from '../hooks/useToast';
 
 interface RepayModalProps {
   isOpen: boolean;
@@ -37,6 +37,7 @@ export default function RepayModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [result, setResult] = useState<{ healthFactor: number; remainingBalance: number } | null>(null);
   const { error, handleError, clearError } = useContractError();
+  const { showSuccess, showError } = useToast();
 
   const isFullRepay = repayMode === 'full';
 
@@ -103,9 +104,26 @@ export default function RepayModal({
       const response = await onRepay(proposedAmount);
       setResult(response);
       setStep('success');
+      showSuccess(
+        response.remainingBalance <= 0
+          ? `Loan fully repaid (${formatAmount(proposedAmount)}).`
+          : `Repayment of ${formatAmount(proposedAmount)} confirmed. Remaining balance: ${formatAmount(response.remainingBalance)}.`,
+        { link: { label: 'View loan', href: '/loans' } },
+      );
     } catch (err) {
       handleError(err);
       setStep('form');
+      showError(
+        err instanceof Error && err.message
+          ? err.message
+          : 'Repayment failed. Please try again.',
+        {
+          retry: () => {
+            void handleConfirm();
+          },
+          supportHref: '/support',
+        },
+      );
     } finally {
       setIsSubmitting(false);
     }

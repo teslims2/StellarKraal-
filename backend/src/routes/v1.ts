@@ -8,7 +8,13 @@ import { config } from '../config';
 import { pool } from '../utils/connectionPool';
 import { invalidateAll } from '../utils/appraisalCache';
 import { asyncHandler } from '../utils/asyncHandler';
-import { registerWebhook, getWebhooks, getDeliveryLogs, deleteWebhook } from '../webhooks';
+import {
+  registerWebhook,
+  getWebhooks,
+  getDeliveryLogs,
+  deleteWebhook,
+  replayDeadLetterWebhooks,
+} from '../webhooks';
 import { timeoutMiddleware } from '../middleware/timeout';
 import { writeLimiter, readLimiter } from '../middleware/rateLimit';
 import rateLimit from 'express-rate-limit';
@@ -29,6 +35,7 @@ import { getProfile, updateProfile, insertAuditEntry, listCollateral, listLoans,
 import { updateProfileSchema } from '../validators/profile';
 import { validate } from '../middleware/validate';
 import { auditMiddleware, redact, auditLogger } from '../middleware/audit';
+import { idempotencyMiddleware } from '../middleware/idempotency';
 import { etagMiddleware } from '../utils/etag';
 import {
   loanRequestSchema,
@@ -108,6 +115,7 @@ v1Router.get('/health', async (req: Request, res: Response, next: NextFunction) 
 v1Router.post(
   '/collateral/register',
   auditMiddleware,
+  idempotencyMiddleware,
   timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
   writeLimiter,
   asyncHandler(async (req: Request, res: Response) => {
@@ -116,13 +124,14 @@ v1Router.post(
       return res.status(400).json({ error: 'Validation failed', details: validation.error.issues });
     }
     const result = await registerCollateral(validation.data);
-    res.json(result);
+    res.status(201).json(result);
   })
 );
 
 v1Router.post(
   '/collateral/register/batch',
   auditMiddleware,
+  idempotencyMiddleware,
   timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
   writeLimiter,
   asyncHandler(async (req: Request, res: Response) => {
@@ -275,6 +284,7 @@ v1Router.get('/loans/:id', readLimiter, (req: Request, res: Response) => {
 
 v1Router.post(
   '/oracle/price-update',
+  requireRole('admin'),
   auditMiddleware,
   timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
   (_req: Request, res: Response) => {
@@ -301,13 +311,35 @@ v1Router.post(
   }
 );
 
-v1Router.get('/admin/webhooks', readLimiter, (_req: Request, res: Response) => {
-  res.json(getWebhooks());
-});
+v1Router.get(
+  '/admin/webhooks',
+  requireRole('admin'),
+  readLimiter,
+  (_req: Request, res: Response) => {
+    res.json(getWebhooks());
+  }
+);
 
-v1Router.get('/admin/webhooks/logs', readLimiter, (_req: Request, res: Response) => {
-  res.json(getDeliveryLogs());
-});
+v1Router.get(
+  '/admin/webhooks/logs',
+  requireRole('admin'),
+  readLimiter,
+  (_req: Request, res: Response) => {
+    res.json(getDeliveryLogs());
+  }
+);
+
+// POST /admin/webhooks/dead-letter/replay — replay dead-lettered webhook deliveries
+v1Router.post(
+  '/admin/webhooks/dead-letter/replay',
+  requireRole('admin'),
+  auditMiddleware,
+  timeoutMiddleware(parseInt(config.TIMEOUT_WRITE_MS, 10)),
+  asyncHandler(async (_req: Request, res: Response) => {
+    const replayed = await replayDeadLetterWebhooks();
+    res.json({ replayed });
+  })
+);
 
 v1Router.delete('/webhooks/:id', auditMiddleware, (req: Request, res: Response) => {
   const { id } = req.params;
@@ -356,6 +388,7 @@ v1Router.post('/alerts/webhook', auditMiddleware, async (req: Request, res: Resp
 // GET /admin/users — list all registered borrowers derived from loan records
 v1Router.get(
   '/admin/users',
+  requireRole('admin'),
   asyncHandler(async (_req: Request, res: Response) => {
     const { data } = listLoans({ page: 1, limit: 1000 });
     const users = [...new Set(data.map((l: any) => l.borrower))].map((borrower) => ({ borrower }));
@@ -363,9 +396,53 @@ v1Router.get(
   })
 );
 
+// PATCH /admin/users/:wallet/role — assign a role to a user (admin only, audit-logged)
+v1Router.patch(
+  '/admin/users/:wallet/role',
+  requireRole('admin'),
+  auditMiddleware,
+  asyncHandler(async (req: Request, res: Response) => {
+    const wallet = req.params.wallet as string;
+    const { role } = req.body ?? {};
+
+    if (!isValidRole(role)) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        code: 'INVALID_ROLE',
+        message: "role must be one of 'borrower' or 'admin'",
+      });
+    }
+
+    const updated = setUserRole(wallet, role);
+    if (!updated) {
+      return res.status(404).json({ error: 'User not found', code: 'USER_NOT_FOUND' });
+    }
+
+    const actor = (req as any).user as { publicKey?: string } | undefined;
+    insertAuditEntry({
+      userId: actor?.publicKey ?? 'unknown',
+      action: 'user.role.update',
+      resource: 'user',
+      resourceId: wallet,
+      requestBody: redact({ role }),
+      ip: req.ip,
+    });
+
+    auditLogger.info('user.role.update', {
+      requestId: (req as any).requestId,
+      userId: actor?.publicKey,
+      targetWallet: wallet,
+      role,
+    });
+
+    res.json({ wallet, role });
+  })
+);
+
 // GET /admin/moderation-queue — loans flagged as pending review (status: pending)
 v1Router.get(
   '/admin/moderation-queue',
+  requireRole('admin'),
   asyncHandler(async (_req: Request, res: Response) => {
     const { data } = listLoans({ page: 1, limit: 1000 });
     const queue = (data as any[]).filter((l) => l.status === 'pending');
@@ -376,6 +453,7 @@ v1Router.get(
 // GET /admin/statistics — aggregate platform stats
 v1Router.get(
   '/admin/statistics',
+  requireRole('admin'),
   asyncHandler(async (_req: Request, res: Response) => {
     const { data, total } = listLoans({ page: 1, limit: 1000 });
     const totalAmount = (data as any[]).reduce((sum, l) => sum + (l.amount || 0), 0);

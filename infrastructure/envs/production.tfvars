@@ -83,3 +83,16 @@ redis_num_cache_nodes            = 2 # primary + replica in separate AZs
 redis_automatic_failover_enabled = true
 redis_multi_az_enabled           = true
 redis_snapshot_retention_days    = 7
+
+# ── Database migrations ───────────────────────────────────────────────────────
+# Migrations run as a one-off ECS task (pre-deploy hook) before the new
+# service version goes live. If the migration task fails, the deployment
+# aborts and the ECS service is NOT updated.
+run_migrations_on_deploy = true
+
+# Production-sized one-off task (larger than staging for big migrations)
+migration_task_cpu    = 1024 # 1 vCPU
+migration_task_memory = 2048 # 2 GiB
+
+# Command executed by the migration task container
+migration_command = ["python", "manage.py", "migrate", "--noinput"]

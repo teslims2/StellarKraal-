@@ -30,6 +30,8 @@ async function main() {
         logger.info("Running migrations");
         await runMigrations();
         logger.info("Migrations complete");
+        const appliedStatus = await getMigrationStatus();
+        logger.info("Migration History", { status: appliedStatus });
         break;
 
       case "down":

@@ -246,6 +246,12 @@ npm test -- --testPathPattern=ThemeProvider
 
 ---
 
+## Contrast Guard (CI)
+
+`frontend/src/__tests__/themeContrast.test.ts` parses the `:root` and `.dark` token blocks in `globals.css` and asserts a WCAG AA minimum of 4.5:1 for the text-on-surface pairs listed in the test. Any change to a dark token that drops one of these pairs below AA fails the test. Light-theme pairs that already fail are listed in `KNOWN_LIGHT_GAPS` until the light palette is adjusted.
+
+---
+
 ## Further Reading
 
 - [`docs/dark-mode-audit.md`](../dark-mode-audit.md) — WCAG AA contrast ratios for all current token combinations.

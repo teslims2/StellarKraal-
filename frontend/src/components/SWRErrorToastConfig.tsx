@@ -14,6 +14,10 @@ import { classifyApiError } from "@/lib/apiErrorToast";
  * feedback without each call site wiring its own toast.
  *
  * Must render inside ToastProvider.
+ *
+ * #1475 — failures now surface through `toast.error` with a human-readable
+ * reason and a retry action that revalidates the failed key via SWR's
+ * `mutate`, giving consistent, actionable feedback for background fetches.
  */
 export default function SWRErrorToastConfig({ children }: { children: React.ReactNode }) {
   const toast = useToast();
@@ -21,9 +25,21 @@ export default function SWRErrorToastConfig({ children }: { children: React.Reac
   return (
     <SWRConfig
       value={{
-        onError: (error) => {
-          const { variant, message } = classifyApiError(error);
-          toast[variant](message);
+        onError: (error, key, config) => {
+          const { message } = classifyApiError(error);
+          const mutate = config?.mutate;
+
+          toast.error(message, {
+            action:
+              typeof mutate === "function" && key !== undefined
+                ? {
+                    label: "Retry",
+                    onClick: () => {
+                      void mutate(key);
+                    },
+                  }
+                : undefined,
+          });
         },
       }}
     >
@@ -31,3 +47,4 @@ export default function SWRErrorToastConfig({ children }: { children: React.Reac
     </SWRConfig>
   );
 }
+</｜｜DSML｜｜ parameter>
