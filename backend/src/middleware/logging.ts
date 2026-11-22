@@ -2,7 +2,10 @@ import { Request, Response, NextFunction } from "express";
 import logger, { createRequestLogger } from "../utils/logger";
 
 /**
- * Logs each completed HTTP request with method, path, status code, and duration.
+ * Logs each completed HTTP request with method, path, status code, duration,
+ * and correlation ID so entries for a single request can be grouped in
+ * centralised log aggregation tools.  Resolves issue #1529.
+ *
  * @param req - Express request object.
  * @param res - Express response object.
  * @param next - Express next function.
@@ -17,6 +20,7 @@ export function loggingMiddleware(req: Request, res: Response, next: NextFunctio
       path: req.path,
       statusCode: res.statusCode,
       durationMs: Date.now() - startTime,
+      correlationId: (req as any).correlationId ?? (req as any).requestId,
     });
   });
 

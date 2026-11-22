@@ -52,6 +52,14 @@ const envSchema = z.object({
     .string()
     .regex(/^\d+$/, 'HEALTH_FACTOR_CRIT must be a number')
     .default('10000'),
+  /**
+   * Interval in milliseconds between health factor job runs.
+   * @default 300000 (5 minutes)
+   */
+  HEALTH_FACTOR_JOB_INTERVAL_MS: z
+    .string()
+    .regex(/^\d+$/, 'HEALTH_FACTOR_JOB_INTERVAL_MS must be a number')
+    .default('300000'),
   // Node environment
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   // Frontend URL for CORS
@@ -89,7 +97,8 @@ const envSchema = z.object({
     .default('10000')
     .refine((v) => parseInt(v, 10) >= 1000, {
       message: 'SHUTDOWN_TIMEOUT_MS must be at least 1000 ms',
-    }),
+    })
+    .transform((v) => parseInt(v, 10)),
   // Audit log directory path
   AUDIT_LOG_DIR: z.string().optional(),
   // Comma-separated list of additional field names to redact from audit log bodies.
@@ -169,3 +178,6 @@ if (parsed.data.NODE_ENV === 'production') {
 }
 
 export const config = parsed.data;
+
+/** Graceful shutdown drain timeout in milliseconds (parsed from SHUTDOWN_TIMEOUT_MS). */
+export const SHUTDOWN_TIMEOUT_MS: number = config.SHUTDOWN_TIMEOUT_MS;

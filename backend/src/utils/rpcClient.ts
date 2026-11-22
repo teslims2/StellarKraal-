@@ -5,6 +5,7 @@ import { pool } from "./connectionPool";
 import logger from "./logger";
 import { getCorrelationId } from "./correlationContext";
 import { getAccountFromHorizon, isHorizonConfigured } from "./horizonClient";
+import { timeContractRpc } from "../metrics";
 
 /**
  * Circuit breaker options:
@@ -172,13 +173,20 @@ const getEventsBreaker = new CircuitBreaker(
  * RPC client with circuit breaker and retry logic
  */
 export const rpcClient = {
-  getAccount: (address: string) => getAccountBreaker.fire(address),
-  prepareTransaction: (tx: any) => prepareTransactionBreaker.fire(tx),
-  simulateTransaction: (tx: any) => simulateTransactionBreaker.fire(tx),
-  getHealth: () => getHealthBreaker.fire(),
-  getTransaction: (hash: string) => getTransactionBreaker.fire(hash),
-  sendTransaction: (tx: any) => sendTransactionBreaker.fire(tx),
-  getEvents: (request: any) => getEventsBreaker.fire(request),
+  // Every call is timed into the contract_rpc_duration_seconds histogram.
+  getAccount: (address: string) =>
+    timeContractRpc("getAccount", () => getAccountBreaker.fire(address)),
+  prepareTransaction: (tx: any) =>
+    timeContractRpc("prepareTransaction", () => prepareTransactionBreaker.fire(tx)),
+  simulateTransaction: (tx: any) =>
+    timeContractRpc("simulateTransaction", () => simulateTransactionBreaker.fire(tx)),
+  getHealth: () => timeContractRpc("getHealth", () => getHealthBreaker.fire()),
+  getTransaction: (hash: string) =>
+    timeContractRpc("getTransaction", () => getTransactionBreaker.fire(hash)),
+  sendTransaction: (tx: any) =>
+    timeContractRpc("sendTransaction", () => sendTransactionBreaker.fire(tx)),
+  getEvents: (request: any) =>
+    timeContractRpc("getEvents", () => getEventsBreaker.fire(request)),
 
   /**
    * Get circuit breaker states for health check.

@@ -19,19 +19,19 @@ output "ops_alerts_sns_topic_arn" {
   value       = aws_sns_topic.ops_alerts.arn
 }
 
-# ── ECS Auto Scaling outputs (issue #1534) ────────────────────────────────────
+# ── ALB / ACM outputs (issue #1526) ──────────────────────────────────────────
 
-output "ecs_autoscaling_policy_arn" {
-  description = "ARN of the ECS CPU target-tracking auto-scaling policy for the backend service."
-  value       = aws_appautoscaling_policy.backend_cpu.arn
+output "alb_dns_name" {
+  description = "DNS name of the Application Load Balancer"
+  value       = aws_lb.app.dns_name
 }
 
-output "ecs_autoscaling_min_capacity" {
-  description = "Minimum number of ECS tasks (1 for staging, 2 for production)."
-  value       = aws_appautoscaling_target.backend.min_capacity
+output "alb_zone_id" {
+  description = "Hosted zone ID of the ALB, used to create Route 53 alias records"
+  value       = aws_lb.app.zone_id
 }
 
-output "ecs_autoscaling_max_capacity" {
-  description = "Maximum number of ECS tasks allowed by the auto-scaling policy."
-  value       = aws_appautoscaling_target.backend.max_capacity
+output "acm_certificate_arn" {
+  description = "ARN of the ACM certificate attached to the HTTPS listener"
+  value       = aws_acm_certificate.app.arn
 }

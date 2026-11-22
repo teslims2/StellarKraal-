@@ -16,6 +16,9 @@
  * liquidated  → danger   (bg-color-danger-subtle  / text-color-danger)
  * available   → success  (same as active)
  * pledged     → secondary(bg-color-secondary/15   / text-color-secondary)
+ * pending     → warning  (bg-color-warning-subtle / text-color-warning)
+ * confirmed   → success  (bg-color-success-subtle / text-color-success)
+ * failed      → danger   (bg-color-danger-subtle  / text-color-danger)
  *
  * All token colours pass WCAG AA (≥ 4.5:1) for normal text on both
  * light and dark backgrounds — verified in docs/guides/design-tokens.md.
@@ -36,29 +39,45 @@ import React from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import Tooltip from './Tooltip';
 
-export type LoanStatus = 'active' | 'repaid' | 'defaulted' | 'liquidated';
+export type LoanStatus = 'pending' | 'active' | 'at_risk' | 'repaid' | 'defaulted' | 'liquidated';
 export type CollateralStatus = 'available' | 'pledged';
-export type BadgeStatus = LoanStatus | CollateralStatus;
+export type TransactionStatus = 'pending' | 'confirmed' | 'failed';
+export type BadgeStatus = LoanStatus | CollateralStatus | TransactionStatus;
 
 export const STATUS_TOOLTIPS = {
+  pending: 'This loan request is awaiting lender approval',
   active: 'This loan is currently active with an outstanding balance',
+  at_risk: 'This loan health factor is below the warning threshold and may be liquidated',
   repaid: 'This loan has been fully repaid',
   defaulted: 'This loan is in default and requires immediate attention',
   liquidated: 'This loan was liquidated due to insufficient collateral',
   available: 'This collateral is available to pledge',
   pledged: 'This collateral is pledged against a loan',
+  pending: 'This transaction is pending confirmation on the Stellar network',
+  confirmed: 'This transaction has been confirmed on the Stellar network',
+  failed: 'This transaction failed and was not applied on-chain',
 } as const satisfies Record<BadgeStatus, string>;
 
 interface Config {
   label: string;
   /** Tailwind semantic-token classes — theme-safe, WCAG AA compliant */
   classes: string;
+  /** Lucide icon name rendered via the Icon component for color-blind accessibility (#1503) */
   icon: string;
   ariaLabel: string;
   tooltip: (typeof STATUS_TOOLTIPS)[BadgeStatus];
 }
 
 const STATUS_CONFIG: Record<BadgeStatus, Config> = {
+  // Pending — blue/info: loan request submitted, awaiting approval
+  pending: {
+    label: 'Pending',
+    classes: 'bg-color-info-subtle text-color-info',
+    icon: '◔',
+    ariaLabel: 'Status: Pending',
+    tooltip: STATUS_TOOLTIPS.pending,
+  },
+  // Active — green/success: loan is funded and in good standing
   active: {
     label: 'Active',
     classes: 'bg-color-success-subtle text-color-success',
@@ -66,6 +85,15 @@ const STATUS_CONFIG: Record<BadgeStatus, Config> = {
     ariaLabel: 'Status: Active',
     tooltip: STATUS_TOOLTIPS.active,
   },
+  // At risk — orange/warning: health factor is below 1.2, liquidation may follow
+  at_risk: {
+    label: 'At Risk',
+    classes: 'bg-color-warning-subtle text-color-warning',
+    icon: '⚠',
+    ariaLabel: 'Status: At Risk',
+    tooltip: STATUS_TOOLTIPS.at_risk,
+  },
+  // Repaid — primary: loan fully settled
   repaid: {
     label: 'Repaid',
     classes: 'bg-color-primary/10 text-color-primary',
@@ -73,6 +101,7 @@ const STATUS_CONFIG: Record<BadgeStatus, Config> = {
     ariaLabel: 'Status: Repaid',
     tooltip: STATUS_TOOLTIPS.repaid,
   },
+  // Defaulted — orange/warning: past due date without repayment
   defaulted: {
     label: 'Defaulted',
     classes: 'bg-color-warning-subtle text-color-warning',
@@ -80,6 +109,7 @@ const STATUS_CONFIG: Record<BadgeStatus, Config> = {
     ariaLabel: 'Status: Defaulted',
     tooltip: STATUS_TOOLTIPS.defaulted,
   },
+  // Liquidated — red/danger: collateral has been seized
   liquidated: {
     label: 'Liquidated',
     classes: 'bg-color-danger-subtle text-color-danger',
@@ -87,6 +117,7 @@ const STATUS_CONFIG: Record<BadgeStatus, Config> = {
     ariaLabel: 'Status: Liquidated',
     tooltip: STATUS_TOOLTIPS.liquidated,
   },
+  // Available — green/success: collateral not yet pledged
   available: {
     label: 'Available',
     classes: 'bg-color-success-subtle text-color-success',
@@ -94,12 +125,34 @@ const STATUS_CONFIG: Record<BadgeStatus, Config> = {
     ariaLabel: 'Status: Available',
     tooltip: STATUS_TOOLTIPS.available,
   },
+  // Pledged — secondary: collateral is locked to a loan
   pledged: {
     label: 'Pledged',
     classes: 'bg-color-secondary/15 text-color-secondary',
     icon: '⬡',
     ariaLabel: 'Status: Pledged',
     tooltip: STATUS_TOOLTIPS.pledged,
+  },
+  pending: {
+    label: 'Pending',
+    classes: 'bg-color-warning-subtle text-color-warning',
+    icon: '◷',
+    ariaLabel: 'Status: Pending',
+    tooltip: STATUS_TOOLTIPS.pending,
+  },
+  confirmed: {
+    label: 'Confirmed',
+    classes: 'bg-color-success-subtle text-color-success',
+    icon: '✓',
+    ariaLabel: 'Status: Confirmed',
+    tooltip: STATUS_TOOLTIPS.confirmed,
+  },
+  failed: {
+    label: 'Failed',
+    classes: 'bg-color-danger-subtle text-color-danger',
+    icon: '✕',
+    ariaLabel: 'Status: Failed',
+    tooltip: STATUS_TOOLTIPS.failed,
   },
 };
 

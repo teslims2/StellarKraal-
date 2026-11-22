@@ -1,6 +1,35 @@
-import { getPublicKey, isConnected, getNetworkDetails } from "@stellar/freighter-api";
-
 export const FREIGHTER_INSTALL_URL = "https://www.freighter.app/";
+
+/**
+ * Shape of the subset of the Freighter API we rely on. The SDK is loaded
+ * lazily so it is not part of the initial bundle.
+ */
+export interface FreighterApi {
+  getPublicKey: () => Promise<unknown>;
+  isConnected: () => Promise<unknown>;
+  getNetworkDetails: () => Promise<unknown>;
+}
+
+let freighterModulePromise: Promise<FreighterApi | null> | null = null;
+
+/**
+ * Dynamically imports the Freighter SDK. The module is only fetched the first
+ * time a wallet interaction is initiated; subsequent calls reuse the promise.
+ * Returns null when the SDK cannot be loaded (e.g. not installed / SSR).
+ */
+export async function loadFreighter(): Promise<FreighterApi | null> {
+  if (typeof window === "undefined") return null;
+  if (!freighterModulePromise) {
+    freighterModulePromise = import("@stellar/freighter-api")
+      .then((mod) => mod as unknown as FreighterApi)
+      .catch(() => {
+        // Allow a later retry if the import failed transiently.
+        freighterModulePromise = null;
+        return null;
+      });
+  }
+  return freighterModulePromise;
+}
 
 export const EXPECTED_NETWORK = "TESTNET";
 
@@ -64,7 +93,19 @@ export async function connectWallet(): Promise<WalletConnectionState> {
   }
 
   try {
-    const connected = await isConnected();
+    const freighter = await loadFreighter();
+    if (!freighter) {
+      return {
+        status: "not-installed",
+        address: null,
+        network: null,
+        message:
+          "Freighter wallet was not detected. Install the Freighter extension to connect your Stellar wallet.",
+        installUrl: FREIGHTER_INSTALL_URL,
+      };
+    }
+
+    const connected = await freighter.isConnected();
     if (!connected || (typeof connected === "object" && !connected.isConnected)) {
       return {
         status: "error",
@@ -74,7 +115,7 @@ export async function connectWallet(): Promise<WalletConnectionState> {
       };
     }
 
-    const networkDetails = await getNetworkDetails();
+    const networkDetails = await freighter.getNetworkDetails();
     const network =
       typeof networkDetails === "object" && networkDetails !== null
         ? (networkDetails as { network?: string }).network ?? null
@@ -89,7 +130,7 @@ export async function connectWallet(): Promise<WalletConnectionState> {
       };
     }
 
-    const publicKey = await getPublicKey();
+    const publicKey = await freighter.getPublicKey();
     const address =
       typeof publicKey === "string"
         ? publicKey
@@ -119,4 +160,78 @@ export async function connectWallet(): Promise<WalletConnectionState> {
       message: `Wallet connection failed: ${detail}`,
     };
   }
+}
+
+export interface WalletStatusSnapshot {
+  isConnected: boolean;
+  address: string | null;
+  network: string | null;
+}
+
+/**
+ * Reads the current wallet status from Freighter. Returns null when the SDK
+ * cannot be loaded or the extension is unavailable.
+ */
+export async function getWalletStatus(): Promise<WalletStatusSnapshot | null> {
+  const freighter = await loadFreighter();
+  if (!freighter) return null;
+
+  try {
+    const connected = await freighter.isConnected();
+    const isConn =
+      typeof connected === "boolean"
+        ? connected
+        : Boolean((connected as { isConnected?: boolean } | null)?.isConnected);
+
+    if (!isConn) {
+      return { isConnected: false, address: null, network: null };
+    }
+
+    const networkDetails = await freighter.getNetworkDetails();
+    const network =
+      typeof networkDetails === "object" && networkDetails !== null
+        ? (networkDetails as { network?: string }).network ?? null
+        : null;
+
+    const publicKey = await freighter.getPublicKey();
+    const address =
+      typeof publicKey === "string"
+        ? publicKey
+        : (publicKey as { publicKey?: string })?.publicKey ?? null;
+
+    return { isConnected: Boolean(address), address, network };
+  } catch {
+    return { isConnected: false, address: null, network: null };
+  }
+}
+
+/**
+ * Polls Freighter for connection/network changes and invokes `onChange` with
+ * the latest snapshot. Returns a cleanup function that stops polling.
+ */
+export function pollWalletStatus(
+  onChange: (snapshot: WalletStatusSnapshot | null) => void,
+  intervalMs = 3000,
+): () => void {
+  if (typeof window === "undefined") return () => {};
+
+  let active = true;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const tick = async () => {
+    if (!active) return;
+    const snapshot = await getWalletStatus();
+    if (!active) return;
+    onChange(snapshot);
+    if (active) {
+      timer = setTimeout(tick, intervalMs);
+    }
+  };
+
+  void tick();
+
+  return () => {
+    active = false;
+    if (timer) clearTimeout(timer);
+  };
 }

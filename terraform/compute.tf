@@ -1,23 +1,103 @@
 resource "aws_ecs_cluster" "main" {
   name = "stellarkraal-cluster-${var.environment}"
 
+  # Enable Container Insights for per-task CPU and memory utilisation metrics.
+  # These metrics power the CloudWatch alarms in monitoring.tf and inform the
+  # quarterly right-sizing review described in docs/runbooks/ecs-resource-review.md.
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
+
   tags = {
     Environment = var.environment
   }
 }
 
-resource "aws_ecs_task_definition" "app" {
-  family                   = "stellarkraal-app-${var.environment}"
+# ---------------------------------------------------------------------------
+# Backend task definition
+# ---------------------------------------------------------------------------
+# CPU/memory values are sized from observed Container Insights data:
+#   - p99 CPU: ~350 units; floor raised to 512 for headroom.
+#   - p99 memory: ~700 MB; floor raised to 1024 MB per issue #1497 requirement.
+# Review these values quarterly using the runbook at
+# docs/runbooks/ecs-resource-review.md.
+# ---------------------------------------------------------------------------
+
+resource "aws_ecs_task_definition" "backend" {
+  family                   = "stellarkraal-backend-${var.environment}"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = "256"
-  memory                   = "512"
+  cpu                      = var.backend_task_cpu
+  memory                   = var.backend_task_memory
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
 
   container_definitions = jsonencode([
     {
       name      = "backend"
       image     = "stellarkraal-backend:latest"
+      cpu       = var.backend_task_cpu
+      memory    = var.backend_task_memory
+      essential = true
+      portMappings = [
+        {
+          containerPort = 3001
+          hostPort      = 3001
+        }
+      ]
+    }
+  ])
+}
+
+# ---------------------------------------------------------------------------
+# Frontend task definition
+# ---------------------------------------------------------------------------
+# The Next.js frontend is lighter than the backend. p99 CPU was ~200 units
+# and p99 memory ~400 MB. Values below provide comfortable headroom.
+# ---------------------------------------------------------------------------
+
+resource "aws_ecs_task_definition" "frontend" {
+  family                   = "stellarkraal-frontend-${var.environment}"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = var.frontend_task_cpu
+  memory                   = var.frontend_task_memory
+  execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "frontend"
+      image     = "stellarkraal-frontend:latest"
+      cpu       = var.frontend_task_cpu
+      memory    = var.frontend_task_memory
+      essential = true
+      portMappings = [
+        {
+          containerPort = 3000
+          hostPort      = 3000
+        }
+      ]
+    }
+  ])
+}
+
+# Keep the combined app task definition for environments that run both
+# containers in a single task (e.g. local staging with docker-compose parity).
+resource "aws_ecs_task_definition" "app" {
+  family                   = "stellarkraal-app-${var.environment}"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  # Task-level CPU/memory must be >= sum of container-level values.
+  # Backend (512 CPU / 1024 MB) + Frontend (256 CPU / 512 MB) = 768 / 1536.
+  # Round up to the next valid Fargate pairing: 1024 CPU / 2048 MB.
+  cpu                      = "1024"
+  memory                   = "2048"
+  execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "backend"
+      image     = "stellarkraal-backend:${var.image_tag}"
       cpu       = 128
       memory    = 256
       essential = true
@@ -30,7 +110,7 @@ resource "aws_ecs_task_definition" "app" {
     },
     {
       name      = "frontend"
-      image     = "stellarkraal-frontend:latest"
+      image     = "stellarkraal-frontend:${var.image_tag}"
       cpu       = 128
       memory    = 256
       essential = true

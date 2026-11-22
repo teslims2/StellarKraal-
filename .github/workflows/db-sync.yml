@@ -5,6 +5,13 @@ on:
     - cron: '0 0 * * 0' # Every Sunday at midnight
   workflow_dispatch: # Allow manual trigger
 
+# Concurrency (issue #1502): group runs by branch/ref so a new push
+# cancels stale, in-progress runs on the same branch (PRs and feature
+# branches). Runs on the default branch (main) are never cancelled so
+# release CI always completes instead of being interrupted.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   sync-db:
     name: Sync and Mask Database

@@ -7,7 +7,9 @@
  * Acceptance criteria:
  *  ✓ Banner appears when token has < 5 minutes remaining
  *  ✓ Countdown timer shows minutes and seconds remaining
- *  ✓ On expiry without refresh, user is redirected to /
+ *  ✓ On expiry the hook reports `expired: true` instead of hard-redirecting,
+ *    so the SessionExpiredModal can prompt a reconnect without losing the
+ *    current page (Issue #1509)
  */
 "use client";
 
@@ -17,6 +19,13 @@ import { useEffect, useRef, useState, useCallback } from "react";
 const WARN_MS = 5 * 60 * 1000; // 5 minutes
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
+/**
+ * Window event dispatched after the session cookie has been refreshed, so every
+ * mounted instance of this hook (banner, modal, wallet context) re-reads the
+ * new expiry.
+ */
+export const SESSION_REFRESHED_EVENT = "stellarkraal:session-refreshed";
 
 /**
  * Parses the `session` cookie and returns the JWT expiry as a Unix timestamp
@@ -42,8 +51,13 @@ export interface SessionTimeoutState {
   showBanner: boolean;
   /** Seconds remaining until token expiry (0 when expired). */
   secondsLeft: number;
-  /** Call this to attempt a token refresh via the API. */
-  refresh: () => Promise<void>;
+  /** True once the token's expiry time has passed without a refresh. */
+  expired: boolean;
+  /**
+   * Attempt a token refresh via the API (extends the session).
+   * Resolves to `true` on success, `false` on failure.
+   */
+  refresh: () => Promise<boolean>;
   /** Whether a refresh request is in-flight. */
   refreshing: boolean;
   /** Non-null when the last refresh attempt failed. */
@@ -57,12 +71,19 @@ export function useSessionTimeout(): SessionTimeoutState {
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Read expiry once on mount and whenever the cookie could change
+  // Read expiry on mount, and again whenever any instance refreshes the session
   useEffect(() => {
     setExpiryMs(readExpiry());
+    if (typeof window === "undefined") return;
+    const onRefreshed = () => {
+      setExpiryMs(readExpiry());
+      setNow(Date.now());
+    };
+    window.addEventListener(SESSION_REFRESHED_EVENT, onRefreshed);
+    return () => window.removeEventListener(SESSION_REFRESHED_EVENT, onRefreshed);
   }, []);
 
-  // Tick every second while we have an expiry
+  // Tick every second while we have an unexpired expiry
   useEffect(() => {
     if (expiryMs == null) return;
     intervalRef.current = setInterval(() => setNow(Date.now()), 1000);
@@ -71,16 +92,7 @@ export function useSessionTimeout(): SessionTimeoutState {
     };
   }, [expiryMs]);
 
-  // Redirect to login on expiry
-  useEffect(() => {
-    if (expiryMs == null) return;
-    const msLeft = expiryMs - now;
-    if (msLeft <= 0 && typeof window !== "undefined") {
-      window.location.href = "/";
-    }
-  }, [expiryMs, now]);
-
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<boolean> => {
     setRefreshing(true);
     setRefreshError(null);
     try {
@@ -89,10 +101,16 @@ export function useSessionTimeout(): SessionTimeoutState {
         credentials: "include",
       });
       if (!res.ok) throw new Error(`Refresh failed: ${res.status}`);
-      // Re-read the updated cookie
+      // Re-read the updated cookie here and in every other mounted instance
       setExpiryMs(readExpiry());
+      setNow(Date.now());
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event(SESSION_REFRESHED_EVENT));
+      }
+      return true;
     } catch (e: unknown) {
       setRefreshError(e instanceof Error ? e.message : "Session refresh failed");
+      return false;
     } finally {
       setRefreshing(false);
     }
@@ -101,6 +119,7 @@ export function useSessionTimeout(): SessionTimeoutState {
   const msLeft = expiryMs != null ? Math.max(0, expiryMs - now) : Infinity;
   const secondsLeft = Math.floor(msLeft / 1000);
   const showBanner = expiryMs != null && msLeft > 0 && msLeft <= WARN_MS;
+  const expired = expiryMs != null && msLeft <= 0;
 
-  return { showBanner, secondsLeft, refresh, refreshing, refreshError };
+  return { showBanner, expired, secondsLeft, refresh, refreshing, refreshError };
 }
