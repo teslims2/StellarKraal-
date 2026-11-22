@@ -78,3 +78,19 @@ redis_num_cache_nodes            = 1
 redis_automatic_failover_enabled = false
 redis_multi_az_enabled           = false
 redis_snapshot_retention_days    = 0
+
+# ── Database Migrations ───────────────────────────────────────────────────────
+# One-off ECS task run as a pre-deploy hook before the new service version
+# goes live. Deployment aborts if the migration task exits non-zero.
+run_migrations_on_deploy = true
+
+# Container image for the migration task (must include the migration runner).
+# Replace with your staging ECR image URI.
+migration_container_image = "ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/stellarkraal-migrations:staging"
+
+# Smallest viable sizes — migrations are short-lived in staging
+migration_task_cpu    = 256
+migration_task_memory = 512
+
+# Seconds to wait for the migration task before failing the deployment
+migration_task_timeout_seconds = 600

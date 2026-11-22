@@ -5,6 +5,7 @@ import Spinner from '@/components/Spinner';
 import { ErrorSummary, FieldError, Input, Select, toSummaryErrors } from '@/components/ui';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { API, invalidateCollateral } from '@/lib/api';
+import { toast } from '@/lib/toast';
 
 export interface RegisterCollateralFormProps {
   walletAddress?: string;
@@ -304,12 +305,22 @@ export function RegisterCollateralForm({ walletAddress, onSuccess }: RegisterCol
 
     if (!isOnline) {
       setStatusError("You're offline");
+      toast.error("You're offline", {
+        description: 'Reconnect to the internet and try registering the collateral again.',
+        action: { label: 'Retry', onClick: () => retrySubmit() },
+      });
       return;
     }
 
     const nextErrors = validateForm();
     setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0 || !image) return;
+    if (Object.keys(nextErrors).length > 0 || !image) {
+      toast.error('Collateral not registered', {
+        description: 'Please fix the highlighted fields and try again.',
+        action: { label: 'Retry', onClick: () => retrySubmit() },
+      });
+      return;
+    }
 
     const body = new FormData();
     body.append('animal_type', values.animalType.trim());
@@ -332,6 +343,10 @@ export function RegisterCollateralForm({ walletAddress, onSuccess }: RegisterCol
         } else {
           setStatusError(responseMessage(payload, 'Unable to register collateral'));
         }
+        toast.error('Collateral not registered', {
+          description: responseMessage(payload, 'Unable to register collateral'),
+          action: { label: 'Retry', onClick: () => retrySubmit() },
+        });
         return;
       }
 
@@ -343,6 +358,10 @@ export function RegisterCollateralForm({ walletAddress, onSuccess }: RegisterCol
             : '';
       if (!id) {
         setStatusError('The server did not return a collateral id');
+        toast.error('Collateral not registered', {
+          description: 'The server did not return a collateral id.',
+          action: { label: 'Retry', onClick: () => retrySubmit() },
+        });
         return;
       }
 
@@ -350,13 +369,26 @@ export function RegisterCollateralForm({ walletAddress, onSuccess }: RegisterCol
       setLastSaved(null);
       void invalidateCollateral();
       setSuccessId(id);
+      toast.success('Collateral registered', {
+        description: `${values.animalType.trim()} (${values.breed.trim()}) registered with ID ${id}.`,
+        action: { label: 'View result', href: `/collateral/${id}` },
+      });
       onSuccess?.(id);
     } catch {
       setStatusError('Connection failed – please retry');
+      toast.error('Collateral not registered', {
+        description: 'Connection failed – please retry.',
+        action: { label: 'Retry', onClick: () => retrySubmit() },
+      });
     } finally {
       setLoading(false);
     }
   };
+
+  const retrySubmit = useCallback(() => {
+    const form = document.querySelector<HTMLFormElement>('form[data-onboarding-target="collateral"]');
+    form?.requestSubmit();
+  }, []);
 
   if (successId) {
     return (

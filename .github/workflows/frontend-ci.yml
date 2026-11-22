@@ -13,6 +13,13 @@ on:
       - '.nvmrc'
       - '.github/workflows/frontend-ci.yml'
 
+# Concurrency (issue #1502): group runs by branch/ref so a new push
+# cancels stale, in-progress runs on the same branch (PRs and feature
+# branches). Runs on the default branch (main) are never cancelled so
+# release CI always completes instead of being interrupted.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   lint:
     name: Lint
@@ -85,6 +92,46 @@ jobs:
 
       - name: Run TypeScript type check
         run: npx tsc --noEmit
+
+  # Run the Jest suite with coverage and publish the report. The repo's
+  # coverageThreshold (package.json → jest.coverageThreshold) targets 70%.
+  # The suite currently has a backlog of pre-existing broken test files
+  # (test/component drift that was never caught because frontend tests were
+  # not previously run in CI and tsc excludes __tests__), so the gate is
+  # non-blocking until that backlog is cleared — flip `continue-on-error` to
+  # `false` once coverage reaches the 70% threshold. See #1532.
+  test:
+    name: Test & Coverage
+    runs-on: ubuntu-latest
+    needs: [lint, type-check]
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests with coverage
+        continue-on-error: true
+        run: npm run test:coverage
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+          if-no-files-found: ignore
 
   build:
     name: Build

@@ -188,6 +188,23 @@ function resolveUserId(req: Request): string {
  * @param res - Express response object.
  * @param next - Next middleware callback.
  */
+/**
+ * Log an audit entry flagging a mutating request that arrived without an
+ * `Idempotency-Key` header. This does not fail the request; it only records
+ * the omission so retries can be correlated during incident review.
+ * @param req - Express request object for the request missing the header.
+ */
+export function logMissingIdempotencyKey(req: Request): void {
+  auditLogger.info("idempotency_key_missing", {
+    action: "idempotency_key_missing",
+    requestId: (req as any).requestId,
+    userId: resolveUserId(req),
+    method: req.method,
+    path: req.path,
+    ip: req.ip,
+  });
+}
+
 export function auditMiddleware(req: Request, res: Response, next: NextFunction): void {
   const start = process.hrtime.bigint();
 
@@ -207,6 +224,34 @@ export function auditMiddleware(req: Request, res: Response, next: NextFunction)
   });
 
   next();
+}
+
+// ── Role change audit helper ──────────────────────────────────────────────────
+
+/**
+ * Write a structured audit entry for a user role change.
+ *
+ * Role assignment is a privileged operation, so every change must be recorded
+ * with the acting admin, the affected user, and the before/after roles.
+ * Wallet addresses are passed through `redact` so they are masked in production.
+ *
+ * @param actor - Identifier (Stellar public key) of the admin performing the change.
+ * @param target - Identifier (Stellar public key) of the user whose role changed.
+ * @param oldRole - The role held before the change (or null if previously unset).
+ * @param newRole - The role assigned by the change.
+ */
+export function logRoleChange(
+  actor: string,
+  target: string,
+  oldRole: string | null,
+  newRole: string
+): void {
+  auditLogger.info("role_change", {
+    actor: redact(actor),
+    target: redact(target),
+    oldRole,
+    newRole,
+  });
 }
 
 export { auditLogger, BASE_REDACTED_FIELDS };

@@ -15,10 +15,10 @@ resource limits.
 | `backend` | (default) | 3001 | Node.js / Express API |
 | `frontend` | (default) | 3000 | Next.js frontend |
 | `contract-builder` | (default) | — | Rust WASM contract builder |
-| `loki` | `monitoring` | 3100 | Log aggregation (Grafana Loki) |
-| `promtail` | `monitoring` | — | Log shipper to Loki |
-| `prometheus` | `monitoring` | 9090 | Metrics scraper |
-| `grafana` | `monitoring` | 3200 | Dashboards (metrics + logs) |
+| `loki` | `observability` | 3100 | Log aggregation (Grafana Loki) |
+| `promtail` | `observability` | — | Log shipper to Loki |
+| `prometheus` | `observability` | 9090 | Metrics scraper (scrapes backend `/metrics`) |
+| `grafana` | `observability` | 3200 | Dashboards (metrics + logs) |
 
 ---
 
@@ -84,23 +84,48 @@ docker compose down -v
 ## Profiles
 
 Observability services (`loki`, `promtail`, `prometheus`, `grafana`) are
-grouped under the `monitoring` Docker Compose profile. This keeps the default
+grouped under the `observability` Docker Compose profile. This keeps the default
 `docker compose up` lightweight for developers who do not need the observability
-stack.
+stack, while still letting contributors replicate the production metrics and
+log pipelines locally.
 
 ```bash
 # Start only the core services (postgres, redis, backend, frontend)
 docker compose up --build
 
 # Start the full stack including observability
-docker compose --profile monitoring up --build
+docker compose --profile observability up --build
 ```
 
 Individual services can also be started on demand:
 
 ```bash
-# Start just Grafana and its dependencies from the monitoring profile
-docker compose --profile monitoring up grafana loki prometheus
+# Start just Grafana and its dependencies from the observability profile
+docker compose --profile observability up grafana loki prometheus
+```
+
+### Enabling the observability profile
+
+1. Start the stack with the profile enabled:
+
+   ```bash
+   docker compose --profile observability up --build
+   ```
+
+2. Open Grafana at http://localhost:3200. Anonymous viewer access is enabled,
+   so no login is required for browsing the pre-provisioned dashboards. The
+   Loki and Prometheus datasources are provisioned automatically.
+
+3. Prometheus is pre-configured to scrape the backend `/metrics` endpoint
+   (`http://backend:3001/metrics`) and is available at http://localhost:9090.
+
+If metrics authentication is enabled on the backend, set `METRICS_TOKEN` in
+your `.env` file (or export it in the shell) before starting the profile so
+Prometheus can authenticate its scrapes:
+
+```bash
+# .env
+METRICS_TOKEN=your-metrics-token
 ```
 
 ---
@@ -159,11 +184,16 @@ See [docs/observability.md](observability.md) for the full observability stack
 reference, including Prometheus metrics, Loki/Promtail log shipping, Grafana
 dashboards, and alert rules.
 
-Quick start for the monitoring profile:
+Quick start for the observability profile:
 
 ```bash
-docker compose --profile monitoring up --build
+docker compose --profile observability up --build
 ```
+
+Prometheus scrapes the backend `/metrics` endpoint, and Grafana is provisioned
+with both the Loki and Prometheus datasources plus the pre-built dashboards. If
+metrics authentication is enabled, set `METRICS_TOKEN` in `.env` before
+starting the profile.
 
 | Service | URL | Credentials |
 |---------|-----|-------------|

@@ -46,6 +46,17 @@ The listener runs a continuous polling loop. Configuration is via environment va
 | `EVENT_POLL_INTERVAL_MS` | `5000` | Time between polls in milliseconds |
 | `EVENT_LISTENER_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, or `error` |
 
+### Default Polling Interval
+
+The listener polls the Soroban RPC every **`5000` ms (5 seconds)** by default. This value is used whenever `EVENT_POLL_INTERVAL_MS` is unset, empty, or not a valid positive number. The interval is read once at startup and passed to `startEventListener(intervalMs?)`; changing the environment variable requires a restart to take effect.
+
+```bash
+# Poll every 2 seconds instead of the 5 second default
+EVENT_POLL_INTERVAL_MS=2000 npm run start
+```
+
+The effective interval is echoed in the `event_listener_started` log entry as `intervalMs`, so you can confirm the configured value at runtime.
+
 ### Lifecycle
 
 - **`startEventListener(intervalMs?)`** — begins the polling loop. The interval defaults to `5000` ms but can be overridden.
@@ -55,6 +66,74 @@ The listener logs structured startup and shutdown events:
 - `event_listener_disabled` — when `CONTRACT_ID` is not set
 - `event_listener_started` — on successful start, includes `contractId` and `intervalMs`
 - `event_listener_stopped` — on graceful stop
+
+---
+
+## Backpressure Handling
+
+Events can arrive faster than they can be parsed and written to the database — for example after a period of downtime, on the first poll (which replays all historical events), or during a burst of contract activity. The listener applies backpressure rather than dropping or reordering events:
+
+1. **Sequential processing within a poll.** Each poll cycle awaits `handleEvent()` for every event in the batch before scheduling the next cycle. The next `getEvents` request is not issued until the current batch has been fully processed, so the RPC is never polled ahead of the database writer.
+2. **No unbounded in-memory queue.** The listener does not buffer events in a separate queue. The batch returned by `getEvents` is the only in-flight work, which bounds memory usage to one RPC page regardless of event volume.
+3. **Cursor advances only after processing.** `lastLedger` is updated per event as it is handled. If processing is slow, the cursor lags behind the chain head, and the next poll simply fetches a larger range starting from `lastLedger + 1`. Progress is never lost and events are not skipped.
+4. **Errors do not stall the loop.** A parse error is logged as `contract.event.parse_error` and processing continues with the next event. An RPC error is logged as `contract.event.poll_error` and the loop continues on the next tick.
+
+Practical consequences:
+
+- **Sustained overload**: if the database cannot keep up with event volume, the listener falls behind the chain head but continues to make progress. The lag is visible as the gap between `lastLedger` and the latest ledger in the `contract.event.received` log entries.
+- **Catch-up after downtime**: the first poll after a restart replays all historical events in a single batch. Expect a longer first cycle; subsequent cycles return to the configured interval.
+- **Mitigation**: to reduce per-cycle load, increase `EVENT_POLL_INTERVAL_MS` so each batch is smaller, or scale the database writer. The listener intentionally does not drop events to relieve pressure.
+
+---
+
+## Tuning the Polling Interval
+
+The right interval depends on RPC latency and how fresh the local database must be. As a rule of thumb, set the interval to at least the observed p95 `getEvents` round-trip time so that polls do not overlap:
+
+| Environment | Suggested `EVENT_POLL_INTERVAL_MS` | Rationale |
+|-------------|-----------------------------------|-----------|
+| Local / testnet | `2000`–`5000` | Low latency and low event volume; faster polling gives near-real-time sync for development and demos |
+| Mainnet (default) | `5000`–`10000` | Balances freshness against RPC rate limits and cost |
+| Mainnet under rate limiting | `15000`–`30000` | Reduces request volume; rely on cursor catch-up to cover the larger batches |
+
+Guidance:
+
+- **Testnet**: RPC latency is typically low and rate limits are generous. A shorter interval (e.g. `2000`) shortens the delay between an on-chain event and its appearance in the database, which is useful when testing UI flows.
+- **Mainnet**: public RPC endpoints enforce rate limits and may have higher latency. Prefer `5000` or higher; if you see frequent `contract.event.poll_error` entries with rate-limit messages, increase the interval.
+- **Measure first**: compare the `timestamp` of consecutive `contract.event.received` entries against the configured `intervalMs`. A cycle that consistently takes much longer than the interval indicates the RPC or database is the bottleneck, not the interval.
+- **Do not go below ~1000 ms**: very short intervals increase request volume without improving freshness, because each cycle is bounded by RPC round-trip time anyway.
+
+---
+
+## Polling Observability
+
+Each poll cycle emits structured log entries that can be shipped to your observability stack. The fields below are the ones most useful for monitoring the listener:
+
+| Field | Where | Description |
+|-------|-------|-------------|
+| `timestamp` | All entries | ISO-8601 time the entry was emitted |
+| `eventType` | All entries | Log event type (see table below) |
+| `contractId` | All entries | Contract being listened to |
+| `ledger` | Event entries | Ledger sequence of the event being processed |
+| `correlationId` | Event entries | Event `id`, or `ledger-{ledger}` fallback |
+| `context` | Optional | Additional structured detail (e.g. event key, batch size) |
+| `error.message` / `error.stack` | Error entries | Populated for `parse_error` and `poll_error` |
+
+Poll-related `eventType` values:
+
+| `eventType` | When emitted |
+|-------------|--------------|
+| `event_listener_started` | Once at startup; includes `contractId` and `intervalMs` |
+| `contract.event.received` | For each raw event returned by `getEvents` |
+| `contract.event.poll_error` | When a `getEvents` call fails |
+| `event_listener_stopped` | Once on graceful shutdown |
+
+Suggested alerts and dashboards:
+
+- **Lag**: track the difference between the latest `ledger` in `contract.event.received` and the current chain head. A steadily growing gap indicates backpressure.
+- **Error rate**: alert on a sustained rate of `contract.event.poll_error` entries; correlate with `EVENT_POLL_INTERVAL_MS` to detect rate limiting.
+- **Throughput**: count `contract.event.received` per interval to size the database writer.
+- **Restarts**: a `event_listener_started` entry followed by a long first cycle is expected (historical replay); alert only if the gap persists.
 
 ---
 

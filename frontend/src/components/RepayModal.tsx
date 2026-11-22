@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useContractError } from '../hooks/useContractError';
+import { useToast } from '../hooks/useToast';
 
 interface RepayModalProps {
   isOpen: boolean;
@@ -11,6 +12,7 @@ interface RepayModalProps {
 }
 
 type RepayStep = 'form' | 'confirm' | 'success';
+type RepayMode = 'partial' | 'full';
 
 const formatAmount = (value: number): string =>
   Number.isFinite(value) ? value.toFixed(2) : '0.00';
@@ -18,13 +20,8 @@ const formatAmount = (value: number): string =>
 const formatHealthFactor = (value: number): string =>
   Number.isFinite(value) ? value.toFixed(2) : '\u221e';
 
-const computeHealthFactor = (
-  collateralValue: number,
-  remainingBalance: number,
-): number => {
-  if (remainingBalance <= 0) return Infinity;
-  return collateralValue / remainingBalance;
-};
+// Flat network fee estimate (in the loan asset) shown before submission.
+const ESTIMATED_FEE = 0.01;
 
 export default function RepayModal({
   isOpen,
@@ -36,10 +33,18 @@ export default function RepayModal({
 }: RepayModalProps) {
   const [step, setStep] = useState<RepayStep>('form');
   const [amountInput, setAmountInput] = useState('');
-  const [isFullRepay, setIsFullRepay] = useState(false);
+  const [repayMode, setRepayMode] = useState<RepayMode>('partial');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [result, setResult] = useState<{ healthFactor: number; remainingBalance: number } | null>(null);
   const { error, handleError, clearError } = useContractError();
+  const { showSuccess, showError } = useToast();
+
+  const isFullRepay = repayMode === 'full';
+
+  const minimumRepayment = useMemo(
+    () => calculateMinimumRepayment(outstandingBalance, collateralValue),
+    [outstandingBalance, collateralValue],
+  );
 
   const proposedAmount = useMemo(() => {
     if (isFullRepay) return outstandingBalance;
@@ -48,13 +53,17 @@ export default function RepayModal({
   }, [amountInput, isFullRepay, outstandingBalance]);
 
   const remainingBalance = Math.max(outstandingBalance - proposedAmount, 0);
-  const projectedHealthFactor = computeHealthFactor(collateralValue, remainingBalance);
-  const isAmountValid = proposedAmount > 0 && proposedAmount <= outstandingBalance;
+  const projectedHealthFactor = calculateHealthFactor(collateralValue, remainingBalance);
+  const isAmountValid =
+    proposedAmount > 0 &&
+    proposedAmount <= outstandingBalance &&
+    (isFullRepay || proposedAmount >= minimumRepayment);
+  const isBelowMinimum = !isFullRepay && proposedAmount > 0 && proposedAmount < minimumRepayment;
 
   const resetState = () => {
     setStep('form');
     setAmountInput('');
-    setIsFullRepay(false);
+    setRepayMode('partial');
     setIsSubmitting(false);
     setResult(null);
     clearError();
@@ -65,13 +74,19 @@ export default function RepayModal({
     onClose();
   };
 
+  const handleSelectMode = (mode: RepayMode) => {
+    setRepayMode(mode);
+    if (mode === 'full') {
+      setAmountInput(outstandingBalance.toString());
+    }
+  };
+
   const handleSelectFull = () => {
-    setIsFullRepay(true);
-    setAmountInput(outstandingBalance.toString());
+    handleSelectMode('full');
   };
 
   const handleAmountChange = (value: string) => {
-    setIsFullRepay(false);
+    setRepayMode('partial');
     setAmountInput(value);
   };
 
@@ -89,9 +104,26 @@ export default function RepayModal({
       const response = await onRepay(proposedAmount);
       setResult(response);
       setStep('success');
+      showSuccess(
+        response.remainingBalance <= 0
+          ? `Loan fully repaid (${formatAmount(proposedAmount)}).`
+          : `Repayment of ${formatAmount(proposedAmount)} confirmed. Remaining balance: ${formatAmount(response.remainingBalance)}.`,
+        { link: { label: 'View loan', href: '/loans' } },
+      );
     } catch (err) {
       handleError(err);
       setStep('form');
+      showError(
+        err instanceof Error && err.message
+          ? err.message
+          : 'Repayment failed. Please try again.',
+        {
+          retry: () => {
+            void handleConfirm();
+          },
+          supportHref: '/support',
+        },
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -122,6 +154,44 @@ export default function RepayModal({
 
         {step === 'form' && (
           <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleSelectMode('partial')}
+                aria-pressed={repayMode === 'partial'}
+                className={`rounded border px-3 py-2 text-sm font-medium ${
+                  repayMode === 'partial'
+                    ? 'border-blue-600 bg-blue-50 text-blue-700'
+                    : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                Partial repayment
+              </button>
+              <button
+                type="button"
+                onClick={handleSelectFull}
+                aria-pressed={repayMode === 'full'}
+                className={`rounded border px-3 py-2 text-sm font-medium ${
+                  repayMode === 'full'
+                    ? 'border-blue-600 bg-blue-50 text-blue-700'
+                    : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                Full repayment
+              </button>
+            </div>
+
+            <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm">
+              <div className="flex justify-between py-1">
+                <span className="text-gray-600">Outstanding balance</span>
+                <span className="text-base font-semibold">{formatAmount(outstandingBalance)}</span>
+              </div>
+              <div className="flex justify-between py-1">
+                <span className="text-gray-600">Minimum repayment</span>
+                <span className="font-semibold">{formatAmount(minimumRepayment)}</span>
+              </div>
+            </div>
+
             <div>
               <label htmlFor="repay-amount" className="mb-1 block text-sm font-medium text-gray-700">
                 Repayment amount
@@ -134,22 +204,17 @@ export default function RepayModal({
                 value={amountInput}
                 onChange={(e) => handleAmountChange(e.target.value)}
                 placeholder="0.00"
-                className="w-full rounded border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
+                disabled={isFullRepay}
+                className="w-full rounded border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
               />
-              <button
-                type="button"
-                onClick={handleSelectFull}
-                className="mt-2 text-sm font-medium text-blue-600 hover:text-blue-800"
-              >
-                Repay in Full ({formatAmount(outstandingBalance)})
-              </button>
+              {isFullRepay && (
+                <p className="mt-1 text-xs text-gray-500">
+                  Full repayment selected &mdash; the entire outstanding balance will be repaid.
+                </p>
+              )}
             </div>
 
             <div className="rounded bg-gray-50 p-3 text-sm">
-              <div className="flex justify-between py-1">
-                <span className="text-gray-600">Outstanding balance</span>
-                <span className="font-medium">{formatAmount(outstandingBalance)}</span>
-              </div>
               <div className="flex justify-between py-1">
                 <span className="text-gray-600">Remaining after repayment</span>
                 <span className="font-medium">{formatAmount(remainingBalance)}</span>
@@ -168,6 +233,12 @@ export default function RepayModal({
 
             {!isAmountValid && proposedAmount > outstandingBalance && (
               <p className="text-sm text-red-600">Amount exceeds outstanding balance.</p>
+            )}
+
+            {isBelowMinimum && (
+              <p className="text-sm text-red-600">
+                Amount is below the minimum repayment of {formatAmount(minimumRepayment)}.
+              </p>
             )}
 
             <button
@@ -200,10 +271,14 @@ export default function RepayModal({
                 <span className="font-medium">{formatAmount(remainingBalance)}</span>
               </div>
               <div className="flex justify-between py-1">
-                <span className="text-gray-600">Projected health factor</span>
+                <span className="text-gray-600">New health factor</span>
                 <span className="font-medium text-green-600">
                   {formatHealthFactor(projectedHealthFactor)}
                 </span>
+              </div>
+              <div className="flex justify-between py-1">
+                <span className="text-gray-600">Estimated transaction fee</span>
+                <span className="font-medium">{formatAmount(ESTIMATED_FEE)}</span>
               </div>
             </div>
             <div className="flex gap-3">

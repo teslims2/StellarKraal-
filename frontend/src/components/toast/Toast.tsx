@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import Link from "next/link";
 import { CheckCircle2, XCircle, AlertTriangle, Info } from "lucide-react";
 import { Icon } from "@/components/Icon";
 import { ToastItem, ToastVariant } from "./ToastContext";
@@ -92,11 +93,14 @@ export default function Toast({ toast, onDismiss }: ToastProps) {
     startXRef.current = null;
   }
 
+  const isError = toast.variant === "error";
+
   return (
     <div
       ref={toastRef}
-      role="alert"
-      aria-live="polite"
+      role={isError ? "alert" : "status"}
+      aria-live={isError ? "assertive" : "polite"}
+      aria-atomic="true"
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -114,7 +118,53 @@ export default function Toast({ toast, onDismiss }: ToastProps) {
         size="md"
         className="mt-0.5 flex-shrink-0 text-white"
       />
-      <p className="text-sm font-medium flex-1">{toast.message}</p>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium">{toast.message}</p>
+        {toast.summary && (
+          <p className="mt-0.5 text-xs text-white/80 break-words">
+            {toast.summary}
+          </p>
+        )}
+        {isError && toast.reason && (
+          <p className="mt-0.5 text-xs text-white/80 break-words">
+            {toast.reason}
+          </p>
+        )}
+        {toast.link && (
+          <Link
+            href={toast.link.href}
+            onClick={handleDismiss}
+            className="mt-1 inline-block text-xs font-semibold underline underline-offset-2 hover:text-white/80"
+          >
+            {toast.link.label}
+          </Link>
+        )}
+        {(toast.retry || toast.support) && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {toast.retry && (
+              <button
+                type="button"
+                onClick={() => {
+                  toast.retry?.onRetry();
+                  handleDismiss();
+                }}
+                className="rounded-md bg-white/20 px-2 py-1 text-xs font-semibold text-white hover:bg-white/30 transition"
+              >
+                {toast.retry.label ?? "Retry"}
+              </button>
+            )}
+            {toast.support && (
+              <Link
+                href={toast.support.href}
+                onClick={handleDismiss}
+                className="rounded-md bg-white/20 px-2 py-1 text-xs font-semibold text-white hover:bg-white/30 transition"
+              >
+                {toast.support.label ?? "Contact support"}
+              </Link>
+            )}
+          </div>
+        )}
+      </div>
       <button
         onClick={handleDismiss}
         aria-label="Close notification"

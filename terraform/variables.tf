@@ -62,3 +62,9 @@ variable "backup_kms_key_arn" {
   type        = string
   default     = ""
 }
+
+variable "image_tag" {
+  description = "Container image tag for stellarkraal-backend and stellarkraal-frontend. Must match IMAGE_TAG used by docker-compose."
+  type        = string
+  default     = "latest"
+}

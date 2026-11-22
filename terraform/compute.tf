@@ -17,7 +17,7 @@ resource "aws_ecs_task_definition" "app" {
   container_definitions = jsonencode([
     {
       name      = "backend"
-      image     = "stellarkraal-backend:latest"
+      image     = "stellarkraal-backend:${var.image_tag}"
       cpu       = 128
       memory    = 256
       essential = true
@@ -30,7 +30,7 @@ resource "aws_ecs_task_definition" "app" {
     },
     {
       name      = "frontend"
-      image     = "stellarkraal-frontend:latest"
+      image     = "stellarkraal-frontend:${var.image_tag}"
       cpu       = 128
       memory    = 256
       essential = true

@@ -316,6 +316,12 @@ New contributors should start with the **[Contributing Quickstart](docs/developm
 - [ ] Tests run successfully locally
 - [ ] Documentation updated when necessary
 
+## Staging Environment
+
+The staging environment is a full deployment of the protocol against **Stellar testnet**, used to validate changes before they reach production. It is configured as a GitHub Actions environment named `staging` and is protected by required reviewers.
+
+For the complete guide — including how to create the `staging` environment, how to rotate each required secret and the impact of each on the running system, a deployment verification checklist (health checks, smoke tests, Stellar testnet checks), and the differences between staging and production configuration (including RPC endpoints) — see **[STAGING.md](STAGING.md)**.
+
 ## Lighthouse CI
 
 Performance thresholds are enforced in `frontend/lighthouserc.js`. The CI Lighthouse job runs against the built app and **fails the build** if any score falls below:

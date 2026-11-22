@@ -16,6 +16,7 @@ export enum ErrorCode {
   INVALID_API_KEY = "INVALID_API_KEY",
   AUTHENTICATION_REQUIRED = "AUTHENTICATION_REQUIRED",
   FORBIDDEN = "FORBIDDEN",
+  ROLE_FORBIDDEN = "ROLE_FORBIDDEN",
 
   // Validation
   VALIDATION_ERROR = "VALIDATION_ERROR",
@@ -82,6 +83,7 @@ export const ERROR_STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.INVALID_API_KEY]: 401,
   [ErrorCode.AUTHENTICATION_REQUIRED]: 401,
   [ErrorCode.FORBIDDEN]: 403,
+  [ErrorCode.ROLE_FORBIDDEN]: 403,
 
   // Validation
   [ErrorCode.VALIDATION_ERROR]: 400,
