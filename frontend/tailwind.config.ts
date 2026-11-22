@@ -70,6 +70,27 @@ const config: Config = {
         xl: "var(--radius-xl)",
         full: "var(--radius-full)",
       },
+      transitionDuration: {
+        fast: "150ms",
+        base: "200ms",
+      },
+      transitionTimingFunction: {
+        out: "cubic-bezier(0, 0, 0.2, 1)",
+      },
+      keyframes: {
+        "fade-slide-in": {
+          "0%": { opacity: "0", transform: "translateY(8px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        "panel-expand": {
+          "0%": { opacity: "0", transform: "scaleY(0.95)" },
+          "100%": { opacity: "1", transform: "scaleY(1)" },
+        },
+      },
+      animation: {
+        "fade-slide-in": "fade-slide-in 200ms cubic-bezier(0, 0, 0.2, 1) both",
+        "panel-expand": "panel-expand 200ms cubic-bezier(0, 0, 0.2, 1) both",
+      },
     },
   },
   plugins: [],

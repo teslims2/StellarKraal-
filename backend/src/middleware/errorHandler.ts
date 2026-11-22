@@ -105,6 +105,12 @@ export class ContractErrorMapper {
 
 /**
  * Express error handler middleware. Formats and logs all unhandled errors.
+ *
+ * The `correlationId` field in the response body is taken from
+ * `req.correlationId` (set by `correlationMiddleware`) when available, falling
+ * back to `req.requestId`.  This ensures callers can always cross-reference an
+ * error response with the logs for the same request (issue #1529).
+ *
  * @param err - The caught error.
  * @param req - Express request object.
  * @param res - Express response object.
@@ -117,7 +123,8 @@ export function errorHandler(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _next: NextFunction
 ): void {
-  const correlationId = (req as any).requestId ?? "unknown";
+  const correlationId =
+    (req as any).correlationId ?? (req as any).requestId ?? "unknown";
   const reqLogger = (req as any).logger ?? logger;
 
   const statusCode = err instanceof AppError ? err.statusCode : 500;

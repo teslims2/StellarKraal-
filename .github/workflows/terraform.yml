@@ -52,6 +52,13 @@ env:
 ###############################################################################
 # PULL REQUEST — Lint, Validate, Plan
 ###############################################################################
+# Concurrency (issue #1502): group runs by branch/ref. Production/staging
+# deploys and Terraform applies are NEVER cancelled (cancel-in-progress:
+# false) to prevent partial ECS deploys or partial infrastructure applies
+# — a queued run waits for the in-progress one to finish instead.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   terraform-ci:
     name: "Plan (${{ matrix.workspace }})"

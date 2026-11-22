@@ -11,6 +11,7 @@ import HealthFactorAlert from '@/components/HealthFactorAlert';
 import RepaymentCountdown from '@/components/RepaymentCountdown';
 import { useHealthFactor } from '@/hooks/useHealthFactor';
 import PrintButton from '@/components/PrintButton';
+import LoanQRCode from '@/components/LoanQRCode';
 
 // Heavy component — loaded lazily to reduce initial JS bundle (#1070)
 const LoanRepaymentCalculator = dynamic(() => import('@/components/LoanRepaymentCalculator'), {
@@ -164,7 +165,7 @@ export function StickyLoanAction({
   );
 }
 
-export default function LoanDetailPage() {
+export default function LoanDetailClient() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [loan, setLoan] = useState<LoanRecord | null>(null);
@@ -268,23 +269,47 @@ export default function LoanDetailPage() {
     }
   }
 
+  // Canonical URL for the QR code — links to the on-chain loan record page.
+  const loanUrl =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/loans/${loan.id}`
+      : `https://stellarkraal.io/loans/${loan.id}`;
+
   return (
     <main
       className={`mx-auto max-w-2xl px-4 py-10 print-header ${loan.status === 'active' ? 'pb-44 sm:pb-10' : ''}`}
       data-print-date={new Date().toLocaleDateString()}
     >
       <Breadcrumb />
-      <div className="flex items-center justify-between mb-6">
-        <Link href="/loans" className="text-brown/60 hover:text-brown text-sm inline-block">
+      {/* Screen-only navigation and action bar */}
+      <div className="flex items-center justify-between mb-6 no-print">
+        <Link href="/loans" className="text-brown/60 hover:text-brown text-sm">
           ← Back to Loans
         </Link>
-        {/* Issue #1519: Print / Download PDF action */}
-        <PrintButton className="no-print" />
+        {/* Print / Download PDF button — closes #1519 */}
+        <PrintButton />
       </div>
 
-      <div className="bg-white rounded-2xl p-6 shadow mb-6">
-        <h1 className="text-2xl font-bold text-brown mb-4">Loan #{loan.id}</h1>
-        <div className="flex items-center gap-2 mb-4">
+      {/*
+       * Print-only header — shows StellarKraal branding above the loan summary.
+       * Hidden on screen via print:block / hidden pair so it doesn't affect
+       * the screen layout.
+       */}
+      <div className="hidden print:block mb-4 pb-3 border-b border-gray-300">
+        <p className="text-xs text-gray-500 mt-1">Loan Summary — Official Record</p>
+      </div>
+
+      {/* ── Loan summary card ─────────────────────────────────────────────── */}
+      <div
+        className="bg-white rounded-2xl p-6 shadow mb-6"
+        data-print-section="loan-summary"
+        data-testid="loan-summary-card"
+      >
+        <div className="flex items-start justify-between mb-4">
+          <h1 className="text-2xl font-bold text-brown">Loan #{loan.id}</h1>
+        </div>
+
+        <div className="flex items-center gap-2 mb-4 no-print">
           <span className="text-brown/50 text-sm">Loan ID</span>
           <button
             onClick={() => void copyId()}
@@ -323,22 +348,48 @@ export default function LoanDetailPage() {
             )}
           </button>
         </div>
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+
+        {/* Loan details grid — visible on screen and in print */}
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm loan-summary-print">
           <dt className="text-brown/50">Borrower</dt>
-          <dd className="font-medium text-brown truncate" title={loan.borrower}>
-            {loan.borrower.slice(0, 8)}…{loan.borrower.slice(-4)}
+          <dd className="font-medium text-brown break-all" title={loan.borrower}>
+            {loan.borrower}
           </dd>
           <dt className="text-brown/50">Collateral ID</dt>
           <dd className="font-medium text-brown">{loan.collateral_id}</dd>
           <dt className="text-brown/50">Amount</dt>
-          <dd className="font-medium text-brown">{(loan.amount / 1e7).toFixed(2)} XLM</dd>
+          <dd className="font-medium text-brown loan-amount-print">
+            {(loan.amount / 1e7).toFixed(2)} XLM
+          </dd>
           <dt className="text-brown/50">Status</dt>
-          <dd className="font-medium text-brown capitalize">{loan.status}</dd>
+          <dd className="font-medium text-brown capitalize status-badge">{loan.status}</dd>
           <dt className="text-brown/50">Created</dt>
           <dd className="font-medium text-brown">
             {new Date(loan.createdAt).toLocaleDateString()}
           </dd>
+          {loan.repaymentDeadline && (
+            <>
+              <dt className="text-brown/50">Repayment deadline</dt>
+              <dd className="font-medium text-brown">
+                {new Date(loan.repaymentDeadline).toLocaleDateString()}
+              </dd>
+            </>
+          )}
         </dl>
+
+        {/*
+         * QR code — rendered on screen and in print. Links to the on-chain
+         * loan page so a printed copy can be verified digitally. Closes #1519.
+         */}
+        <div className="mt-6 flex flex-col items-center gap-2 print:mt-4" data-print="show">
+          <LoanQRCode url={loanUrl} loanId={loan.id} />
+          <p className="text-xs text-brown/50 text-center max-w-xs print:text-gray-500">
+            Scan to verify this loan on-chain
+          </p>
+          <p className="hidden print:block text-xs text-gray-500 break-all text-center">
+            {loanUrl}
+          </p>
+        </div>
       </div>
 
       {loan.status === 'active' && (
@@ -347,12 +398,16 @@ export default function LoanDetailPage() {
           {loan.repaymentDeadline && (
             <RepaymentCountdown
               deadline={loan.repaymentDeadline}
-              className="mb-6"
+              className="mb-6 no-print"
             />
           )}
 
           {/* Real-time health factor gauge + alert banners */}
-          <section aria-label="Health factor" className="mb-6" data-testid="health-factor-section">
+          <section
+            aria-label="Health factor"
+            className="mb-6 no-print"
+            data-testid="health-factor-section"
+          >
             <div className="bg-white rounded-2xl p-6 shadow">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-semibold text-brown">Health Factor</h2>
@@ -407,45 +462,6 @@ export default function LoanDetailPage() {
           )}
         </>
       )}
-
-      {/* Issue #1519: Print-only section — hidden on screen, visible in print/PDF.
-          Shows StellarKraal branding, loan summary, and a QR code linking to the
-          on-chain transaction so borrowers have a verifiable physical record. */}
-      <div
-        className="hidden print:block mt-8 pt-6 border-t border-gray-300"
-        aria-hidden="true"
-      >
-        <div className="flex items-start justify-between gap-6">
-          <div className="flex-1">
-            <p className="text-xs text-gray-500 mb-1">Issued by</p>
-            <p className="font-bold text-base">StellarKraal</p>
-            <p className="text-xs text-gray-500 mt-1">
-              Livestock-Backed Micro-Lending on Stellar
-            </p>
-            <p className="text-xs text-gray-400 mt-3">
-              Loan ID: {loan.id}
-            </p>
-            <p className="text-xs text-gray-400">
-              Printed: {new Date().toLocaleDateString()}
-            </p>
-            <p className="text-xs text-gray-400 mt-2">
-              Verify on-chain: https://stellarkraal.io/loans/{loan.id}
-            </p>
-          </div>
-          {/* QR code linking to the on-chain loan record (#1519).
-              We use the Google Charts QR API which works without a JS runtime.
-              In a production build this can be swapped for a server-generated
-              QR image at build time to remove the external dependency. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={`https://api.qrserver.com/v1/create-qr-code/?size=96x96&data=${encodeURIComponent(`https://stellarkraal.io/loans/${loan.id}`)}`}
-            alt={`QR code for loan ${loan.id}`}
-            width={96}
-            height={96}
-            className="shrink-0"
-          />
-        </div>
-      </div>
     </main>
   );
 }

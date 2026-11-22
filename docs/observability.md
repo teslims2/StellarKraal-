@@ -560,3 +560,63 @@ dedicated `Registry` instance.
 |--------|------|--------|---------|-------------|
 | `http_requests_total` | Counter | `method`, `route`, `status_code` | — | Total HTTP requests served since process start |
 | `http_request_duration_seconds` | Histogram | `method`, `route` | — | Request latency distribution |
+
+#### Business metrics — loan lifecycle
+
+These metrics give Grafana dashboards visibility into platform health beyond
+process-level stats. They are emitted from
+[`backend/src/services/loanService.ts`](../backend/src/services/loanService.ts),
+the `/metrics` handler in [`backend/src/index.ts`](../backend/src/index.ts),
+and the Soroban RPC client in
+[`backend/src/utils/rpcClient.ts`](../backend/src/utils/rpcClient.ts).
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `loan_created_total` | Counter | `collateral_type`, `status` | Incremented each time a `request_loan` transaction is built successfully |
+| `loan_repaid_total` | Counter | `collateral_type`, `status` | Incremented by the repaid **amount in stroops** each time a `repay_loan` transaction is built |
+| `loan_liquidated_total` | Counter | `collateral_type`, `status` | Incremented each time a loan is liquidated |
+| `active_loans_total` | Gauge | `state` (`Active`, `AtRisk`) | Current number of open loans by state. Recomputed from the loan store on every `/metrics` scrape; both series are always present (0 when empty) |
+| `contract_rpc_duration_seconds` | Histogram | `method`, `status` (`success`, `error`) | Latency of every Soroban RPC call (`getAccount`, `prepareTransaction`, `simulateTransaction`, `sendTransaction`, `getTransaction`, `getEvents`, `getHealth`). Buckets: 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10 s |
+
+Label notes:
+
+- `collateral_type` is the animal type of the (first) pledged collateral, or
+  `unknown` if it cannot be resolved.
+- `status` on the loan counters is the loan status at the time of the event
+  (`active`, `at_risk`, `liquidated`, …).
+- `method` on `contract_rpc_duration_seconds` is the RPC client method name.
+  Calls rejected by an open circuit breaker are recorded with
+  `status="error"`.
+
+##### Example PromQL queries
+
+```promql
+# Loans created per hour, by collateral type
+sum by (collateral_type) (increase(loan_created_total[1h]))
+
+# Liquidation rate: liquidations as a share of loans created over 24h
+sum(increase(loan_liquidated_total[24h]))
+  / clamp_min(sum(increase(loan_created_total[24h])), 1)
+
+# Repaid volume (XLM) over the last day (1 XLM = 10^7 stroops)
+sum(increase(loan_repaid_total[24h])) / 1e7
+
+# Open loans by state (stack these in a time-series panel)
+active_loans_total
+
+# Share of open loans that are at risk
+active_loans_total{state="AtRisk"}
+  / clamp_min(sum(active_loans_total), 1)
+
+# p95 Soroban RPC latency by method
+histogram_quantile(0.95,
+  sum by (le, method) (rate(contract_rpc_duration_seconds_bucket[5m])))
+
+# Soroban RPC error ratio
+sum(rate(contract_rpc_duration_seconds_count{status="error"}[5m]))
+  / clamp_min(sum(rate(contract_rpc_duration_seconds_count[5m])), 1e-9)
+```
+
+Suggested alert: page when `active_loans_total{state="AtRisk"}` exceeds 20% of
+open loans for 15 minutes, or when p95 `contract_rpc_duration_seconds`
+exceeds 5 s for 10 minutes.

@@ -371,8 +371,21 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
       setSubmitAttempted(false);
     } catch (e) {
       const { variant, message } = classifyApiError(e);
-      toast[variant](message);
       setStatus(`error:${message}`);
+      if (variant === 'error') {
+        toast.error(message, {
+          description: 'Your collateral was not registered. No funds were moved.',
+          action: {
+            label: 'Retry',
+            onClick: () => {
+              setStatus(null);
+              void registerCollateral();
+            },
+          },
+        });
+      } else {
+        toast[variant](message);
+      }
     } finally {
       setLoading(false);
     }
@@ -381,11 +394,32 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
   function handleTxTerminal(status: TransactionStatus, errorCode?: string) {
     if (status === 'confirmed' && pendingHash) {
       setSuccessId(pendingHash);
+      setStatus(`success:Collateral registered successfully.`);
+      toast.success('Collateral registered successfully.', {
+        description: `${formData.quantity} ${formData.animalType}(s) registered as on-chain collateral.`,
+        action: {
+          label: 'View collateral',
+          href: `/collateral/${pendingHash}`,
+        },
+      });
       onSuccess?.(pendingHash);
     } else if (status === 'failed') {
-      const message = errorCode ? `Transaction failed: ${errorCode}` : 'Transaction failed';
+      const message = errorCode
+        ? `Transaction failed: ${errorCode}`
+        : 'Transaction failed. Please try again.';
       setPendingError(message);
-      toast.error(message);
+      setStatus(`error:${message}`);
+      toast.error(message, {
+        description: 'Your collateral was not registered. No funds were moved.',
+        action: {
+          label: 'Retry',
+          onClick: () => {
+            setPendingError(null);
+            setStatus(null);
+            void registerCollateral();
+          },
+        },
+      });
     }
     setPendingHash(null);
   }
@@ -629,6 +663,9 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
                     aria-describedby={errors.image ? `${FIELD_IDS.image}-error` : undefined}
                   />
                   <div className="flex flex-col items-start gap-4 sm:flex-row">
+                    {/* eslint-disable-next-line @next/next/no-img-element --
+                        imagePreview is a blob: URL created by URL.createObjectURL().
+                        next/image cannot render blob: URLs; a plain <img> is required here. */}
                     <img
                       src={imagePreview}
                       alt={`${formData.animalType} animal photo preview`}

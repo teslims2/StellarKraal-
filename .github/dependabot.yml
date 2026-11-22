@@ -64,6 +64,24 @@ updates:
       - dependency-name: "soroban-sdk"
         update-types: ["version-update:semver-major"]
 
+  # GitHub Actions used in workflow files (.github/workflows/*)
+  # Keeps action versions (actions/checkout, actions/setup-node, docker/*, etc.)
+  # current so we pick up bug fixes and security patches automatically.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    reviewers:
+      - "teslims2"
+    labels:
+      - "dependencies"
+      - "ci"
+
   # Docker base image digests — backend
   - package-ecosystem: "docker"
     directory: "/backend"

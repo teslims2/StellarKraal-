@@ -24,6 +24,12 @@ export default function GlossaryPage() {
         <p className="mb-4 text-lg text-brown-light">
           Definitions of financial and protocol terms used throughout StellarKraal.
         </p>
+        <p className="mb-6 text-base text-brown-light">
+          Throughout the app, any underlined term can be hovered or focused with
+          the keyboard to see its definition inline — no need to leave the page
+          you&apos;re on. The full list of definitions is below if you prefer to
+          browse them all at once.
+        </p>
         <p className="mb-8 text-sm text-brown-light">
           View the full glossary with cross-references at{" "}
           <a href="https://github.com/oraimoitel/StellarKraal-/blob/main/docs/glossary.md" className="underline hover:text-brown-dark">

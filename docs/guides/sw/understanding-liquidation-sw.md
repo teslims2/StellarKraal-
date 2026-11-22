@@ -1,5 +1,7 @@
 # Kuelewa Usanidi
 
+> 🌍 **Lugha / Language:** Unasoma toleo la Kiswahili. | [English →](../understanding-liquidation.md)
+
 Mwongozo huu unaeleza usanidi kwa lugha ya kawaida — ni nini, unatokea lini, jinsi kipengele cha afya kinavyofanya kazi, na unachoweza kufanya kulinda nafasi yako.
 
 ---
