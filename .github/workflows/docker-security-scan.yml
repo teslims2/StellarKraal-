@@ -43,7 +43,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Build backend image
         run: docker build -t app-backend:scan ./backend
@@ -66,7 +66,7 @@ jobs:
           exit "$status"
 
       - name: Run Trivy vulnerability scanner (backend)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: app-backend:scan
           format: 'sarif'
@@ -103,7 +103,7 @@ jobs:
 
       - name: Upload frontend scan results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: trivy-backend-results
           path: trivy-backend-results.sarif
@@ -119,7 +119,7 @@ jobs:
 
       - name: Upload backend SBOM as artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom-backend
           path: sbom-backend.cyclonedx.json
@@ -127,7 +127,7 @@ jobs:
 
       - name: Attach backend SBOM to release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: sbom-backend.cyclonedx.json
 
@@ -138,13 +138,13 @@ jobs:
       security-events: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build frontend image for scanning (linux/amd64)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./frontend
           platforms: linux/amd64
@@ -193,7 +193,7 @@ jobs:
 
       - name: Upload frontend SBOM as artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom-frontend
           path: sbom-frontend.cyclonedx.json
@@ -201,6 +201,6 @@ jobs:
 
       - name: Attach frontend SBOM to release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: sbom-frontend.cyclonedx.json
