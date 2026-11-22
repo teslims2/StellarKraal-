@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
-import { getAddress, getNetworkDetails, isConnected, setAllowed } from '@/lib/freighterClient';
+import { useWallet } from '@/context/WalletContext';
+import { loadFreighter } from '@/lib/freighterClient';
 
 export const WALLET_STORAGE_KEY = 'stellarkraal_wallet';
 
@@ -30,11 +31,6 @@ function networkLabel(network: string): string {
   return network.charAt(0).toUpperCase() + network.slice(1);
 }
 
-function getResultError(value: unknown): unknown {
-  if (typeof value !== 'object' || value === null || !('error' in value)) return null;
-  return value.error == null ? null : value.error;
-}
-
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message;
   if (typeof error === 'string' && error.trim()) return error;
@@ -47,47 +43,6 @@ function getErrorMessage(error: unknown): string {
 
 function isExtensionError(message: string): boolean {
   return /not installed|not detected|not found|unavailable|extension/i.test(message);
-}
-
-function isInstalledResult(result: unknown): boolean {
-  if (typeof result === 'boolean') return result;
-  if (typeof result !== 'object' || result === null || !('isConnected' in result)) return false;
-  return result.isConnected === true;
-}
-
-function isPermissionDenied(result: unknown): boolean {
-  return (
-    typeof result === 'object' &&
-    result !== null &&
-    'isAllowed' in result &&
-    result.isAllowed === false
-  );
-}
-
-async function readFreighterNetwork(): Promise<string | null> {
-  try {
-    const details = await getNetworkDetails();
-    if (getResultError(details)) return null;
-    return normalizeNetwork(details.network);
-  } catch {
-    return null;
-  }
-}
-
-function persistAddress(address: string): void {
-  try {
-    window.localStorage.setItem(WALLET_STORAGE_KEY, address);
-  } catch {
-    return;
-  }
-}
-
-function clearPersistedAddress(): void {
-  try {
-    window.localStorage.removeItem(WALLET_STORAGE_KEY);
-  } catch {
-    return;
-  }
 }
 
 function notifyConnected(callback: ((address: string) => void) | undefined, address: string): void {
@@ -119,8 +74,13 @@ export function ConnectWalletModal({
   const expectedNetwork =
     normalizeNetwork(process.env.NEXT_PUBLIC_NETWORK ?? DEFAULT_NETWORK) ?? DEFAULT_NETWORK;
   const expectedNetworkLabel = networkLabel(expectedNetwork);
-  const [address, setAddress] = useState<string | null>(null);
-  const [connectedNetwork, setConnectedNetwork] = useState<string | null>(null);
+  const {
+    publicKey: address,
+    isConnected: walletConnected,
+    network: connectedNetwork,
+    connect,
+    disconnect,
+  } = useWallet();
   const [freighterInstalled, setFreighterInstalled] = useState<boolean | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -141,8 +101,14 @@ export function ConnectWalletModal({
 
     const request = (async () => {
       try {
-        const result = await isConnected();
-        const installed = isInstalledResult(result);
+        const freighter = await loadFreighter();
+        const result = await freighter.isConnected();
+        const installed =
+          typeof result === 'boolean'
+            ? result
+            : typeof result === 'object' && result !== null && 'isConnected' in result
+              ? result.isConnected === true
+              : false;
         if (mountedRef.current) {
           setFreighterInstalled(installed);
           setError(installed ? null : EXTENSION_NOT_INSTALLED);
@@ -180,35 +146,17 @@ export function ConnectWalletModal({
     const requestId = ++requestIdRef.current;
     setIsConnecting(true);
     setError(null);
-    setConnectedNetwork(null);
 
     try {
       const installed = await checkFreighter();
       if (!installed || !isCurrentRequest(requestId)) return;
 
-      const permission = await setAllowed();
-      const permissionError = getResultError(permission);
-      if (permissionError) throw new Error(getErrorMessage(permissionError));
-      if (isPermissionDenied(permission)) {
-        throw new Error('Permission to connect was not granted. Please try again.');
-      }
-
-      const addressResult = await getAddress();
-      const addressError = getResultError(addressResult);
-      if (addressError) throw new Error(getErrorMessage(addressError));
-      if (!addressResult.address) {
+      const connectedAddress = await connect();
+      if (!isCurrentRequest(requestId)) return;
+      if (!connectedAddress) {
         throw new Error('Freighter did not return a wallet address. Please try again.');
       }
-      if (!isCurrentRequest(requestId)) return;
-
-      const connectedAddress = addressResult.address;
-      setAddress(connectedAddress);
-      persistAddress(connectedAddress);
       notifyConnected(onConnected, connectedAddress);
-
-      const walletNetwork = await readFreighterNetwork();
-      if (!isCurrentRequest(requestId)) return;
-      setConnectedNetwork(walletNetwork);
     } catch (connectionError) {
       if (!isCurrentRequest(requestId)) return;
       const message = getErrorMessage(connectionError);
@@ -225,11 +173,9 @@ export function ConnectWalletModal({
 
   function handleDisconnect() {
     requestIdRef.current += 1;
-    setAddress(null);
-    setConnectedNetwork(null);
     setIsConnecting(false);
     setError(null);
-    clearPersistedAddress();
+    disconnect();
     notifyDisconnected(onDisconnected);
   }
 
@@ -249,7 +195,7 @@ export function ConnectWalletModal({
       titleId={titleId}
       size="sm"
     >
-      {address ? (
+      {address && walletConnected ? (
         <div className="space-y-4">
           <div
             role="status"

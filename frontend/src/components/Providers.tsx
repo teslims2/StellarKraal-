@@ -6,6 +6,7 @@ import { SWRConfig } from 'swr';
 import { store } from '@/store/store';
 import { ToastProvider, ToastContainer } from '@/components/toast';
 import OfflineBanner from '@/components/OfflineBanner';
+import { WalletProvider } from '@/context/WalletContext';
 
 interface ProvidersProps {
   children: React.ReactNode;
@@ -23,11 +24,13 @@ export function Providers({ children }: ProvidersProps) {
           revalidateOnFocus: true,
         }}
       >
-        <ToastProvider>
-          <OfflineBanner />
-          {children}
-          <ToastContainer />
-        </ToastProvider>
+        <WalletProvider>
+          <ToastProvider>
+            <OfflineBanner />
+            {children}
+            <ToastContainer />
+          </ToastProvider>
+        </WalletProvider>
       </SWRConfig>
     </Provider>
   );

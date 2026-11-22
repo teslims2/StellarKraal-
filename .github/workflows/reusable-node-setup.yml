@@ -1,0 +1,60 @@
+name: Reusable – Node.js Setup
+
+# Centralises Node.js installation and npm ci so that backend-ci.yml and
+# frontend-ci.yml call this workflow instead of repeating the same steps.
+# Closes #1521.
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'Directory that contains the package-lock.json (e.g. backend or frontend)'
+        required: true
+        type: string
+      node-version:
+        description: 'Explicit Node.js version (e.g. "20"). Ignored when node-version-file is set.'
+        required: false
+        type: string
+        default: ''
+      node-version-file:
+        description: 'Path to a file that specifies the Node.js version (e.g. .nvmrc).'
+        required: false
+        type: string
+        default: ''
+    outputs:
+      cache-hit:
+        description: 'Whether the npm cache was restored'
+        value: ${{ jobs.setup.outputs.cache-hit }}
+
+jobs:
+  setup:
+    name: Node setup & npm ci
+    runs-on: ubuntu-latest
+    outputs:
+      cache-hit: ${{ steps.cache.outputs.cache-hit }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (version file)
+        if: ${{ inputs.node-version-file != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ${{ inputs.node-version-file }}
+          cache: 'npm'
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Setup Node.js (explicit version)
+        if: ${{ inputs.node-version-file == '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version || '20' }}
+          cache: 'npm'
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install dependencies
+        id: cache
+        run: npm ci

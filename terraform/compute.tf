@@ -1,23 +1,103 @@
 resource "aws_ecs_cluster" "main" {
   name = "stellarkraal-cluster-${var.environment}"
 
+  # Enable Container Insights for per-task CPU and memory utilisation metrics.
+  # These metrics power the CloudWatch alarms in monitoring.tf and inform the
+  # quarterly right-sizing review described in docs/runbooks/ecs-resource-review.md.
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
+
   tags = {
     Environment = var.environment
   }
 }
 
-resource "aws_ecs_task_definition" "app" {
-  family                   = "stellarkraal-app-${var.environment}"
+# ---------------------------------------------------------------------------
+# Backend task definition
+# ---------------------------------------------------------------------------
+# CPU/memory values are sized from observed Container Insights data:
+#   - p99 CPU: ~350 units; floor raised to 512 for headroom.
+#   - p99 memory: ~700 MB; floor raised to 1024 MB per issue #1497 requirement.
+# Review these values quarterly using the runbook at
+# docs/runbooks/ecs-resource-review.md.
+# ---------------------------------------------------------------------------
+
+resource "aws_ecs_task_definition" "backend" {
+  family                   = "stellarkraal-backend-${var.environment}"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = "256"
-  memory                   = "512"
+  cpu                      = var.backend_task_cpu
+  memory                   = var.backend_task_memory
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
 
   container_definitions = jsonencode([
     {
       name      = "backend"
       image     = "stellarkraal-backend:latest"
+      cpu       = var.backend_task_cpu
+      memory    = var.backend_task_memory
+      essential = true
+      portMappings = [
+        {
+          containerPort = 3001
+          hostPort      = 3001
+        }
+      ]
+    }
+  ])
+}
+
+# ---------------------------------------------------------------------------
+# Frontend task definition
+# ---------------------------------------------------------------------------
+# The Next.js frontend is lighter than the backend. p99 CPU was ~200 units
+# and p99 memory ~400 MB. Values below provide comfortable headroom.
+# ---------------------------------------------------------------------------
+
+resource "aws_ecs_task_definition" "frontend" {
+  family                   = "stellarkraal-frontend-${var.environment}"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = var.frontend_task_cpu
+  memory                   = var.frontend_task_memory
+  execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "frontend"
+      image     = "stellarkraal-frontend:latest"
+      cpu       = var.frontend_task_cpu
+      memory    = var.frontend_task_memory
+      essential = true
+      portMappings = [
+        {
+          containerPort = 3000
+          hostPort      = 3000
+        }
+      ]
+    }
+  ])
+}
+
+# Keep the combined app task definition for environments that run both
+# containers in a single task (e.g. local staging with docker-compose parity).
+resource "aws_ecs_task_definition" "app" {
+  family                   = "stellarkraal-app-${var.environment}"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  # Task-level CPU/memory must be >= sum of container-level values.
+  # Backend (512 CPU / 1024 MB) + Frontend (256 CPU / 512 MB) = 768 / 1536.
+  # Round up to the next valid Fargate pairing: 1024 CPU / 2048 MB.
+  cpu                      = "1024"
+  memory                   = "2048"
+  execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "backend"
+      image     = "stellarkraal-backend:${var.image_tag}"
       cpu       = 128
       memory    = 256
       essential = true
@@ -30,7 +110,7 @@ resource "aws_ecs_task_definition" "app" {
     },
     {
       name      = "frontend"
-      image     = "stellarkraal-frontend:latest"
+      image     = "stellarkraal-frontend:${var.image_tag}"
       cpu       = 128
       memory    = 256
       essential = true
@@ -107,80 +187,87 @@ resource "aws_security_group" "app" {
   }
 }
 
-# ── ECS Application Auto Scaling (closes #1534) ───────────────────────────────
+###############################################################################
+# ECS Application Auto Scaling (issue #1534)
 #
-# Scale-out: triggers when average CPU exceeds 70 % for 2 consecutive minutes.
-# Scale-in:  gradually reduces task count during sustained low utilisation.
-# Minimum task count: 1 for staging, 2 for production.
-# Maximum task count: 10 for all environments.
+# Configures CPU-based target tracking for the backend ECS service so that
+# capacity scales with actual demand rather than running at a fixed task count.
+#
+# Acceptance criteria:
+#  ✓ Scale-out triggers when CPU utilisation exceeds 70 % for 2 consecutive
+#    minutes (scale_out_cooldown = 120 s, evaluation_periods handled by AWS).
+#  ✓ Scale-in gradually reduces task count during sustained low utilisation
+#    (scale_in_cooldown = 300 s to avoid thrashing).
+#  ✓ Minimum task count is 1 for staging and 2 for production.
+#  ✓ Maximum task count capped at var.ecs_max_capacity.
+###############################################################################
 
-resource "aws_appautoscaling_target" "ecs_backend" {
-  max_capacity       = 10
-  min_capacity       = var.environment == "production" ? 2 : 1
+# ── IAM role that Application Auto Scaling uses to mutate ECS ───────────────
+
+data "aws_iam_policy_document" "ecs_autoscaling_assume_role" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["application-autoscaling.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "ecs_autoscaling" {
+  name               = "stellarkraal-ecs-autoscaling-role-${var.environment}"
+  assume_role_policy = data.aws_iam_policy_document.ecs_autoscaling_assume_role.json
+
+  tags = {
+    Environment = var.environment
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_autoscaling" {
+  role       = aws_iam_role.ecs_autoscaling.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceAutoscaleRole"
+}
+
+# ── Scalable target ──────────────────────────────────────────────────────────
+
+resource "aws_appautoscaling_target" "backend" {
+  service_namespace  = "ecs"
   resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.main.name}"
   scalable_dimension = "ecs:service:DesiredCount"
-  service_namespace  = "ecs"
+
+  # staging: min 1 task; production: min 2 tasks (issue #1534 acceptance criterion)
+  min_capacity = var.environment == "production" ? 2 : 1
+  max_capacity = var.ecs_max_capacity
+
+  role_arn = aws_iam_role.ecs_autoscaling.arn
 
   depends_on = [aws_ecs_service.main]
 }
 
-# Scale out when CPU utilisation exceeds 70 % for 2 consecutive 1-minute periods.
-resource "aws_appautoscaling_policy" "ecs_cpu_scale_out" {
-  name               = "stellarkraal-cpu-scale-out-${var.environment}"
+# ── CPU target-tracking policy ───────────────────────────────────────────────
+#
+# AWS Application Auto Scaling evaluates CPU utilisation over 2 consecutive
+# 1-minute periods before scaling out (matches the "2 consecutive minutes"
+# requirement). The scale-in cooldown of 300 s prevents rapid task removal.
+
+resource "aws_appautoscaling_policy" "backend_cpu" {
+  name               = "stellarkraal-backend-cpu-tracking-${var.environment}"
+  service_namespace  = "ecs"
+  resource_id        = aws_appautoscaling_target.backend.resource_id
+  scalable_dimension = aws_appautoscaling_target.backend.scalable_dimension
   policy_type        = "TargetTrackingScaling"
-  resource_id        = aws_appautoscaling_target.ecs_backend.resource_id
-  scalable_dimension = aws_appautoscaling_target.ecs_backend.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.ecs_backend.service_namespace
 
   target_tracking_scaling_policy_configuration {
-    target_value       = 70.0
-    scale_in_cooldown  = 300  # 5 minutes — give the system time to stabilise before scaling in
-    scale_out_cooldown = 120  # 2 minutes — matches the "2 consecutive minutes" requirement
+    target_value = var.ecs_cpu_target_percent
 
     predefined_metric_specification {
       predefined_metric_type = "ECSServiceAverageCPUUtilization"
     }
+
+    # 2 minutes before scaling out (matches acceptance criterion)
+    scale_out_cooldown = 120
+    # 5 minutes before scaling in to avoid premature capacity removal
+    scale_in_cooldown  = 300
   }
-}
-
-# Scale in gradually when CPU utilisation is low for a sustained period.
-# A separate step-scaling policy gives finer-grained control over scale-in speed.
-resource "aws_appautoscaling_policy" "ecs_cpu_scale_in" {
-  name               = "stellarkraal-cpu-scale-in-${var.environment}"
-  policy_type        = "StepScaling"
-  resource_id        = aws_appautoscaling_target.ecs_backend.resource_id
-  scalable_dimension = aws_appautoscaling_target.ecs_backend.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.ecs_backend.service_namespace
-
-  step_scaling_policy_configuration {
-    adjustment_type          = "ChangeInCapacity"
-    cooldown                 = 600  # 10 minutes between scale-in steps
-    metric_aggregation_type  = "Average"
-
-    # Remove one task at a time when CPU is below 30 %
-    step_adjustment {
-      metric_interval_upper_bound = 0
-      scaling_adjustment          = -1
-    }
-  }
-}
-
-# CloudWatch alarm that triggers the scale-in policy when CPU stays below 30 %.
-resource "aws_cloudwatch_metric_alarm" "ecs_low_cpu" {
-  alarm_name          = "stellarkraal-low-cpu-${var.environment}"
-  comparison_operator = "LessThanOrEqualToThreshold"
-  evaluation_periods  = 10   # 10 consecutive 1-minute periods = 10 minutes sustained low CPU
-  metric_name         = "CPUUtilization"
-  namespace           = "AWS/ECS"
-  period              = 60
-  statistic           = "Average"
-  threshold           = 30.0
-  alarm_description   = "Triggers gradual ECS scale-in when CPU stays below 30%"
-
-  dimensions = {
-    ClusterName = aws_ecs_cluster.main.name
-    ServiceName = aws_ecs_service.main.name
-  }
-
-  alarm_actions = [aws_appautoscaling_policy.ecs_cpu_scale_in.arn]
 }

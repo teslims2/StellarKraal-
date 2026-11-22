@@ -1,11 +1,13 @@
 /**
  * GraphQL type definitions for StellarKraal API v2 (ADR-011).
  *
- * Implements:
- *   Query  { loans, loan, collateral, collateralById, user, me }
- *   Mutation { requestLoan, repayLoan }
+ * Implements Query { loans, collateral, user } and Mutation { requestLoan, repayLoan }
+ * backed by the existing service and store layer.
  *
- * Mounted at /api/v2/graphql (closes #1537).
+ * Changes for issue #1537:
+ *  - Added User type with matching Query.user resolver
+ *  - Mounted at /api/v2/graphql (see routes/v2.ts)
+ *  - DataLoader pattern applied for per-borrower loan batching
  *
  * Full SDL is declared here rather than in a .graphql file so that the schema
  * is bundled with the TypeScript output without extra build steps.
@@ -150,14 +152,33 @@ export const typeDefs = `#graphql
     """Fetch a single collateral record by its ID."""
     collateralById(id: ID!): Collateral
 
-    """Fetch a user profile by Stellar wallet address."""
+    """
+    Fetch a user profile by wallet address.
+    Returns null when no profile exists for the given address.
+    """
     user(walletAddress: ID!): User
+  }
 
-    """
-    Return the profile of the currently authenticated user.
-    Requires a valid JWT; returns null when unauthenticated.
-    """
-    me: User
+  # ── User type (issue #1537) ───────────────────────────────────────────────
+
+  """Notification preferences for a user."""
+  type NotificationPreferences {
+    loanApproved: Boolean
+    loanRepaid: Boolean
+    liquidationWarning: Boolean
+    loanDisbursed: Boolean
+  }
+
+  """A user profile identified by their Stellar wallet address."""
+  type User {
+    """Stellar wallet address (G…)."""
+    walletAddress: ID!
+    displayName: String
+    notificationPreferences: NotificationPreferences
+    createdAt: DateTime!
+    updatedAt: DateTime!
+    """Active loans belonging to this user (uses DataLoader batching)."""
+    loans: [Loan!]!
   }
 
   # ── Mutations ──────────────────────────────────────────────────────────────

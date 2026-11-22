@@ -1,8 +1,14 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import Tooltip from "@/components/Tooltip";
 
 import PageTransition from "@/components/PageTransition";
+
+const BelowTheFold = dynamic(() => import("@/components/BelowTheFold"), {
+  loading: () => null,
+});
 
 export const metadata: Metadata = {
   title: "StellarKraal — Livestock Micro-Lending",
@@ -20,6 +26,15 @@ export default function Home() {
     <PageTransition>
     <main className="flex flex-col items-center justify-center min-h-screen px-6 text-center">
       <h1 className="text-4xl md:text-5xl font-bold mb-4" style={{ color: "var(--color-text)" }}>🐄 StellarKraal</h1>
+      <Image
+        src="/og-banner.png"
+        alt="StellarKraal — livestock-backed micro-lending on Stellar"
+        width={1200}
+        height={630}
+        sizes="(max-width: 768px) 100vw, 768px"
+        priority
+        className="w-full max-w-md md:max-w-2xl h-auto mb-6 rounded-xl"
+      />
       <p className="text-xl mb-2 font-semibold text-gold">Livestock-Backed Micro-Lending on Stellar</p>
       <p className="max-w-sm md:max-w-md mb-10" style={{ color: "var(--color-text-muted)" }}>
         Register your cattle, goats, or sheep as on-chain collateral and access instant micro-loans — built for African emerging markets.
@@ -42,6 +57,7 @@ export default function Home() {
         </Tooltip>
       </div>
 
+      <BelowTheFold />
     </main>
     </PageTransition>
   );

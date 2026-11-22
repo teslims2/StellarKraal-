@@ -1,13 +1,14 @@
 /**
  * Health check routes (closes #1536).
  *
- * GET /api/v1/health      — structured dependency health check
- * GET /api/v1/health/live — liveness probe (process is up)
- * GET /api/v1/health/ready — readiness probe (DB + RPC reachable)
- * GET /api/v1/health/deep  — deep check including disk space
+ * Verifies DB connectivity, Soroban RPC reachability, and available disk space.
+ * Excluded from JWT auth and rate-limit middleware — registered before those are applied.
  *
- * All dependency checks use a 2-second timeout so the response never blocks
- * container restarts. Returns HTTP 503 when any critical dependency is unreachable.
+ * Changes for issue #1536:
+ *  - GET /health (root) now returns uptime (seconds), version, and timestamp alongside
+ *    component status so orchestration platforms can correlate restarts with deployments.
+ *  - HTTP 503 is returned when any critical dependency (db or rpc) is unreachable.
+ *  - Health checks complete within 2 seconds (COMPONENT_TIMEOUT_MS = 2000).
  */
 
 import { Router, Request, Response } from "express";
@@ -20,15 +21,12 @@ const DISK_MIN_FREE_BYTES = 500 * 1024 * 1024;
 
 /**
  * Per-component timeout for the aggregated /health check (ms).
- * Set to 2 s to satisfy the acceptance criterion that checks complete within
- * 2 seconds to avoid blocking container restarts (issue #1536).
+ * Must be low enough to avoid blocking container restarts (issue #1536: ≤2 s).
  */
 const COMPONENT_TIMEOUT_MS = 2000;
 
-const APP_VERSION = process.env.npm_package_version ?? '0.0.0';
-
-/** Epoch at which this process started, used to compute uptime. */
-const startTime = Date.now();
+/** Process start time, used to calculate uptime. */
+const PROCESS_START = Date.now();
 
 type ComponentStatus = "ok" | "degraded";
 
@@ -36,6 +34,36 @@ interface DeepHealthResponse {
   db: ComponentStatus;
   rpc: ComponentStatus;
   disk: ComponentStatus;
+}
+
+type AggregatedStatus = "healthy" | "degraded" | "unhealthy";
+
+/** Root health response (issue #1536). */
+interface HealthResponse {
+  status: AggregatedStatus;
+  /** ISO-8601 timestamp of when this response was generated. */
+  timestamp: string;
+  /** Process uptime in seconds. */
+  uptime: number;
+  /** Application version from package.json (NODE_ENV-aware). */
+  version: string;
+  components: {
+    db: ComponentStatus;
+    rpc: ComponentStatus;
+    eventListener: ComponentStatus;
+  };
+}
+
+/** Application version — read from the APP_VERSION env var or the package.json version field. */
+function getAppVersion(): string {
+  if (process.env.APP_VERSION) return process.env.APP_VERSION;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const pkg = require('../../package.json') as { version?: string };
+    return pkg.version ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
 }
 
 /**
@@ -131,8 +159,10 @@ const healthRouter = Router();
  * timeout. Returns 503 when any critical dependency (database or Soroban RPC)
  * is unreachable (closes #1536).
  *
- * @returns 200 `{ status: "healthy", database, sorobanRpc, uptime, version, timestamp }`
- * @returns 503 `{ status: "degraded" | "unhealthy", database, sorobanRpc, uptime, version, timestamp }`
+ * Returns 200 when all dependencies are healthy, 503 otherwise (issue #1536).
+ *
+ * @returns 200 `{ status: "healthy", timestamp, uptime, version, components: { db, rpc, eventListener } }`
+ * @returns 503 `{ status: "degraded" | "unhealthy", timestamp, uptime, version, components }`
  */
 healthRouter.get("/", async (_req: Request, res: Response) => {
   const [dbHealthy, rpcHealthy] = await Promise.all([
@@ -153,14 +183,17 @@ healthRouter.get("/", async (_req: Request, res: Response) => {
     status = "degraded";
   }
 
-  res.status(status === "healthy" ? 200 : 503).json({
+  // Per issue #1536: return 503 when any critical dependency (db or rpc) is unreachable
+  const criticalOk = dbHealthy && rpcHealthy;
+
+  const body: HealthResponse = {
     status,
-    database,
-    sorobanRpc,
-    uptime: Math.floor((Date.now() - startTime) / 1000),
-    version: APP_VERSION,
     timestamp: new Date().toISOString(),
-  });
+    uptime: Math.floor((Date.now() - PROCESS_START) / 1000),
+    version: getAppVersion(),
+    components,
+  };
+  res.status(criticalOk ? 200 : 503).json(body);
 });
 
 /**

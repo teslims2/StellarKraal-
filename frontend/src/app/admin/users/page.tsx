@@ -100,7 +100,7 @@ export default function UsersPage() {
   }, [users, search]);
 
   // ── Pagination (20 per page default) ────────────────────────────────────────
-  const { page, limit, totalPages, setPage, setLimit, slice } = usePagination(filtered.length, 20);
+  const { page, limit, totalPages, setPage, setLimit, slice } = usePagination(filtered.length, 25);
   const pageRows = slice(filtered);
 
   // ── Status toggle ────────────────────────────────────────────────────────────

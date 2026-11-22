@@ -34,6 +34,8 @@ import {
   getTransaction,
   insertAuditEntry,
   listAuditEntries,
+  getOriginationFeeBps,
+  setOriginationFeeBps,
   getProfile,
   updateProfile,
   type TransactionType,
@@ -106,7 +108,7 @@ import { apiKeyRouter } from './middleware/apiKey';
 import { deduplicationMiddleware } from './middleware/deduplication';
 import { v2Router } from './routes/v2';
 import { createGraphQLMiddleware } from './graphql/server';
-import { registry, httpActiveConnections, httpRequestDurationSeconds, httpRequestsTotal } from './metrics';
+import { registry, httpActiveConnections, httpRequestDurationSeconds, httpRequestsTotal, updateActiveLoansGauge } from './metrics';
 import { fireAlert } from './utils/alerting';
 import { rules } from './utils/alertRules';
 import { healthRouter } from './routes/health';
@@ -206,7 +208,8 @@ app.use('/api/v1/health', healthRouter);
  * Exposes Prometheus-format metrics for scraping.
  * Includes default Node.js metrics (memory, CPU, event loop lag) plus
  * application-specific counters and histograms (HTTP requests, duration,
- * DB pool acquired/available/wait).
+ * DB pool acquired/available/wait) and business metrics (loan lifecycle
+ * counters, active_loans_total, contract_rpc_duration_seconds).
  *
  * When METRICS_TOKEN is configured, requires Authorization: Bearer <token>.
  * Otherwise, metrics are accessible without authentication (intended for
@@ -214,6 +217,7 @@ app.use('/api/v1/health', healthRouter);
  */
 app.get('/metrics', metricsAuthMiddleware, async (_req: Request, res: Response) => {
   try {
+    updateActiveLoansGauge(listActiveLoans());
     res.set('Content-Type', registry.contentType);
     res.end(await registry.metrics());
   } catch (err) {
@@ -276,14 +280,21 @@ app.use('/api/v1', loanRepaymentRouter);
 // ── API v2 stub ───────────────────────────────────────────────────────────────
 app.use('/api/v2', v2Router);
 
-// ── GraphQL endpoint (ADR-011, closes #1537) ─────────────────────────────────
+// ── GraphQL endpoint (ADR-011, issue #1537) ───────────────────────────────────
 /**
- * POST /graphql (legacy path, kept for backward compatibility)
- * POST /api/v2/graphql (canonical v2 path, mounted via v2Router)
+ * POST /api/v2/graphql
  *
- * Apollo Server v4 GraphQL endpoint exposing the full v2 schema.
- * Apollo Sandbox (interactive explorer) is available in non-production at /graphql.
- * JWT auth middleware forwards the authenticated wallet address to resolvers.
+ * Apollo Server v4 GraphQL endpoint exposing Query { loans, collateral, user }
+ * and Mutation { requestLoan, repayLoan } backed by the existing service layer.
+ *
+ * Also aliased at the legacy /graphql path for backwards compatibility.
+ *
+ * Apollo Sandbox (interactive explorer) is available in non-production.
+ *
+ * JWT auth middleware is applied so that the authenticated wallet address is
+ * forwarded to resolvers via GraphQLContext.userPublicKey.
+ * A per-request DataLoader (loansByBorrowerLoader) is added to context for
+ * N+1 prevention when resolving User.loans (#1537).
  */
 let apolloServer: import('@apollo/server').ApolloServer | undefined;
 
@@ -294,8 +305,10 @@ let apolloServer: import('@apollo/server').ApolloServer | undefined;
     // Apollo Server 4 / expressMiddleware requires JSON body parsing before the handler.
     // jwtMiddleware guards POST requests (all GraphQL operations use POST).
     // Cast to any to work around Express 5 generic overload resolution.
+    app.use('/api/v2/graphql', express.json(), jwtMiddleware, middleware as any);
+    // Keep the legacy /graphql alias to avoid breaking existing clients
     app.use('/graphql', express.json(), jwtMiddleware, middleware as any);
-    logger.info('GraphQL endpoint mounted at /graphql (legacy) and /api/v2/graphql (v2)');
+    logger.info('GraphQL endpoint mounted at /api/v2/graphql (alias: /graphql)');
   } catch (err) {
     logger.error('Failed to start Apollo Server', {
       error: err instanceof Error ? err.message : String(err),
@@ -750,6 +763,13 @@ app.post(
       const maxLoanAmount = Math.floor(collateral.appraised_value * 0.8);
       const loanAmount = Math.min(requestedAmount, maxLoanAmount);
 
+      // Read the origination fee at runtime from loan_config and snapshot it
+      // onto the loan record. The snapshot means a later fee change never
+      // alters an already-disbursed loan (#1533).
+      const feeBps = getOriginationFeeBps();
+      const originationFee = Math.floor((loanAmount * feeBps) / 10_000);
+      const feePercentage = feeBps / 100;
+
       const xdrTx = await buildContractTx(borrowerAddress, 'request_loan', [
         new Address(borrowerAddress).toScVal(),
         nativeToScVal(collateralId, { type: 'string' }),
@@ -761,10 +781,14 @@ app.post(
         borrower: borrowerAddress,
         collateral_id: collateralId,
         amount: loanAmount,
+        origination_fee: originationFee,
+        fee_percentage_bps: feeBps,
       });
       invalidateCache('/api/loans');
 
-      return res.status(201).json({ loan, xdr: xdrTx });
+      // Expose the fee explicitly so the borrower can review it before
+      // signing the returned XDR (#1533).
+      return res.status(201).json({ loan, xdr: xdrTx, originationFee, feePercentage });
     } finally {
       pendingPledges.delete(collateralId);
     }
@@ -1876,12 +1900,16 @@ app.post(
       });
     }
 
-    const origFeeBps = parseInt(config.ORIG_FEE_BPS, 10);
+    // Read the origination fee at runtime from the loan_config table so an
+    // admin update takes effect without a redeploy (#1533).
+    const origFeeBps = getOriginationFeeBps();
     const originationFee = Math.floor((principal * origFeeBps) / 10_000);
     const totalAmount = principal + originationFee;
     const interestRate = origFeeBps / 100;
+    // Percentage representation of the BPS value (e.g. 50 bps -> 0.5).
+    const feePercentage = origFeeBps / 100;
 
-    return res.json({ principal, originationFee, totalAmount, interestRate });
+    return res.json({ principal, originationFee, totalAmount, interestRate, feePercentage });
   })
 );
 
@@ -1950,6 +1978,68 @@ app.post('/api/admin/restore/loans/:id', (req: Request, res: Response) => {
   invalidateCache('/api/loans');
   res.json({ restored: true, id: req.params.id });
 });
+
+// ── Loan configuration ──────────────────────────────────────────────────────────
+
+// Admin authorisation: an authenticated admin role, a matching ADMIN_API_KEY
+// bearer, or the x-admin-key / admin-api-key header. Mirrors the check used by
+// the collateral/loan admin routes.
+function isAdminRequest(req: Request): boolean {
+  const user = (req as Request & { user?: { publicKey?: string; role?: string } }).user;
+  const key = config.ADMIN_API_KEY;
+  return Boolean(
+    (user && user.role === 'admin') ||
+      (key && user && user.publicKey === key) ||
+      (key &&
+        ((req.headers['x-admin-key'] as string) === key ||
+          (req.headers['admin-api-key'] as string) === key))
+  );
+}
+
+const updateOriginationFeeSchema = z.object({
+  originationFeeBps: z.number().int().min(0).max(10_000),
+});
+
+// GET /api/admin/loan-config/origination-fee — current runtime origination fee
+app.get('/api/admin/loan-config/origination-fee', (req: Request, res: Response) => {
+  if (!isAdminRequest(req)) {
+    return res.status(403).json({ error: 'Forbidden: admin only' });
+  }
+  res.json({ originationFeeBps: getOriginationFeeBps() });
+});
+
+// PATCH /api/admin/loan-config/origination-fee — update the runtime origination
+// fee (basis points). The change is audit-logged and takes effect for new loan
+// requests immediately; existing loans keep their snapshot (#1533).
+app.patch(
+  '/api/admin/loan-config/origination-fee',
+  writeLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!isAdminRequest(req)) {
+      return res.status(403).json({ error: 'Forbidden: admin only' });
+    }
+
+    const validation = updateOriginationFeeSchema.safeParse(req.body);
+    if (!validation.success) {
+      return res.status(400).json({ error: 'Validation failed', details: validation.error.issues });
+    }
+
+    const user = (req as Request & { user?: { publicKey?: string } }).user;
+    const updatedBy = user?.publicKey ?? 'admin';
+    try {
+      const { feeBps, auditId } = setOriginationFeeBps(
+        validation.data.originationFeeBps,
+        updatedBy
+      );
+      return res.json({ originationFeeBps: feeBps, auditId });
+    } catch (err) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        message: err instanceof Error ? err.message : 'Invalid origination fee',
+      });
+    }
+  })
+);
 
 // DELETE /api/loan/:id — soft delete a loan record
 app.delete('/api/loan/:id', (req: Request, res: Response) => {
@@ -2393,6 +2483,13 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   errorHandler(err, req, res, next);
 });
 
+const healthFactorTask = scheduleHealthFactorJob();
+scheduleRepaymentReminderJob();
+
+// ── Graceful Shutdown ─────────────────────────────────────────────────────────
+
+const SHUTDOWN_TIMEOUT_MS = parseInt(config.SHUTDOWN_TIMEOUT_MS, 10);
+
 let httpServer: import('http').Server | undefined;
 if (process.env.NODE_ENV !== 'test') {
   const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -2403,19 +2500,13 @@ if (process.env.NODE_ENV !== 'test') {
       logLevel: process.env.LOG_LEVEL || 'info',
     });
   });
-  registerSignalHandlers(httpServer, SHUTDOWN_TIMEOUT_MS, undefined, healthFactorTask);
-}
 
-const healthFactorTask = scheduleHealthFactorJob();
-scheduleRepaymentReminderJob();
-
-// ── Graceful Shutdown ─────────────────────────────────────────────────────────
-
-const SHUTDOWN_TIMEOUT_MS = parseInt(config.SHUTDOWN_TIMEOUT_MS, 10);
-
-// Register signal handlers for graceful shutdown
-if (httpServer) {
-  registerSignalHandlers(httpServer, SHUTDOWN_TIMEOUT_MS, undefined, healthFactorTask);
+  // Register signal handlers exactly once, after the HTTP server is created.
+  // SHUTDOWN_TIMEOUT_MS is applied uniformly across all startup paths.
+  registerSignalHandlers(httpServer, {
+    shutdownTimeoutMs: SHUTDOWN_TIMEOUT_MS,
+    healthFactorTask,
+  });
 }
 
 // Redirect unversioned routes to v1 with deprecation warning

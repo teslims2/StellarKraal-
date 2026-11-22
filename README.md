@@ -168,7 +168,13 @@ stellar --version # 22.x or higher
 git clone https://github.com/<your-username>/StellarKraal-.git
 cd StellarKraal-
 cp .env.example .env
+# Edit .env and fill in required values, then validate before starting:
+./scripts/check-env.sh
 ```
+
+The validation script confirms all required variables are set, warns about
+insecure defaults, and checks that the core ports are free. Fix any reported
+issues before running `docker compose up`.
 
 ### Environment Variables
 
@@ -181,7 +187,7 @@ Create a `.env` file in the project root containing:
 | `CONTRACT_ID` | Deployed Soroban contract ID | `G...` |
 | `PORT` | Backend service port | `3001` |
 | `NEXT_PUBLIC_API_URL` | Frontend API base URL | `http://localhost:3001` |
-| `SHUTDOWN_TIMEOUT_MS` | Graceful shutdown drain timeout (ms, min 1000, default 10000). On SIGTERM/SIGINT the server stops accepting new connections and waits up to this duration for in-flight requests to complete before forcing exit. | `10000` |
+| `SHUTDOWN_TIMEOUT_MS` | Graceful shutdown drain timeout (ms, min 1000, default 10000). On SIGTERM/SIGINT the server stops accepting new connections and waits up to this duration for in-flight requests to complete before forcing exit. See [docs/backend/graceful-shutdown.md](docs/backend/graceful-shutdown.md) for the full shutdown sequence. | `10000` |
 
 ### Run with Docker Compose
 
@@ -316,6 +322,12 @@ New contributors should start with the **[Contributing Quickstart](docs/developm
 - [ ] Tests run successfully locally
 - [ ] Documentation updated when necessary
 
+## Staging Environment
+
+The staging environment is a full deployment of the protocol against **Stellar testnet**, used to validate changes before they reach production. It is configured as a GitHub Actions environment named `staging` and is protected by required reviewers.
+
+For the complete guide — including how to create the `staging` environment, how to rotate each required secret and the impact of each on the running system, a deployment verification checklist (health checks, smoke tests, Stellar testnet checks), and the differences between staging and production configuration (including RPC endpoints) — see **[STAGING.md](STAGING.md)**.
+
 ## Lighthouse CI
 
 Performance thresholds are enforced in `frontend/lighthouserc.js`. The CI Lighthouse job runs against the built app and **fails the build** if any score falls below:
@@ -359,8 +371,10 @@ npm run test:frontend
 
 | Document | Description |
 |---|---|
+| [User Guides — start here](docs/guides/README.md) | Landing page for the borrower journey, flow diagram, recommended reading order, and Getting Started checklist |
 | [Loan State Machine](docs/protocol/loan-state-machine.md) | All loan states, valid transitions, triggering events, and on-chain event mapping |
 | [API Quickstart](docs/guides/api-quickstart.md) | Base URL, auth flow, and common `/api/v1` operations |
+| [GraphQL API v2 Reference](docs/graphql-api-v2.md) | GraphQL schema, query examples, authentication, pagination, and REST v1 migration guide |
 | [Freighter Wallet Integration](docs/guides/freighter-integration.md) | `freighterClient.ts` API, connect/sign/disconnect flow, mock API for testing, and network mismatch detection |
 | [Rate limits](docs/guides/rate-limits.md) | Global, auth, read, and write tiers; headers and retry behavior |
 | [Liquidation Mechanism](docs/protocol/liquidation.md) | Health factor formula, liquidation threshold, partial liquidation examples |
@@ -375,6 +389,18 @@ npm run test:frontend
 | [Docker Compose Services](docs/docker-compose-services.md) | Service dependencies, startup order, health checks, and volumes |
 | [Performance Tuning Guide](docs/performance-tuning.md) | Environment variables, DB tuning, caching, and profiling guidance |
 | [Threat Model](docs/security/threat-model.md) | Key attack surfaces (JWT forgery, oracle manipulation, re-entrancy, webhook replay), mitigations, and residual risk register |
+
+### Regenerating the OpenAPI spec
+
+`backend/openapi.json` is generated from the `@openapi` annotations on the route handlers. Whenever you add, change, or remove an endpoint (or edit its annotations), regenerate the spec **before committing**:
+
+```bash
+cd backend
+npm run openapi:generate   # regenerate openapi.json from route annotations
+npm run openapi:sync       # sync the spec version with package.json (if needed)
+```
+
+Commit the updated `backend/openapi.json` alongside your code changes. CI runs `npm run openapi:generate` and diffs the result against the committed spec — **the build fails if `backend/openapi.json` is out of sync** with the route annotations or the `package.json` version.
 
 ## User Guides
 

@@ -16,6 +16,7 @@ import { Hero } from "@/components/Hero";
 import { useToast } from "@/components/toast";
 import { fetchWithRetry } from "@/lib/fetchWithRetry";
 import { useLoans } from "@/hooks/useLoans";
+import { useLoanStatusPolling } from "@/hooks/useLoanStatusPolling";
 import { useLiquidationWarning } from "@/hooks/useLiquidationWarning";
 import LoanPortfolioSummary from "@/components/LoanPortfolioSummary";
 import WalletConnect from "@/components/WalletConnect";
@@ -151,11 +152,10 @@ export default function DashboardClient() {
     setActiveTab(TABS[nextIndex].id);
   };
 
-  // Fetch loans with real-time polling. The interval defaults to 15 s
-  // (NEXT_PUBLIC_LOAN_POLL_INTERVAL_MS) and pauses when the tab is hidden
-  // so health factor badges and loan state stay current without manual refresh
-  // (closes #1535).
-  const { loans, isLoading: isLoansLoading } = useLoans();
+  // Fetch loans with real-time status polling (issue #1535).
+  // Interval is configured via NEXT_PUBLIC_LOAN_POLL_INTERVAL_MS (default 15 s).
+  // Polling pauses when the tab is hidden and resumes on visibility change.
+  const { loans, isLoading: isLoansLoading } = useLoanStatusPolling();
   const loansWithHealth = loans as unknown as LoanWithHealth[];
 
   const { shouldShow: showLiquidationWarning, atRiskLoans, dismiss: dismissWarning } =

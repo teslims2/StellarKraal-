@@ -1,6 +1,9 @@
 "use client";
 import { Component, ReactNode } from "react";
 
+/** True outside production — gates the collapsible error-details block. */
+const isDev = process.env.NODE_ENV !== "production";
+
 /**
  * ErrorBoundary — enhanced fallback UI with illustration and error tracker support.
  *

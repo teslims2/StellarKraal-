@@ -17,37 +17,22 @@ interface LoansResponse {
 const LOANS_KEY = `${API}/api/loans`;
 
 /**
- * Default polling interval in milliseconds for real-time loan status updates.
+ * Cached, background-revalidated list of all loans. Replaces per-page
+ * `useEffect + fetch` so navigating between pages serves stale data instantly
+ * while SWR refreshes it.
  *
- * Reads NEXT_PUBLIC_LOAN_POLL_INTERVAL_MS from the environment so the interval
- * can be overridden in test environments without a code change (closes #1535).
- * Falls back to 15 000 ms (15 seconds) when the variable is not set.
- */
-const DEFAULT_POLL_INTERVAL_MS =
-  parseInt(process.env.NEXT_PUBLIC_LOAN_POLL_INTERVAL_MS ?? '', 10) || 15_000;
-
-/**
- * Cached, background-revalidated list of all loans.
- *
- * Polling behaviour (closes #1535):
- * - Refreshes every `refreshInterval` ms (default: 15 s).
- * - Pauses when the browser tab is hidden; SWR's `revalidateOnFocus` and
- *   `refreshWhenHidden: false` together ensure no requests fire while the tab
- *   is in the background.
- * - Resumes and immediately re-fetches when the tab becomes visible again
- *   via `revalidateOnFocus: true`.
- * - The interval is configurable via NEXT_PUBLIC_LOAN_POLL_INTERVAL_MS for
- *   test environments.
+ * Pass `refreshInterval` to keep a page polling. When `refreshInterval > 0`,
+ * SWR also revalidates on tab focus so users returning to a hidden tab see
+ * fresh data immediately (issue #1535).
  */
 export function useLoans(options?: { refreshInterval?: number }) {
   const interval = options?.refreshInterval ?? DEFAULT_POLL_INTERVAL_MS;
 
   const { data, error, isLoading, mutate } = useSWR<Loan[] | LoansResponse>(LOANS_KEY, fetcher, {
-    refreshInterval: interval,
-    // Do not poll while the tab is hidden; resume when it becomes visible.
-    refreshWhenHidden: false,
-    // Re-fetch immediately when the user returns to the tab.
-    revalidateOnFocus: true,
+    refreshInterval: options?.refreshInterval ?? 0,
+    // Re-fetch when the tab regains focus — complements the interval so the
+    // first visible frame after a background period shows current status.
+    revalidateOnFocus: (options?.refreshInterval ?? 0) > 0,
   });
 
   const loans: Loan[] = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];

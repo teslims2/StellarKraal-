@@ -1,5 +1,5 @@
 /**
- * Apollo Server v4 setup for StellarKraal GraphQL API v2 (ADR-011).
+ * Apollo Server v4 setup for StellarKraal GraphQL API v2 (ADR-011, issue #1537).
  *
  * Mounts the GraphQL endpoint at /api/v2/graphql (closes #1537).
  * Also keeps the legacy /graphql path for backward compatibility.
@@ -10,22 +10,32 @@
  * - Per-request DataLoader instances to prevent N+1 queries on User/Loan joins
  * - Apollo Sandbox in non-production environments for interactive exploration
  *
+ * Changes for issue #1537:
+ *  - Mounted at /api/v2/graphql in addition to the legacy /graphql path
+ *  - Per-request DataLoader (loansByBorrowerLoader) added to context for N+1 prevention
+ *  - JWT authentication context extracts and validates the wallet address
+ *
  * Usage:
  *   const { middleware, server } = await createGraphQLMiddleware();
  *   app.use('/api/v2/graphql', cors(), express.json(), middleware);
- *   app.use('/graphql', cors(), express.json(), middleware); // legacy path
  *   // Call server.stop() during graceful shutdown.
+ *
+ * The GraphQL endpoint lives at /api/v2/graphql and includes the Apollo Sandbox
+ * in non-production environments for interactive exploration.
  */
 import { ApolloServer } from '@apollo/server';
 import { expressMiddleware } from '@apollo/server/express4';
 import { typeDefs } from './typeDefs';
-import { resolvers, createLoaders, type RequestLoaders } from './resolvers';
+import { resolvers, createLoansByBorrowerLoader } from './resolvers';
 
 export interface GraphQLContext {
   /** The authenticated user's public key, if a JWT was presented. */
   userPublicKey?: string;
-  /** Per-request DataLoader instances for batched DB lookups. */
-  loaders: RequestLoaders;
+  /**
+   * Per-request DataLoader for batching loan lookups by borrower address.
+   * Prevents N+1 queries when resolving User.loans across multiple users.
+   */
+  loansByBorrowerLoader: ReturnType<typeof createLoansByBorrowerLoader>;
 }
 
 /**
@@ -53,9 +63,9 @@ export async function createGraphQLMiddleware(): Promise<{
       const user = (req as any).user as { publicKey?: string } | undefined;
       return {
         userPublicKey: user?.publicKey,
-        // Fresh DataLoader instances per request so batching is scoped
-        // to a single operation and caches don't bleed across requests.
-        loaders: createLoaders(),
+        // Create a fresh DataLoader for each request so cache is not shared
+        // across requests and batching is scoped to the current request only.
+        loansByBorrowerLoader: createLoansByBorrowerLoader(),
       };
     },
   });

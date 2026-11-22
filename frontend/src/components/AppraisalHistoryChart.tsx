@@ -19,16 +19,15 @@
  * ✓ Data fetched from GET /api/v1/collateral/:id/appraisals
  */
 import { useEffect, useState } from "react";
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-} from "recharts";
+import dynamic from "next/dynamic";
+import ChartSkeleton from "./ChartSkeleton";
+
+// Lazy-load the Recharts-based chart body so the heavy `recharts` library is
+// excluded from the initial bundle and only fetched when the chart renders.
+const AppraisalLineChart = dynamic(() => import("./AppraisalLineChart"), {
+  ssr: false,
+  loading: () => <ChartSkeleton height={240} />,
+});
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -72,30 +71,6 @@ function formatUsdTick(value: number): string {
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
   return `$${value.toFixed(0)}`;
-}
-
-// ─── Custom tooltip ───────────────────────────────────────────────────────────
-
-interface CustomTooltipProps {
-  active?: boolean;
-  payload?: Array<{ value: number }>;
-  label?: string;
-}
-
-function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
-  if (!active || !payload || payload.length === 0) return null;
-  const val = payload[0].value;
-  return (
-    <div
-      className="rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-surface-raised,#fff)] px-3 py-2 shadow-md text-sm"
-      role="tooltip"
-    >
-      <p className="font-semibold text-[color:var(--color-text)]">{label}</p>
-      <p className="text-[color:var(--token-accent)]">
-        ${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-      </p>
-    </div>
-  );
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -204,48 +179,8 @@ export default function AppraisalHistoryChart({ collateralId }: Props) {
       data-testid="appraisal-history-chart"
     >
       <h2 className="text-lg font-semibold text-brown mb-4">Appraisal History</h2>
-      {/* ResponsiveContainer makes the chart adapt to any screen width */}
-      <ResponsiveContainer width="100%" height={240}>
-        <LineChart
-          data={data}
-          margin={{ top: 8, right: 16, left: 8, bottom: 8 }}
-          aria-label="Line chart of collateral appraisal values over time"
-        >
-          <CartesianGrid
-            strokeDasharray="3 3"
-            stroke="var(--color-border, #e5e7eb)"
-            vertical={false}
-          />
-          <XAxis
-            dataKey="dateLabel"
-            tick={{ fontSize: 11, fill: "var(--color-text-muted, #6b7280)" }}
-            axisLine={false}
-            tickLine={false}
-            dy={8}
-          />
-          <YAxis
-            tickFormatter={formatUsdTick}
-            tick={{ fontSize: 11, fill: "var(--color-text-muted, #6b7280)" }}
-            axisLine={false}
-            tickLine={false}
-            width={56}
-          />
-          <Tooltip content={<CustomTooltip />} />
-          <Legend
-            wrapperStyle={{ fontSize: 12, paddingTop: 8 }}
-            formatter={() => "Appraised Value (USD)"}
-          />
-          <Line
-            type="monotone"
-            dataKey="value"
-            name="Appraised Value (USD)"
-            stroke="var(--token-accent, #d4a017)"
-            strokeWidth={2}
-            dot={{ r: 3, fill: "var(--token-accent, #d4a017)", strokeWidth: 0 }}
-            activeDot={{ r: 5, fill: "var(--token-accent, #d4a017)" }}
-          />
-        </LineChart>
-      </ResponsiveContainer>
+      {/* Recharts is loaded on demand via next/dynamic (ssr: false) */}
+      <AppraisalLineChart data={data} formatUsdTick={formatUsdTick} />
     </section>
   );
 }
