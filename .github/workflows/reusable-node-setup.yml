@@ -37,11 +37,11 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js (version file)
         if: ${{ inputs.node-version-file != '' }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version-file: ${{ inputs.node-version-file }}
           cache: 'npm'
@@ -49,7 +49,7 @@ jobs:
 
       - name: Setup Node.js (explicit version)
         if: ${{ inputs.node-version-file == '' }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version || '20' }}
           cache: 'npm'
