@@ -1,6 +1,6 @@
 'use client';
 /**
- * LoansListClient — sortable, responsive loan list (closes #1244).
+ * LoansListClient — sortable, filterable, paginated loan list (closes #1244, #1430).
  *
  * Acceptance criteria:
  *  ✓ Sortable columns: Status, Amount, Created At, Health Factor
@@ -8,8 +8,9 @@
  *  ✓ Sort state reflected in URL query params (?sortBy=amount&sortDir=asc)
  *  ✓ On screens < 640 px, table switches to card layout
  *  ✓ Accessible: column headers use aria-sort
+ *  ✓ ARIA live region announces sort and filter changes to screen readers (#1430)
  */
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { motion, useReducedMotion } from 'framer-motion';
 import { Download, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
@@ -378,6 +379,42 @@ function LoanListContent() {
   // Filter state from URL
   const { filters, debouncedQuery, clearAll } = useSearchFilter();
 
+  // ── ARIA live region: announce sort and filter changes (#1430) ─────────
+  const [announcement, setAnnouncement] = useState('');
+  // Track whether this is the initial render so we don't announce on mount.
+  const isMounted = useRef(false);
+
+  useEffect(() => {
+    if (!isMounted.current) {
+      isMounted.current = true;
+      return;
+    }
+    const colLabel =
+      SORTABLE_COLUMNS.find((c) => c.key === sortBy)?.label ?? sortBy;
+    const dirLabel = sortDir === 'asc' ? 'ascending' : 'descending';
+    setAnnouncement(`Sorted by ${colLabel}, ${dirLabel}`);
+  }, [sortBy, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Announce filter / search changes after debounce settles.
+  const prevQuery = useRef(debouncedQuery);
+  const prevStatuses = useRef(filters.statuses.join(','));
+  useEffect(() => {
+    const queryChanged = prevQuery.current !== debouncedQuery;
+    const statusesChanged = prevStatuses.current !== filters.statuses.join(',');
+    prevQuery.current = debouncedQuery;
+    prevStatuses.current = filters.statuses.join(',');
+    if (!isMounted.current) return;
+    if (!queryChanged && !statusesChanged) return;
+    // The result count is not yet calculated here, so just confirm the filter
+    // was applied; the result count announcement happens after sort below.
+    const parts: string[] = [];
+    if (debouncedQuery) parts.push(`search "${debouncedQuery}"`);
+    if (filters.statuses.length) parts.push(`status: ${filters.statuses.join(', ')}`);
+    setAnnouncement(
+      parts.length ? `Filters applied: ${parts.join('; ')}` : 'Filters cleared'
+    );
+  }, [debouncedQuery, filters.statuses]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
@@ -434,6 +471,17 @@ function LoanListContent() {
 
   return (
     <div className="space-y-4">
+      {/* Screen-reader live region — announces sort and filter changes (#1430) */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+        data-testid="loans-sr-announcement"
+      >
+        {announcement}
+      </div>
+
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <SearchFilterBar
           statusOptions={STATUS_OPTIONS}

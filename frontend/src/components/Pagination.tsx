@@ -1,4 +1,5 @@
 import { PAGE_SIZE_OPTIONS, PageSize } from '@/hooks/usePagination';
+import { useEffect, useRef, useState } from 'react';
 
 interface Props {
   page: number;
@@ -41,12 +42,26 @@ export default function Pagination({
   onLimitChange,
   loading = false,
 }: Props) {
+  // Announce page changes to screen readers via a polite live region (#1430)
+  const [pageAnnouncement, setPageAnnouncement] = useState('');
+  const prevPage = useRef(page);
+  useEffect(() => {
+    if (prevPage.current !== page) {
+      prevPage.current = page;
+      setPageAnnouncement(`Page ${page} of ${totalPages}`);
+    }
+  }, [page, totalPages]);
+
   return (
     <nav
       aria-label="Pagination"
       aria-busy={loading}
       className="flex flex-wrap items-center justify-between gap-3 mt-6"
     >
+      {/* Screen-reader page-change announcement (#1430) */}
+      <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {pageAnnouncement}
+      </span>
       <div className="flex items-center gap-2 text-sm text-brown-600">
         <label htmlFor="page-size" className="sr-only">
           Items per page
