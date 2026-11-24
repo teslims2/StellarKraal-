@@ -13,6 +13,7 @@ import { useToast } from '@/components/toast';
 import { useCurrencySettings } from '@/hooks/useCurrencySettings';
 import { useCurrencyConversion } from '@/hooks/useCurrencyConversion';
 import { formatXlmFromStroops } from '@/lib/formatMoney';
+import { useNetworkMismatch } from '@/hooks/useNetworkMismatch';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -56,6 +57,7 @@ export default function StepConfirm({ walletAddress, onSubmitted }: Props) {
   const submitButton = useButtonState();
   const toast = useToast();
   const submittingRef = useRef(false);
+  const networkMismatch = useNetworkMismatch(walletAddress);
 
   // ── Fee estimation state ──────────────────────────────────────────────────
   const [feeXlm, setFeeXlm] = useState<number | null>(null);
@@ -123,6 +125,7 @@ export default function StepConfirm({ walletAddress, onSubmitted }: Props) {
   // ── Submit handler (optimistic — returns hash immediately) ────────────────
   async function handleSubmit() {
     if (submittingRef.current) return;
+    if (networkMismatch) return; // guard: block submission when networks mismatch
     submittingRef.current = true;
     submitButton.setLoading();
     setField('error', null);
@@ -416,6 +419,8 @@ export default function StepConfirm({ walletAddress, onSubmitted }: Props) {
           className="flex-[2]"
           onClick={handleSubmit}
           state={submitButton.state}
+          disabled={submitButton.state === 'loading' || networkMismatch}
+          aria-disabled={submitButton.state === 'loading' || networkMismatch}
         >
           🚀 Submit Loan Request
         </Button>
