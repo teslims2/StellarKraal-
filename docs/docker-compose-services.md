@@ -167,25 +167,39 @@ the full variable reference.
 
 ---
 
-## Resource Limits (`docker-compose.prod.yml`)
+## Resource Limits
 
-Production containers have explicit CPU and memory limits to match the ECS
-Fargate task definitions and prevent resource exhaustion on the host.
+All containers have explicit CPU and memory `deploy.resources` limits and
+reservations defined directly in `docker-compose.yml`. This prevents a runaway
+container from consuming all host resources and starving sibling services.
 
 | Service | Memory limit | CPU limit | Memory reservation | CPU reservation |
 |---------|-------------|-----------|-------------------|-----------------|
-| `postgres` | 1024 MB | 0.5 | 256 MB | 0.1 |
-| `redis` | 256 MB | 0.25 | 64 MB | 0.05 |
-| `backend` | 512 MB | 0.25 | 128 MB | 0.1 |
-| `frontend` | 256 MB | 0.25 | 64 MB | 0.05 |
+| `contract-builder` | 1024 MB | 1.0 | 256 MB | 0.25 |
+| `backend` | 512 MB | 0.5 | 128 MB | 0.1 |
+| `frontend` | 512 MB | 0.5 | 64 MB | 0.05 |
 | `loki` | 256 MB | 0.5 | 64 MB | 0.1 |
 | `promtail` | 128 MB | 0.25 | 32 MB | 0.05 |
+| `prometheus` | 256 MB | 0.5 | 64 MB | 0.1 |
 | `grafana` | 256 MB | 0.5 | 64 MB | 0.1 |
 
-These limits are applied via the `deploy.resources` block in
-`docker-compose.prod.yml`. The development `docker-compose.yml` intentionally
-omits per-service limits (except `contract-builder`) to avoid interfering with
-local IDE and build tooling.
+The `postgres` and `redis` services do not have limits set in the development
+compose file so that local development is not disrupted by DB-intensive
+migrations or test suites. The production overlay (`docker-compose.prod.yml`)
+adds limits to those services to match the ECS Fargate task definitions.
+
+Resource limits are applied via the `deploy.resources` block, for example:
+
+```yaml
+deploy:
+  resources:
+    limits:
+      cpus: '0.5'
+      memory: 512M
+    reservations:
+      cpus: '0.1'
+      memory: 128M
+```
 
 ---
 

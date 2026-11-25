@@ -277,7 +277,7 @@ Grafana   ── queries via LogQL
 ### Annotated Promtail configuration
 
 ```yaml
-# promtail/promtail-config.yml
+# observability/promtail-config.yml
 server:
   http_listen_port: 9080
   grpc_listen_port: 0
@@ -306,17 +306,30 @@ scrape_configs:
       - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
         target_label: 'service'
     pipeline_stages:
-      # Parse the Docker json-file wrapper (log, stream, time)
+      # Parse the log line as JSON and extract fields.
       - json:
           expressions:
             level: level
-      # Promote the parsed level to a Loki label for fast filtering
+            message: message
+            timestamp: timestamp
+            requestId: requestId
+            route: route
+      # Promote level, requestId, and route to Loki stream labels so they can
+      # be used in LogQL stream selectors, e.g.:
+      #   {service="backend", level="error"}
+      #   {service="backend", route="/api/v1/loans"}
       - labels:
           level:
-      # Drop health-check noise so it doesn't pollute streams
-      - drop:
-          source: log
-          expression: '.*GET /api/v1/health.*'
+          requestId:
+          route:
+      # Parse the structured timestamp so Loki stores the original log time
+      # rather than the scrape time.
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+          fallback_formats:
+            - RFC3339
+            - UnixMs
 ```
 
 ### Key pipeline stages
@@ -325,13 +338,62 @@ scrape_configs:
 |-------|---------|
 | `docker_sd_configs` | Discovers containers automatically; no static file paths |
 | `relabel_configs` | Maps Docker metadata to Loki labels (`container`, `service`) |
-| `json` | Parses structured log lines into fields |
-| `labels` | Promotes a parsed field (e.g. `level`) to an indexed label |
-| `drop` | Discards noisy lines before they reach Loki |
+| `json` | Parses structured log lines; extracts `level`, `requestId`, and `route` |
+| `labels` | Promotes extracted fields to indexed Loki stream labels |
+| `timestamp` | Uses the application's original log timestamp rather than the scrape time |
 
-> **Cardinality warning:** Only promote low-cardinality fields to labels.
-> Never label by request ID, user ID, or free-form message — it explodes the
-> Loki index. Use `|=` line filters or `| json` instead.
+> **Cardinality warning:** `requestId` has high cardinality (one value per
+> request). It is promoted to a label here to enable fast per-request log
+> tracing, but avoid adding similarly unbounded fields (user IDs, free-form
+> messages) to the label set. For values you only need to filter rather than
+> select, use `|=` line filters or `| json` field filters instead.
+
+### LogQL queries for common debugging scenarios
+
+The following queries cover the most common debugging patterns. Run them in
+the Grafana Explore view with the **Loki** datasource selected.
+
+**All backend error logs:**
+
+```logql
+{service="backend", level="error"}
+```
+
+**Trace all log lines for a specific request:**
+
+```logql
+{service="backend", requestId="<your-request-id>"}
+```
+
+**All logs for a specific route (e.g., loan creation):**
+
+```logql
+{service="backend", route="/api/v1/loans"}
+```
+
+**Errors on a specific route:**
+
+```logql
+{service="backend", route="/api/v1/loans", level="error"}
+```
+
+**Rate of error log lines per minute (for dashboards/alerts):**
+
+```logql
+sum(rate({service="backend", level="error"}[1m]))
+```
+
+**Slow requests (backend logs duration in ms):**
+
+```logql
+{service="backend"} | json | duration > 500
+```
+
+**Auth failures:**
+
+```logql
+{service="backend"} | json | level="warn" |= "Unauthorized"
+```
 
 ### Verifying the pipeline
 
