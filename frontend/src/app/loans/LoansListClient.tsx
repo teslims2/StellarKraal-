@@ -416,6 +416,42 @@ function LoanListContent() {
     );
   }, [debouncedQuery, filters.statuses]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── ARIA live region: announce sort and filter changes (#1430) ─────────
+  const [announcement, setAnnouncement] = useState('');
+  // Track whether this is the initial render so we don't announce on mount.
+  const isMounted = useRef(false);
+
+  useEffect(() => {
+    if (!isMounted.current) {
+      isMounted.current = true;
+      return;
+    }
+    const colLabel =
+      SORTABLE_COLUMNS.find((c) => c.key === sortBy)?.label ?? sortBy;
+    const dirLabel = sortDir === 'asc' ? 'ascending' : 'descending';
+    setAnnouncement(`Sorted by ${colLabel}, ${dirLabel}`);
+  }, [sortBy, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Announce filter / search changes after debounce settles.
+  const prevQuery = useRef(debouncedQuery);
+  const prevStatuses = useRef(filters.statuses.join(','));
+  useEffect(() => {
+    const queryChanged = prevQuery.current !== debouncedQuery;
+    const statusesChanged = prevStatuses.current !== filters.statuses.join(',');
+    prevQuery.current = debouncedQuery;
+    prevStatuses.current = filters.statuses.join(',');
+    if (!isMounted.current) return;
+    if (!queryChanged && !statusesChanged) return;
+    // The result count is not yet calculated here, so just confirm the filter
+    // was applied; the result count announcement happens after sort below.
+    const parts: string[] = [];
+    if (debouncedQuery) parts.push(`search "${debouncedQuery}"`);
+    if (filters.statuses.length) parts.push(`status: ${filters.statuses.join(', ')}`);
+    setAnnouncement(
+      parts.length ? `Filters applied: ${parts.join('; ')}` : 'Filters cleared'
+    );
+  }, [debouncedQuery, filters.statuses]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
