@@ -308,6 +308,116 @@ In tests, `stopContractEventListener()` is called in `afterEach`/`afterAll` to p
 
 ---
 
+## Runbook: Manually Resetting the Ledger Cursor
+
+Use this runbook when you need to force a full event replay — for example after a schema migration that requires re-deriving database state from on-chain history, or after suspecting the cursor advanced past a corrupt write.
+
+### When to use this
+
+- A DB migration changed how events are stored and you need to re-process history.
+- The local database was corrupted or accidentally wiped.
+- You suspect a bug caused the cursor to advance past events that were not written correctly.
+- You want to test the replay path in production without code changes.
+
+### Prerequisites
+
+- SSH access to the backend host (or `kubectl exec` into the pod).
+- Ability to restart the backend process or container.
+- The RPC endpoint still has the history you need (see [Maximum Look-back Window](#maximum-look-back-window) — events older than ~24 hours may no longer be accessible).
+
+### Steps
+
+**1. Stop the backend gracefully.**
+
+```bash
+# Docker Compose
+docker compose stop backend
+
+# Kubernetes
+kubectl rollout pause deployment/stellarkraal-backend
+kubectl scale deployment/stellarkraal-backend --replicas=0
+```
+
+Wait for in-flight requests to drain (the graceful shutdown timeout is `SHUTDOWN_TIMEOUT_MS`, default 10 000 ms).
+
+**2. (Optional) Clear derived state if re-processing requires it.**
+
+If a schema migration changed how events map to rows, truncate the affected tables before replay so stale rows are not left behind:
+
+```bash
+# Example: wipe and re-derive liquidation events only
+sqlite3 /data/stellarkraal.db "DELETE FROM liquidation_events;"
+```
+
+> **Warning**: this is a destructive operation. Take a database snapshot first:
+> ```bash
+> cp /data/stellarkraal.db /data/stellarkraal.db.bak-$(date +%Y%m%dT%H%M%S)
+> ```
+
+**3. Reset the cursor.**
+
+The cursor is entirely in memory and resets to `0` automatically on restart. No file or database row needs to be changed. Simply proceed to the next step.
+
+If a future version of the listener persists the cursor to the database (see the note in [Ledger Cursor: Persistence and Restoration](#ledger-cursor-persistence-and-restoration)), reset it with:
+
+```bash
+sqlite3 /data/stellarkraal.db "UPDATE listener_state SET last_ledger = 0 WHERE id = 1;"
+```
+
+**4. Restart the backend with a wider look-back (optional).**
+
+If the downtime was longer than the default look-back window, increase `EVENT_MAX_LOOKBACK_LEDGERS` to cover the gap:
+
+```bash
+# Approximately 48 hours of history
+EVENT_MAX_LOOKBACK_LEDGERS=34560 docker compose up -d backend
+```
+
+**5. Verify replay is running.**
+
+Tail the logs and confirm:
+
+- `event_listener_started` appears with `lastLedger: 0` (or the reset value).
+- `contract.event.received` entries appear immediately on the first tick.
+- The `ledger` field in log entries climbs monotonically from the oldest available ledger toward the current chain head.
+- No sustained stream of `contract.event.poll_error` entries (which would indicate the RPC is unavailable or rate-limiting).
+
+```bash
+docker compose logs -f backend | grep '"eventType"'
+```
+
+Expected first-tick output:
+
+```json
+{ "eventType": "event_listener_started", "contractId": "C...", "intervalMs": 5000, "lastLedger": 0 }
+{ "eventType": "contract.event.received", "ledger": 1234, ... }
+{ "eventType": "contract.event.received", "ledger": 1235, ... }
+...
+```
+
+**6. Monitor until caught up.**
+
+The replay is complete when the `ledger` values in `contract.event.received` entries match the current chain head. At that point the listener switches to steady-state polling and the gap between ledger values should equal roughly `EVENT_POLL_INTERVAL_MS / 5000` (one new ledger per ~5 seconds).
+
+**7. Scale back up (Kubernetes).**
+
+```bash
+kubectl scale deployment/stellarkraal-backend --replicas=1
+kubectl rollout resume deployment/stellarkraal-backend
+```
+
+### Troubleshooting
+
+| Symptom | Likely cause | Resolution |
+|---------|-------------|------------|
+| No `contract.event.received` entries after start | `CONTRACT_ID` unset or wrong; RPC unreachable | Check env vars; `curl $RPC_URL` |
+| `contract.event.poll_error` on every tick | RPC rate limiting or network outage | Increase `EVENT_POLL_INTERVAL_MS`; check RPC status |
+| Replay stops at a certain ledger and doesn't advance | Events beyond that ledger exceed the RPC retention window | Increase `EVENT_MAX_LOOKBACK_LEDGERS` or use an archival source |
+| DB rows are duplicated after replay | Store functions are not fully idempotent | File a bug; check `insertCollateral` / `insertLoan` upsert logic |
+| `lastLedger` advances but new events are still missing | Cursor persisted to DB (future feature) but DB row not reset | Reset the `listener_state` row (step 3 above) |
+
+---
+
 ## Related
 
 - [Ledger Cursor Reset Runbook](../runbooks/reset-ledger-cursor.md) — manually reset the cursor when replay from a specific ledger is needed

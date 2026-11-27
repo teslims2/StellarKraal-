@@ -20,6 +20,7 @@ import {
   toSummaryErrors,
 } from '@/components/ui';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
+import { useNetworkMismatch } from '@/hooks/useNetworkMismatch';
 import { useTransactionStatus, type TransactionStatus } from '@/hooks/useTransactionStatus';
 import TransactionProgress from '@/components/TransactionProgress';
 
@@ -67,6 +68,7 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
   const reduced = useReducedMotion();
   const toast = useToast();
   const { isOnline } = useNetworkStatus();
+  const networkMismatch = useNetworkMismatch(walletAddress);
   const [currentStep, setCurrentStep] = useState<Step>(1);
   const [formData, setFormData] = useState<FormData>(INITIAL_FORM_DATA);
   const [errors, setErrors] = useState<FormErrors>({});
@@ -744,7 +746,7 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
               variants={reduced ? undefined : submitVariants}
               animate={loading ? 'loading' : 'idle'}
               className="min-h-11 rounded-xl bg-brown-600 px-5 py-2.5 font-semibold text-cream-50 transition hover:bg-brown-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:ml-auto"
-              disabled={loading || !isOnline}
+              disabled={loading || !isOnline || networkMismatch}
               aria-disabled={loading || !isOnline}
               title={!isOnline ? "You're offline" : undefined}
             >

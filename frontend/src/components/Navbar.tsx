@@ -27,6 +27,7 @@ import { NotificationBell, NotificationDrawer } from '@/components/NotificationD
 import { useNotifications } from '@/hooks/useNotifications';
 import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { useShortcutsHelp } from '@/components/KeyboardShortcutsProvider';
+import { useNetworkMismatch } from '@/hooks/useNetworkMismatch';
 // i18n — Issue #1207
 import LanguageSwitcher from '@/components/LanguageSwitcher';
 // Wallet balance in nav — Issue #1428
@@ -99,6 +100,7 @@ export default function Navbar() {
   const localWallet = useWallet();
   const { address, connect, disconnect } = walletCtx ?? localWallet;
   const { atRiskCount } = useAtRiskLoans();
+  const networkMismatch = useNetworkMismatch(address);
   const shortcutsHelp = useShortcutsHelp();
   const { notifications, unreadCount, markRead, markAllRead, dismiss, dismissAll } =
     useNotifications();
@@ -311,6 +313,39 @@ export default function Navbar() {
               onDismiss={dismiss}
               onDismissAll={dismissAll}
             />
+
+            {/* Network indicator badge — #1432
+                Shows the active network and highlights mismatches in amber. */}
+            {address && (
+              <span
+                title={networkMismatch ? "Network mismatch — transactions blocked" : undefined}
+                className={[
+                  'hidden sm:inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold select-none',
+                  networkMismatch
+                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 ring-1 ring-amber-400'
+                    : 'bg-[color-mix(in_srgb,var(--token-primary)_10%,transparent)] text-[color:var(--token-primary)] ring-1 ring-[color:var(--token-primary)]/30',
+                ].join(' ')}
+                aria-label={`Active network: ${(process.env.NEXT_PUBLIC_NETWORK ?? 'Testnet').toLowerCase() === 'mainnet' ? 'Mainnet' : 'Testnet'}${networkMismatch ? ' — mismatch' : ''}`}
+              >
+                {networkMismatch && (
+                  <svg
+                    aria-hidden="true"
+                    className="h-3 w-3 shrink-0"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                )}
+                {(process.env.NEXT_PUBLIC_NETWORK ?? 'testnet').toLowerCase() === 'mainnet'
+                  ? 'Mainnet'
+                  : 'Testnet'}
+              </span>
+            )}
 
             {/* Theme toggle — visible on all screen sizes */}
             <ThemeToggle />
