@@ -76,6 +76,23 @@ If you need to cut a release manually, merge the open Release PR created by rele
 When your PR changes user-facing behavior, add a bullet to the `[Unreleased]` section
 yourself following [docs/guides/changelog.md](docs/guides/changelog.md).
 
+## Changelog Update Process
+
+`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). For each
+user-visible change, add one concise, user-focused bullet under `[Unreleased]` before opening
+the PR. Use the first applicable category:
+
+- **Added** for new capabilities; **Changed** for changes to existing behavior.
+- **Deprecated** for features scheduled for removal; **Removed** for removed capabilities.
+- **Fixed** for bug fixes; **Security** for security improvements or vulnerability fixes.
+
+Do not add empty categories or edit historical release dates. The project history currently
+records releases `0.9.0` and `1.0.0`; both are retained in the changelog. The
+`release-please` GitHub Actions workflow reads Conventional Commits on `main`, groups commit
+types into these categories, and updates the release notes in its Release PR. When that PR is
+merged, release-please creates the corresponding tag and GitHub Release. Review the generated
+notes for clarity, and keep the `[Unreleased]` section current as part of normal PR review.
+
 ---
 
 ## Development Setup

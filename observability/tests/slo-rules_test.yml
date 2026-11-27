@@ -1,0 +1,134 @@
+# promtool unit tests for the SLO-based alert rules in prometheus-rules.yml
+#
+# Run with:
+#   promtool test rules observability/tests/slo-rules_test.yml
+#
+# The tests cover the three SLO rules in the stellarkraal.slo group:
+#   - SLO_HighErrorRate         (5xx rate > 1% for 5m)
+#   - SLO_HighP99Latency        (p99 latency > 2s for 5m)
+#   - SLO_ContractRpcFailureRate (contract RPC failure rate > 5% for 5m)
+
+rule_files:
+  - ../prometheus-rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── SLO_HighErrorRate ──────────────────────────────────────────────────────
+
+  # Case 1: error rate stays at 10% (above 1% threshold) — alert MUST fire
+  - interval: 1m
+    input_series:
+      # 10 errors per minute
+      - series: 'http_requests_total{status_code="500", method="GET", route="/api/v1/loans"}'
+        values: "0+10x10"
+      # 90 successes per minute → 10% error rate
+      - series: 'http_requests_total{status_code="200", method="GET", route="/api/v1/loans"}'
+        values: "0+90x10"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SLO_HighErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: error_rate
+            exp_annotations:
+              summary: "SLO breach: HTTP 5xx rate exceeds 1% (current: 10.00%)"
+
+  # Case 2: error rate stays at 0.5% (below 1% threshold) — alert must NOT fire
+  - interval: 1m
+    input_series:
+      - series: 'http_requests_total{status_code="500", method="GET", route="/api/v1/loans"}'
+        values: "0+1x10"
+      - series: 'http_requests_total{status_code="200", method="GET", route="/api/v1/loans"}'
+        values: "0+199x10"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SLO_HighErrorRate
+        exp_alerts: []
+
+  # Case 3: error rate spikes to 5% but only for 3 minutes (below 5-minute `for`)
+  # — alert should not yet be in firing state at 3m (still pending)
+  - interval: 1m
+    input_series:
+      - series: 'http_requests_total{status_code="500", method="GET", route="/api/v1/loans"}'
+        values: "0+5x3 15+0x7"
+      - series: 'http_requests_total{status_code="200", method="GET", route="/api/v1/loans"}'
+        values: "0+95x3 285+0x7"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SLO_HighErrorRate
+        exp_alerts: []
+
+  # ── SLO_HighP99Latency ─────────────────────────────────────────────────────
+
+  # Case 4: all requests have latency > 2s — p99 is above threshold, alert fires
+  - interval: 1m
+    input_series:
+      # Simulate requests that all fall in the >2.5s bucket
+      - series: 'http_request_duration_seconds_bucket{le="2.5", method="GET", route="/api/v1/loans", status_code="200"}'
+        values: "0+0x10"
+      - series: 'http_request_duration_seconds_bucket{le="5", method="GET", route="/api/v1/loans", status_code="200"}'
+        values: "0+100x10"
+      - series: 'http_request_duration_seconds_bucket{le="+Inf", method="GET", route="/api/v1/loans", status_code="200"}'
+        values: "0+100x10"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SLO_HighP99Latency
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: latency_p99
+
+  # Case 5: all requests complete in < 50ms — p99 well below threshold, alert must NOT fire
+  - interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_bucket{le="0.05", method="GET", route="/api/v1/loans", status_code="200"}'
+        values: "0+100x10"
+      - series: 'http_request_duration_seconds_bucket{le="+Inf", method="GET", route="/api/v1/loans", status_code="200"}'
+        values: "0+100x10"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SLO_HighP99Latency
+        exp_alerts: []
+
+  # ── SLO_ContractRpcFailureRate ─────────────────────────────────────────────
+
+  # Case 6: 10% of contract RPC calls fail (above 5% threshold) — alert fires
+  - interval: 1m
+    input_series:
+      - series: 'stellarkraal_contract_rpc_duration_seconds_count{status="error", method="request_loan"}'
+        values: "0+10x10"
+      - series: 'stellarkraal_contract_rpc_duration_seconds_count{status="success", method="request_loan"}'
+        values: "0+90x10"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SLO_ContractRpcFailureRate
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: contract_rpc_failure_rate
+
+  # Case 7: 2% failure rate (below 5% threshold) — alert must NOT fire
+  - interval: 1m
+    input_series:
+      - series: 'stellarkraal_contract_rpc_duration_seconds_count{status="error", method="request_loan"}'
+        values: "0+2x10"
+      - series: 'stellarkraal_contract_rpc_duration_seconds_count{status="success", method="request_loan"}'
+        values: "0+98x10"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SLO_ContractRpcFailureRate
+        exp_alerts: []
+
+  # Case 8: zero contract RPC calls (no data) — alert must NOT fire (denominator clamp_min prevents NaN/Inf)
+  - interval: 1m
+    input_series:
+      - series: 'stellarkraal_contract_rpc_duration_seconds_count{status="error", method="request_loan"}'
+        values: "0x10"
+      - series: 'stellarkraal_contract_rpc_duration_seconds_count{status="success", method="request_loan"}'
+        values: "0x10"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SLO_ContractRpcFailureRate
+        exp_alerts: []

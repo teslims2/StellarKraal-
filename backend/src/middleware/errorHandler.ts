@@ -139,15 +139,19 @@ export function errorHandler(
     path: req.path,
   });
 
-  const responseBody: Record<string, unknown> = {
-    error: err.message,
+  const errorBody: Record<string, unknown> = {
     code,
+    message: err.message,
     correlationId,
   };
 
   if (err instanceof AppError && err.details !== undefined) {
-    responseBody.details = err.details;
+    errorBody.details = err.details;
   }
+
+  const responseBody: Record<string, unknown> = {
+    error: errorBody,
+  };
 
   if (process.env.NODE_ENV === "development" && err.stack) {
     responseBody.stack = err.stack;

@@ -13,15 +13,11 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import { useHealthFactor } from "@/hooks/useHealthFactor";
 import { useOnboarding } from "@/hooks/useOnboarding";
 import { Hero } from "@/components/Hero";
-import { useToast } from "@/components/toast";
-import { fetchWithRetry } from "@/lib/fetchWithRetry";
-import { useLoans } from "@/hooks/useLoans";
-import { useLoanStatusPolling } from "@/hooks/useLoanStatusPolling";
 import { useLiquidationWarning } from "@/hooks/useLiquidationWarning";
+import { useBorrowerPortfolio } from "@/hooks/useBorrowerPortfolio";
 import LoanPortfolioSummary from "@/components/LoanPortfolioSummary";
+import DashboardMetricStrip from "@/components/DashboardMetricStrip";
 import WalletConnect from "@/components/WalletConnect";
-
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 // ── Lazy-loaded heavy components ─────────────────────────────────────────────
 // Using next/dynamic with ssr:false prevents hydration mismatches for
@@ -54,11 +50,6 @@ const OnboardingModal = dynamic(() => import("@/components/OnboardingModal"), {
 // ─────────────────────────────────────────────────────────────────────────────
 
 type TabName = "overview" | "loans" | "collateral" | "transactions";
-type LoanWithHealth = {
-  id: string;
-  health_factor?: number | null;
-  status?: string;
-};
 
 const TABS: { id: TabName; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -69,57 +60,13 @@ const TABS: { id: TabName; label: string }[] = [
 
 export default function DashboardClient() {
   const router = useRouter();
-  const toast = useToast();
   const [wallet, setWallet] = useState<string | null>(null);
   const [loanId, setLoanId] = useState("");
   const [activeTab, setActiveTab] = useState<TabName>("overview");
   const [helpOpen, setHelpOpen] = useState(false);
+  const { loans, collaterals, isLoading: isPortfolioLoading } = useBorrowerPortfolio(wallet);
   const { showOnboarding, openOnboarding, closeOnboarding } = useOnboarding();
-  const { healthFactor, loading: isHealthLoading, refresh: refreshHealth, lastUpdatedLabel, hasFetched } = useHealthFactor(loanId);
-  
-  // Onboarding checklist state
-  const [hasCollateral, setHasCollateral] = useState(false);
-  const [hasLoan, setHasLoan] = useState(false);
-
-  // Detect if user has collateral
-  useEffect(() => {
-    if (!wallet) {
-      setHasCollateral(false);
-      return;
-    }
-    fetchWithRetry(`${API}/api/collateral?owner=${wallet}`, {
-      toast: {
-        onRetry: (attempt) => toast.warning(`Retrying… (attempt ${attempt + 1})`),
-        onError: (message) => toast.error(message),
-      },
-    })
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((body) => {
-        const items = Array.isArray(body?.data) ? body.data : [];
-        setHasCollateral(items.length > 0);
-      })
-      .catch(() => setHasCollateral(false));
-  }, [wallet]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Detect if user has loan
-  useEffect(() => {
-    if (!wallet) {
-      setHasLoan(false);
-      return;
-    }
-    fetchWithRetry(`${API}/api/loans?borrower=${wallet}`, {
-      toast: {
-        onRetry: (attempt) => toast.warning(`Retrying… (attempt ${attempt + 1})`),
-        onError: (message) => toast.error(message),
-      },
-    })
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((body) => {
-        const items = Array.isArray(body?.data) ? body.data : [];
-        setHasLoan(items.length > 0);
-      })
-      .catch(() => setHasLoan(false));
-  }, [wallet]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { healthFactor, loading: isHealthLoading, refresh: refreshHealth } = useHealthFactor(loanId);
 
   // Read hash from URL on mount and when it changes
   useEffect(() => {
@@ -152,14 +99,8 @@ export default function DashboardClient() {
     setActiveTab(TABS[nextIndex].id);
   };
 
-  // Fetch loans with real-time status polling (issue #1535).
-  // Interval is configured via NEXT_PUBLIC_LOAN_POLL_INTERVAL_MS (default 15 s).
-  // Polling pauses when the tab is hidden and resumes on visibility change.
-  const { loans, isLoading: isLoansLoading } = useLoanStatusPolling();
-  const loansWithHealth = loans as unknown as LoanWithHealth[];
-
   const { shouldShow: showLiquidationWarning, atRiskLoans, dismiss: dismissWarning } =
-    useLiquidationWarning(loansWithHealth);
+    useLiquidationWarning(loans);
 
   function handleProceedToRepay(nextLoanId: string, _nextAmount: string) {
     setLoanId(nextLoanId);
@@ -184,11 +125,17 @@ export default function DashboardClient() {
       </div>
       {wallet && (
         <>
-          <LoanPortfolioSummary loans={loans} loading={isLoansLoading} />
+          <DashboardMetricStrip
+            loans={loans}
+            collaterals={collaterals}
+            atRiskCount={atRiskLoans.length}
+            loading={isPortfolioLoading}
+          />
+          <LoanPortfolioSummary loans={loans} loading={isPortfolioLoading} />
           <OnboardingChecklist
             hasWallet={!!wallet}
-            hasCollateral={hasCollateral}
-            hasLoan={hasLoan}
+            hasCollateral={collaterals.length > 0}
+            hasLoan={loans.length > 0}
           />
           <div className="grid gap-4 lg:grid-cols-2">
             <CollateralCard walletAddress={wallet} />

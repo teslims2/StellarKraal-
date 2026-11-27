@@ -94,6 +94,9 @@
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "node",
+    "transform": {
+      "^.+\\.ts$": ["ts-jest", { "isolatedModules": true }]
+    },
     "setupFiles": ["<rootDir>/src/jest.setup.ts"],
     "moduleFileExtensions": ["ts", "js", "json"],
     "testMatch": [

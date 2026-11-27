@@ -1,6 +1,8 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import EmptyState from '@/components/EmptyState';
 import LoanSummaryCards from '@/components/LoanSummaryCards';
 import { formatXlmFromStroops } from '@/lib/formatMoney';
 import ScrollableTable from '@/components/ScrollableTable';
@@ -24,6 +26,7 @@ interface Props {
 type SortKey = 'date' | 'status';
 
 export default function LoanPortfolioSummary({ loans, loading = false }: Props) {
+  const router = useRouter();
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [page, setPage] = useState(1);
   const pageSize = 8;
@@ -77,9 +80,13 @@ export default function LoanPortfolioSummary({ loans, loading = false }: Props) 
       </div>
       <LoanSummaryCards summary={summary} loading={loading} />
       {visibleLoans.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-brown/30 p-8 text-center text-brown/70">
-          No loans yet. Your completed and active loans will appear here.
-        </div>
+        <EmptyState
+          illustration="loans"
+          title="No loans yet"
+          description="Your completed and active loans will appear here."
+          ctaLabel="Request a Loan"
+          onCta={() => router.push('/borrow')}
+        />
       ) : (
         <div className="rounded-2xl bg-white shadow">
           <ScrollableTable label="Loan portfolio table" className="rounded-t-2xl">

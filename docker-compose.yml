@@ -76,6 +76,14 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-stellarkraal}
       - REDIS_URL=redis://redis:6379
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
     healthcheck:
       # /health returns 200 only when all dependencies are healthy (503 otherwise),
       # so wget's non-zero exit on 503 correctly marks the container unhealthy.
@@ -113,6 +121,14 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000"]
       interval: 30s
@@ -138,6 +154,14 @@ services:
     volumes:
       - loki-data:/loki
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
     networks:
       - monitoring
     logging:
@@ -160,6 +184,14 @@ services:
     depends_on:
       - loki
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
     networks:
       - monitoring
     logging:
@@ -189,6 +221,14 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
     networks:
       - monitoring
       - frontend
@@ -215,10 +255,20 @@ services:
       - ./observability/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - ./grafana/dashboards/backend.json:/var/lib/grafana/dashboards/backend.json:ro
+      - ./grafana/dashboards/loan-lifecycle.json:/var/lib/grafana/dashboards/loan-lifecycle.json:ro
+      - ./grafana/dashboards/infrastructure.json:/var/lib/grafana/dashboards/infrastructure.json:ro
     depends_on:
       - loki
       - prometheus
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
     networks:
       - monitoring
     logging:

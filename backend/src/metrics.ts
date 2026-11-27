@@ -142,6 +142,93 @@ export function updateActiveLoansGauge(loans: ReadonlyArray<{ status: string }>)
   activeLoansTotal.set({ state: "AtRisk" }, atRisk);
 }
 
+// ── Business-level metrics (stellarkraal_ prefix) ──────────────────────────────
+//
+// The metrics below use the `stellarkraal_` prefix to distinguish them from
+// the infrastructure-level metrics above. They provide business-level
+// observability for loan state transitions, contract RPC call durations,
+// and active loan counts, and are referenced by the SLO alert rules in
+// observability/prometheus-rules.yml.
+
+/**
+ * Total number of loan state transitions.
+ * Labels: from_state, to_state
+ *
+ * Incremented inside {@link logLoanStateTransition} (loanStateMachine.ts) on
+ * every valid status change, covering both the state-machine `transition()`
+ * path and the direct `updateLoan()` store path.
+ */
+export const stellarkraalLoanStateTransitionsTotal = new Counter({
+  name: "stellarkraal_loan_state_transitions_total",
+  help: "Total number of loan state transitions",
+  labelNames: ["from_state", "to_state"] as const,
+  registers: [registry],
+});
+
+/**
+ * Duration of Soroban contract RPC calls in seconds, labelled by business
+ * operation.
+ * Labels: operation (request_loan, repay_loan, liquidate, get_loan,
+ *         health_factor, get_twap_data, get_fee_config), status (success, error)
+ *
+ * Use {@link timeStellarkraalContractRpc} to record a call.
+ */
+export const stellarkraalContractRpcDurationSeconds = new Histogram({
+  name: "stellarkraal_contract_rpc_duration_seconds",
+  help: "Soroban contract RPC call duration in seconds by operation",
+  labelNames: ["operation", "status"] as const,
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+  registers: [registry],
+});
+
+/**
+ * Run `fn` and record its duration in
+ * {@link stellarkraalContractRpcDurationSeconds} under the given `operation`,
+ * labelled `success` or `error`.
+ */
+export async function timeStellarkraalContractRpc<T>(
+  operation: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const end = stellarkraalContractRpcDurationSeconds.startTimer({ operation });
+  try {
+    const result = await fn();
+    end({ status: "success" });
+    return result;
+  } catch (err) {
+    end({ status: "error" });
+    throw err;
+  }
+}
+
+/**
+ * Current total number of active loans (status `active` or `at_risk`).
+ *
+ * Unlike {@link activeLoansTotal} (which segments by state), this is a single
+ * scalar gauge reflecting the overall active loan count. It is referenced by
+ * the SLO alert rules and refreshed on every `/metrics` scrape via
+ * {@link updateStellarkraalActiveLoansGauge}.
+ */
+export const stellarkraalActiveLoansTotal = new Gauge({
+  name: "stellarkraal_active_loans_total",
+  help: "Current number of active loans (active + at_risk)",
+  registers: [registry],
+});
+
+/**
+ * Recompute {@link stellarkraalActiveLoansTotal} from a list of loans.
+ * Counts loans whose status is `active` or `at_risk`.
+ */
+export function updateStellarkraalActiveLoansGauge(
+  loans: ReadonlyArray<{ status: string }>
+): void {
+  let count = 0;
+  for (const loan of loans) {
+    if (loan.status === "active" || loan.status === "at_risk") count++;
+  }
+  stellarkraalActiveLoansTotal.set(count);
+}
+
 // ── Soroban RPC latency ───────────────────────────────────────────────────────
 
 /**

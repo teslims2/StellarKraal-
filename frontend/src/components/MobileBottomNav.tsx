@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { LayoutDashboard, ClipboardList, Beef, User } from 'lucide-react';
 import { Icon } from '@/components/Icon';
-import LanguageSwitcher from '@/components/LanguageSwitcher';
 
 interface NavItem {
   label: string;
@@ -49,7 +48,7 @@ export default function MobileBottomNav() {
         borderColor: 'var(--color-nav-border)',
       }}
     >
-      <div className="flex justify-around h-16">
+      <div className="flex h-16 justify-around">
         {NAV_ITEMS.map((item, index) => {
           const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
           return (
@@ -71,10 +70,6 @@ export default function MobileBottomNav() {
           );
         })}
 
-        {/* Language switcher — #1256 */}
-        <div className="flex flex-1 flex-col items-center justify-center gap-1 min-h-[44px] min-w-[44px]">
-          <LanguageSwitcher />
-        </div>
       </div>
     </nav>
   );

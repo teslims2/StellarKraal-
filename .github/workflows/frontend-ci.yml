@@ -108,6 +108,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Runs the full Jest suite, which includes axe-core accessibility tests
+      # in src/__tests__/accessibility.test.tsx (Modal, RepaymentModal, HealthGauge).
       - name: Run unit tests with coverage
         continue-on-error: true
         run: npm run test:coverage

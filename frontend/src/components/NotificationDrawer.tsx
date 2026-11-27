@@ -1,7 +1,8 @@
 "use client";
 import { useRef, useEffect, useCallback } from "react";
+import type { Ref, RefObject } from "react";
 import { useRouter } from "next/navigation";
-import FocusTrap from "focus-trap-react";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { Bell, X, CheckCheck, Trash2, AlertTriangle, CheckCircle, XCircle, TrendingDown, type LucideIcon } from "lucide-react";
 import { Icon } from "@/components/Icon";
 import { motion, AnimatePresence } from "framer-motion";
@@ -115,6 +116,8 @@ interface NotificationDrawerProps {
   onMarkAllRead: () => void;
   onDismiss: (id: string) => void;
   onDismissAll: () => void;
+  /** Button that opened the drawer — focus returns here on close. */
+  triggerRef?: RefObject<HTMLElement | null>;
 }
 
 export function NotificationDrawer({
@@ -126,9 +129,21 @@ export function NotificationDrawer({
   onMarkAllRead,
   onDismiss,
   onDismissAll,
+  triggerRef,
 }: NotificationDrawerProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const router = useRouter();
+
+  // Focus the "Notifications" heading on open, trap Tab inside the drawer and
+  // return focus to the bell when it closes — Issue #1454.
+  useDialogFocus({
+    isOpen: open,
+    containerRef: panelRef,
+    headingRef,
+    triggerRef,
+    onEscape: onClose,
+  });
 
   // Issue #1210: mark all as read when drawer is opened
   useEffect(() => {
@@ -137,16 +152,6 @@ export function NotificationDrawer({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [open, onClose]);
 
   // Issue #1210: navigate to the relevant loan on notification click
   const handleNavigate = useCallback(
@@ -176,15 +181,7 @@ export function NotificationDrawer({
           />
 
           {/* Drawer panel */}
-          <FocusTrap
-            active={open}
-            focusTrapOptions={{
-              onDeactivate: onClose,
-              clickOutsideDeactivates: true,
-              escapeDeactivates: true,
-              fallbackFocus: "#notification-panel",
-            }}
-          >
+          <>
             <motion.div
               key="drawer"
               ref={panelRef}
@@ -206,7 +203,12 @@ export function NotificationDrawer({
             >
               {/* Header */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-[color:var(--token-border)]">
-                <h2 className="text-base font-semibold text-[color:var(--token-text)]">
+                <h2
+                  id="notification-drawer-title"
+                  ref={headingRef}
+                  tabIndex={-1}
+                  className="text-base font-semibold text-[color:var(--token-text)]"
+                >
                   Notifications
                   {unreadCount > 0 && (
                     <span
@@ -292,7 +294,7 @@ export function NotificationDrawer({
                 )}
               </div>
             </motion.div>
-          </FocusTrap>
+          </>
         </>
       )}
     </AnimatePresence>
@@ -305,11 +307,13 @@ interface NotificationBellProps {
   unreadCount: number;
   onClick: () => void;
   isOpen: boolean;
+  buttonRef?: Ref<HTMLButtonElement>;
 }
 
-export function NotificationBell({ unreadCount, onClick, isOpen }: NotificationBellProps) {
+export function NotificationBell({ unreadCount, onClick, isOpen, buttonRef }: NotificationBellProps) {
   return (
     <button
+      ref={buttonRef}
       type="button"
       onClick={onClick}
       aria-label={

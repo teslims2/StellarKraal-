@@ -1,6 +1,6 @@
 'use client';
 /**
- * LoansListClient — sortable, responsive loan list (closes #1244).
+ * LoansListClient — sortable, filterable, paginated loan list (closes #1244, #1430).
  *
  * Acceptance criteria:
  *  ✓ Sortable columns: Status, Amount, Created At, Health Factor
@@ -8,11 +8,12 @@
  *  ✓ Sort state reflected in URL query params (?sortBy=amount&sortDir=asc)
  *  ✓ On screens < 640 px, table switches to card layout
  *  ✓ Accessible: column headers use aria-sort
+ *  ✓ ARIA live region announces sort and filter changes to screen readers (#1430)
  */
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Download, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
+import { Download } from 'lucide-react';
 import Link from 'next/link';
 import SearchFilterBar from '@/components/SearchFilterBar';
 import PageTransition from '@/components/PageTransition';
@@ -20,12 +21,14 @@ import Card from '@/components/Card';
 import ScrollToTopButton from '@/components/ScrollToTopButton';
 import Spinner from '@/components/Spinner';
 import Pagination from '@/components/Pagination';
+import EmptyState from '@/components/EmptyState';
 import { usePaginationParams } from '@/hooks/usePagination';
 import { badgeVariants } from '@/lib/animations';
 import { useScrollPosition } from '@/hooks/useScrollPosition';
 import { useSearchFilter } from '@/hooks/useSearchFilter';
 import { useI18n } from '@/context/I18nContext';
 import { toCsvString, downloadCsv, csvFilename, type CsvColumn } from '@/lib/exportCsv';
+import DataTable, { type ColumnDef, type RowAction } from '@/components/DataTable';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -44,13 +47,6 @@ interface Loan {
 
 type SortKey = 'status' | 'amount' | 'createdAt' | 'health_factor';
 type SortDir = 'asc' | 'desc';
-
-const SORTABLE_COLUMNS: { key: SortKey; label: string }[] = [
-  { key: 'status', label: 'Status' },
-  { key: 'amount', label: 'Amount' },
-  { key: 'createdAt', label: 'Created At' },
-  { key: 'health_factor', label: 'Health Factor' },
-];
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -106,31 +102,6 @@ function LoanStatusBadge({ status, reduced }: { status: string; reduced: boolean
   );
 }
 
-/** Sort loans by the selected column and direction. */
-function sortLoans(loans: Loan[], key: SortKey, dir: SortDir): Loan[] {
-  return [...loans].sort((a, b) => {
-    let cmp = 0;
-    switch (key) {
-      case 'status':
-        cmp = a.status.localeCompare(b.status);
-        break;
-      case 'amount':
-        cmp = a.amount - b.amount;
-        break;
-      case 'createdAt':
-        cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-        break;
-      case 'health_factor': {
-        const aHf = a.health_factor ?? -Infinity;
-        const bHf = b.health_factor ?? -Infinity;
-        cmp = aHf - bHf;
-        break;
-      }
-    }
-    return dir === 'asc' ? cmp : -cmp;
-  });
-}
-
 // ── Export button ──────────────────────────────────────────────────────────────
 
 function ExportCsvButton({ loans }: { loans: Loan[] }) {
@@ -169,28 +140,69 @@ function ExportCsvButton({ loans }: { loans: Loan[] }) {
   );
 }
 
-// ── Sort indicator icon ────────────────────────────────────────────────────────
+// ── Table (≥ 640 px) ───────────────────────────────────────────────────────────
 
-function SortIcon({
-  column,
-  sortBy,
-  sortDir,
-}: {
-  column: SortKey;
-  sortBy: SortKey;
-  sortDir: SortDir;
-}) {
-  if (column !== sortBy) {
-    return <ChevronsUpDown className="h-3.5 w-3.5 opacity-40" aria-hidden="true" />;
-  }
-  return sortDir === 'asc' ? (
-    <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
-  ) : (
-    <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
-  );
+/** Column configuration consumed by the shared DataTable (#1447). */
+function loanColumns(reduced: boolean | null): ColumnDef<Loan>[] {
+  return [
+    {
+      key: 'id',
+      label: 'Loan ID',
+      sortable: false,
+      className: 'font-mono text-xs',
+      render: (_value, loan) => (
+        <Link
+          href={`/loans/${loan.id}`}
+          className="hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold rounded"
+        >
+          #{loan.id.slice(0, 8)}
+        </Link>
+      ),
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      render: (_value, loan) => <LoanStatusBadge status={loan.status} reduced={reduced} />,
+    },
+    {
+      key: 'amount',
+      label: 'Amount',
+      className: 'font-medium tabular-nums',
+      render: (value) => `${(Number(value) / 1e7).toFixed(2)} XLM`,
+    },
+    {
+      key: 'createdAt',
+      label: 'Created At',
+      className: 'tabular-nums',
+      render: (value) => new Date(String(value)).toLocaleDateString(),
+      sortValue: (loan) => new Date(loan.createdAt).getTime(),
+    },
+    {
+      key: 'health_factor',
+      label: 'Health Factor',
+      className: 'tabular-nums',
+      sortValue: (loan) => loan.health_factor ?? Number.NEGATIVE_INFINITY,
+      render: (value) =>
+        value != null
+          ? `${Number(value) > 100 ? (Number(value) / 10_000).toFixed(2) : Number(value).toFixed(2)}x`
+          : '—',
+    },
+    {
+      key: 'borrower',
+      label: 'Borrower',
+      sortable: false,
+      className: 'font-mono text-xs max-w-[10rem] truncate',
+      render: (_value, loan) => (
+        <span title={loan.borrower}>
+          {loan.borrower.slice(0, 6)}…{loan.borrower.slice(-4)}
+        </span>
+      ),
+    },
+  ];
 }
 
-// ── Table (≥ 640 px) ───────────────────────────────────────────────────────────
+/** Row actions are configured declaratively; the DataTable renders them. */
+const LOAN_ACTIONS: RowAction<Loan>[] = [{ label: 'View', href: (loan) => `/loans/${loan.id}` }];
 
 function LoansTable({
   loans,
@@ -207,87 +219,30 @@ function LoansTable({
   reduced: boolean | null;
   t: (key: string, fallback?: string) => string;
 }) {
-  return (
-    <div className="overflow-x-auto rounded-xl border border-brown/10 dark:border-brown-700 shadow-sm">
-      <table className="w-full text-sm" aria-label={t('loans.title', 'Loans')}>
-        <thead className="bg-brown/5 dark:bg-brown-800/50">
-          <tr>
-            {/* Non-sortable ID column */}
-            <th
-              scope="col"
-              className="px-4 py-3 text-left font-semibold text-brown/70 dark:text-cream/70 whitespace-nowrap"
-            >
-              Loan ID
-            </th>
-
-            {SORTABLE_COLUMNS.map(({ key, label }) => (
-              <th
-                key={key}
-                scope="col"
-                aria-sort={
-                  sortBy === key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'
-                }
-                className="px-4 py-3 text-left font-semibold text-brown/70 dark:text-cream/70 whitespace-nowrap"
-              >
-                <button
-                  type="button"
-                  onClick={() => onSort(key)}
-                  className="inline-flex items-center gap-1.5 hover:text-brown dark:hover:text-cream transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold rounded"
-                  aria-label={`Sort by ${label}${sortBy === key ? `, currently ${sortDir === 'asc' ? 'ascending' : 'descending'}` : ''}`}
-                >
-                  {label}
-                  <SortIcon column={key} sortBy={sortBy} sortDir={sortDir} />
-                </button>
-              </th>
-            ))}
-
-            {/* Borrower */}
-            <th
-              scope="col"
-              className="px-4 py-3 text-left font-semibold text-brown/70 dark:text-cream/70 whitespace-nowrap"
-            >
-              Borrower
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-brown/10 dark:divide-brown-700">
-          {loans.map((loan) => (
-            <tr
-              key={loan.id}
-              className="bg-white dark:bg-brown-900 hover:bg-brown/5 dark:hover:bg-brown-800 transition-colors"
-            >
-              <td className="px-4 py-3 font-mono text-xs text-brown dark:text-cream">
-                <Link
-                  href={`/loans/${loan.id}`}
-                  className="hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold rounded"
-                >
-                  #{loan.id.slice(0, 8)}
-                </Link>
-              </td>
-              <td className="px-4 py-3">
-                <LoanStatusBadge status={loan.status} reduced={reduced} />
-              </td>
-              <td className="px-4 py-3 font-medium text-brown dark:text-cream tabular-nums">
-                {(loan.amount / 1e7).toFixed(2)} XLM
-              </td>
-              <td className="px-4 py-3 text-brown/70 dark:text-cream/70 tabular-nums">
-                {new Date(loan.createdAt).toLocaleDateString()}
-              </td>
-              <td className="px-4 py-3 text-brown/70 dark:text-cream/70 tabular-nums">
-                {loan.health_factor != null
-                  ? (loan.health_factor > 100
-                      ? (loan.health_factor / 10_000).toFixed(2)
-                      : loan.health_factor.toFixed(2)) + 'x'
-                  : '—'}
-              </td>
-              <td className="px-4 py-3 font-mono text-xs text-brown/60 dark:text-cream/60 truncate max-w-[10rem]">
-                {loan.borrower.slice(0, 6)}…{loan.borrower.slice(-4)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+  const emptyState = (
+    <div className="flex flex-col items-center gap-3 py-4">
+      <p>{t('loans.noResults', 'No loans match your filters.')}</p>
+      <Link
+        href="/borrow"
+        className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-gold px-4 py-2 text-sm font-semibold text-brown transition hover:bg-gold/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+      >
+        {t('loans.request', 'Request a loan')}
+      </Link>
     </div>
+  );
+
+  return (
+    <DataTable
+      columns={loanColumns(reduced)}
+      data={loans}
+      rowKey={(loan) => loan.id}
+      caption={t('loans.title', 'Loans')}
+      actions={LOAN_ACTIONS}
+      emptyState={emptyState}
+      sortBy={sortBy}
+      sortDir={sortDir}
+      onSortChange={({ key }) => onSort(key as SortKey)}
+    />
   );
 }
 
@@ -376,7 +331,79 @@ function LoanListContent() {
   );
 
   // Filter state from URL
-  const { filters, debouncedQuery, clearAll } = useSearchFilter();
+  const { filters, debouncedQuery, clearAll, hasActiveFilters } = useSearchFilter();
+
+  // ── ARIA live region: announce sort and filter changes (#1430) ─────────
+  const [announcement, setAnnouncement] = useState('');
+  // Track whether this is the initial render so we don't announce on mount.
+  const isMounted = useRef(false);
+
+  useEffect(() => {
+    if (!isMounted.current) {
+      isMounted.current = true;
+      return;
+    }
+    const colLabel =
+      SORTABLE_COLUMNS.find((c) => c.key === sortBy)?.label ?? sortBy;
+    const dirLabel = sortDir === 'asc' ? 'ascending' : 'descending';
+    setAnnouncement(`Sorted by ${colLabel}, ${dirLabel}`);
+  }, [sortBy, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Announce filter / search changes after debounce settles.
+  const prevQuery = useRef(debouncedQuery);
+  const prevStatuses = useRef(filters.statuses.join(','));
+  useEffect(() => {
+    const queryChanged = prevQuery.current !== debouncedQuery;
+    const statusesChanged = prevStatuses.current !== filters.statuses.join(',');
+    prevQuery.current = debouncedQuery;
+    prevStatuses.current = filters.statuses.join(',');
+    if (!isMounted.current) return;
+    if (!queryChanged && !statusesChanged) return;
+    // The result count is not yet calculated here, so just confirm the filter
+    // was applied; the result count announcement happens after sort below.
+    const parts: string[] = [];
+    if (debouncedQuery) parts.push(`search "${debouncedQuery}"`);
+    if (filters.statuses.length) parts.push(`status: ${filters.statuses.join(', ')}`);
+    setAnnouncement(
+      parts.length ? `Filters applied: ${parts.join('; ')}` : 'Filters cleared'
+    );
+  }, [debouncedQuery, filters.statuses]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── ARIA live region: announce sort and filter changes (#1430) ─────────
+  const [announcement, setAnnouncement] = useState('');
+  // Track whether this is the initial render so we don't announce on mount.
+  const isMounted = useRef(false);
+
+  useEffect(() => {
+    if (!isMounted.current) {
+      isMounted.current = true;
+      return;
+    }
+    const colLabel =
+      SORTABLE_COLUMNS.find((c) => c.key === sortBy)?.label ?? sortBy;
+    const dirLabel = sortDir === 'asc' ? 'ascending' : 'descending';
+    setAnnouncement(`Sorted by ${colLabel}, ${dirLabel}`);
+  }, [sortBy, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Announce filter / search changes after debounce settles.
+  const prevQuery = useRef(debouncedQuery);
+  const prevStatuses = useRef(filters.statuses.join(','));
+  useEffect(() => {
+    const queryChanged = prevQuery.current !== debouncedQuery;
+    const statusesChanged = prevStatuses.current !== filters.statuses.join(',');
+    prevQuery.current = debouncedQuery;
+    prevStatuses.current = filters.statuses.join(',');
+    if (!isMounted.current) return;
+    if (!queryChanged && !statusesChanged) return;
+    // The result count is not yet calculated here, so just confirm the filter
+    // was applied; the result count announcement happens after sort below.
+    const parts: string[] = [];
+    if (debouncedQuery) parts.push(`search "${debouncedQuery}"`);
+    if (filters.statuses.length) parts.push(`status: ${filters.statuses.join(', ')}`);
+    setAnnouncement(
+      parts.length ? `Filters applied: ${parts.join('; ')}` : 'Filters cleared'
+    );
+  }, [debouncedQuery, filters.statuses]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const controller = new AbortController();
@@ -429,18 +456,40 @@ function LoanListContent() {
     return matchesQuery && matchesStatus && matchesDateFrom && matchesDateTo;
   });
 
-  // Sort
-  const sorted = sortLoans(filtered, sortBy, sortDir);
+  // Filtering only — the shared DataTable owns sorting (#1447).
+  const visibleLoans = filtered;
+
+  const loansTable = (
+    <LoansTable
+      loans={visibleLoans}
+      sortBy={sortBy}
+      sortDir={sortDir}
+      onSort={handleSort}
+      reduced={reduced}
+      t={t}
+    />
+  );
 
   return (
     <div className="space-y-4">
+      {/* Screen-reader live region — announces sort and filter changes (#1430) */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+        data-testid="loans-sr-announcement"
+      >
+        {announcement}
+      </div>
+
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <SearchFilterBar
           statusOptions={STATUS_OPTIONS}
           typeOptions={TYPE_OPTIONS}
           searchPlaceholder="Search by loan ID or borrower…"
         />
-        <ExportCsvButton loans={sorted} />
+        <ExportCsvButton loans={visibleLoans} />
       </div>
 
       {loading && pageLoans.length === 0 ? (
@@ -448,9 +497,30 @@ function LoanListContent() {
           {t('loans.loading', 'Loading…')}
         </p>
       ) : sorted.length === 0 ? (
-        <p className="text-brown/60 text-sm" role="status" aria-live="polite">
-          {t('loans.noResults', 'No loans match your filters.')}
-        </p>
+        hasActiveFilters ? (
+          <EmptyState
+            illustration="loans"
+            title={t('loans.noResults', 'No loans match your filters.')}
+            description={t(
+              'loans.noResultsHint',
+              'Try adjusting your search or filters to see more loans.'
+            )}
+            isFiltered
+            onClearFilters={clearAll}
+          />
+        ) : (
+          <EmptyState
+            illustration="loans"
+            title={t('loans.emptyTitle', 'No Loans Yet')}
+            description={t(
+              'loans.emptyDescription',
+              'You have not requested any loans yet. Request your first loan to get started.'
+            )}
+            ctaLabel={t('loans.firstLoanCta', 'Request Your First Loan')}
+            ctaAlias={t('loans.requestLoan', 'Request a Loan')}
+            onCta={() => router.push('/borrow')}
+          />
+        )
       ) : (
         <div
           aria-busy={loading}
@@ -458,19 +528,12 @@ function LoanListContent() {
         >
           {/* Table layout — visible on sm and up (≥ 640 px) */}
           <div className="hidden sm:block" data-testid="loans-table">
-            <LoansTable
-              loans={sorted}
-              sortBy={sortBy}
-              sortDir={sortDir}
-              onSort={handleSort}
-              reduced={reduced}
-              t={t}
-            />
+            {loansTable}
           </div>
 
           {/* Card layout — visible below sm (< 640 px) */}
           <div className="block sm:hidden" data-testid="loans-cards">
-            <LoansCardList loans={sorted} reduced={reduced} t={t} />
+            <LoansCardList loans={visibleLoans} reduced={reduced} t={t} />
           </div>
         </div>
       )}

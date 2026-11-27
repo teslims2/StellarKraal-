@@ -24,7 +24,16 @@ function mockAddress(str: string) {
 
 // ── mocks ─────────────────────────────────────────────────────────────────────
 
-const mockGetEvents = jest.fn().mockResolvedValue({ events: [] });
+// Declared with var (not const/let) so it's hoisted above the jest.mock() calls
+// that reference it, avoiding the TDZ (temporal dead zone) error.
+// eslint-disable-next-line no-var
+var mockGetEvents = jest.fn().mockResolvedValue({ events: [] });
+
+jest.mock("./utils/rpcClient", () => ({
+  rpcClient: {
+    getEvents: (...args: unknown[]) => mockGetEvents(...args),
+  },
+}));
 
 jest.mock("@stellar/stellar-sdk", () => ({
   rpc: {
@@ -40,7 +49,10 @@ jest.mock("@stellar/stellar-sdk", () => ({
   Address: {
     fromScVal: jest.fn(),
   },
-}));
+  StrKey: {
+    encodeEd25519PublicKey: jest.fn((buf: Buffer) => `G${buf.toString("hex")}`),
+  },
+}), { virtual: true });
 
 jest.mock("./utils/logger", () => ({
   __esModule: true,
@@ -54,6 +66,8 @@ jest.mock("./db/store", () => ({
   updateTransaction: jest.fn(),
   updateLoan: jest.fn(),
   insertLiquidationEvent: jest.fn(),
+  getLedgerCursor: jest.fn().mockReturnValue(0),
+  setLedgerCursor: jest.fn(),
 }));
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -249,6 +263,51 @@ describe("contractEventListener", () => {
 
       expect(store.updateLoan).not.toHaveBeenCalled();
       expect(store.insertLiquidationEvent).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("ledger cursor persistence", () => {
+    it("persists ledger cursor after processing events", async () => {
+      const { xdr } = require("@stellar/stellar-sdk");
+
+      // Return a no-op event (unrecognised key) so handleEvent exits cleanly
+      // without needing Address mocks — we only care about cursor advancement.
+      xdr.ScVal.fromXDR.mockImplementation((b64: string) => {
+        if (b64 === "t0") return { sym: () => ({ toString: () => "noop" }) };
+        if (b64 === "t1") return { sym: () => ({ toString: () => "event" }) };
+        return { vec: () => [] };
+      });
+
+      const syntheticEvent = {
+        type: "contract",
+        topic: ["t0", "t1"],
+        value: "data_noop",
+        ledger: 100,
+        id: "evt-noop-1",
+      };
+
+      store.getLedgerCursor.mockReturnValue(0);
+      mockGetEvents.mockResolvedValueOnce({ events: [syntheticEvent] });
+
+      startEventListener(500);
+      await jest.runOnlyPendingTimersAsync();
+
+      // After processing an event at ledger 100, cursor should be set to 101.
+      expect(store.setLedgerCursor).toHaveBeenCalledWith("CTEST123", 101);
+    });
+
+    it("resumes from persisted cursor on startup", async () => {
+      // Pretend a cursor of 500 was stored from a previous run.
+      store.getLedgerCursor.mockReturnValue(500);
+      mockGetEvents.mockResolvedValueOnce({ events: [] });
+
+      startEventListener(500);
+      await jest.runOnlyPendingTimersAsync();
+
+      // The first getEvents call must start from the persisted ledger.
+      expect(mockGetEvents).toHaveBeenCalledWith(
+        expect.objectContaining({ startLedger: 500 }),
+      );
     });
   });
 });

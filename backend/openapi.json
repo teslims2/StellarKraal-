@@ -1036,11 +1036,11 @@
           "loan"
         ],
         "summary": "Liquidate an undercollateralised loan",
-        "description": "Builds an unsigned Soroban transaction to liquidate a loan whose health factor has fallen below the liquidation threshold. The liquidator repays part of the loan and receives the pledged collateral. Returns 400 with the current health factor if the loan is not yet liquidatable.",
+        "description": "Builds an unsigned Soroban transaction to liquidate a loan whose health factor has fallen below the liquidation threshold. The optional repay_amount enables partial liquidation; omit it (or set it to the outstanding debt) for full liquidation. The response includes the post-liquidation health factor.",
         "operationId": "liquidateLoan",
         "requestBody": {
           "required": true,
-          "description": "Liquidation details including liquidator wallet, loan ID, and repayment amount.",
+          "description": "Liquidation details including liquidator wallet and loan ID, with an optional partial repayment amount.",
           "content": {
             "application/json": {
               "schema": {
@@ -2778,11 +2778,10 @@
       },
       "LoanLiquidateBody": {
         "type": "object",
-        "description": "Request to liquidate an undercollateralised loan.",
+        "description": "Request to partially or fully liquidate an undercollateralised loan.",
         "required": [
           "liquidator",
-          "loan_id",
-          "repay_amount"
+          "loan_id"
         ],
         "properties": {
           "liquidator": {
@@ -2799,7 +2798,7 @@
           "repay_amount": {
             "type": "integer",
             "minimum": 1,
-            "description": "Amount the liquidator will repay in token base units.",
+            "description": "Optional amount the liquidator will repay in token base units. Omit to repay the full outstanding debt.",
             "example": 500000
           }
         }

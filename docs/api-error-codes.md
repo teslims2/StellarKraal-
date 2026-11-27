@@ -14,6 +14,76 @@ Rate-limit and validation errors may include additional fields (`retryAfter`, `d
 
 ---
 
+## Machine-readable application constants
+
+The canonical TypeScript enum is exported from [`backend/src/utils/errorCodes.ts`](../backend/src/utils/errorCodes.ts) as `ErrorCode`. Clients may import the backend package or use these string values. `Retryable` means repeating the same request may succeed without changing user input.
+
+| Code | HTTP | Retryable | Resolution / user action |
+|------|------|-----------|--------------------------|
+| `INTERNAL_ERROR` | `500` | Yes | Retry once; report the correlationId if it persists. |
+| `NOT_FOUND` | `404` | No | Verify the identifier and fetch the current resource list. |
+| `PAYLOAD_TOO_LARGE` | `413` | No | Reduce the request payload. |
+| `TIMEOUT` | `504` | Yes | Retry with backoff and inspect upstream latency if it persists. |
+| `MISSING_TOKEN` | `400` | No | Correct the request fields or protocol inputs. |
+| `INVALID_TOKEN` | `401` | No | Authenticate again or obtain a fresh token/signature. |
+| `TOKEN_EXPIRED` | `401` | No | Authenticate again or obtain a fresh token/signature. |
+| `INVALID_SIGNATURE` | `401` | No | Authenticate again or obtain a fresh token/signature. |
+| `MISSING_HEADER` | `401` | No | Authenticate again or obtain a fresh token/signature. |
+| `INVALID_API_KEY` | `401` | No | Authenticate again or obtain a fresh token/signature. |
+| `AUTHENTICATION_REQUIRED` | `401` | No | Authenticate again or obtain a fresh token/signature. |
+| `FORBIDDEN` | `403` | No | Use an authorized wallet/role or request access from the owner/admin. |
+| `ROLE_FORBIDDEN` | `403` | No | Use an authorized wallet/role or request access from the owner/admin. |
+| `INVALID_ROLE` | `400` | No | Correct the request fields or protocol inputs. |
+| `USER_NOT_FOUND` | `404` | No | Verify the identifier and fetch the current resource list. |
+| `VALIDATION_ERROR` | `400` | No | Correct the request fields or protocol inputs. |
+| `INVALID_PAGINATION` | `400` | No | Correct the request fields or protocol inputs. |
+| `INVALID_CURSOR` | `400` | No | Correct the request fields or protocol inputs. |
+| `COLLATERAL_NOT_FOUND` | `404` | No | Verify the identifier and fetch the current resource list. |
+| `LOAN_NOT_FOUND` | `404` | No | Verify the identifier and fetch the current resource list. |
+| `OWNERSHIP_MISMATCH` | `400` | No | Correct the request fields or protocol inputs. |
+| `ALREADY_PLEDGED` | `409` | No | Refresh state and resolve the conflict before retrying. |
+| `HEALTH_FACTOR_SAFE` | `400` | No | Correct the request fields or protocol inputs. |
+| `LOAN_ALREADY_CLOSED` | `409` | No | Refresh state and resolve the conflict before retrying. |
+| `INVALID_STATE_TRANSITION` | `400` | No | Correct the request fields or protocol inputs. |
+| `CONTRACT_NOT_INITIALIZED` | `502` | Yes | Retry with backoff; operators should check Stellar RPC/contract health. |
+| `CONTRACT_ALREADY_INITIALIZED` | `502` | Yes | Retry with backoff; operators should check Stellar RPC/contract health. |
+| `UNAUTHORIZED` | `403` | No | Use an authorized wallet/role or request access from the owner/admin. |
+| `INSUFFICIENT_COLLATERAL` | `400` | No | Correct the request fields or protocol inputs. |
+| `INVALID_AMOUNT` | `400` | No | Correct the request fields or protocol inputs. |
+| `INVALID_FEE_RATE` | `400` | No | Correct the request fields or protocol inputs. |
+| `EXCEEDS_CLOSE_FACTOR` | `400` | No | Correct the request fields or protocol inputs. |
+| `INVALID_CLOSE_FACTOR` | `400` | No | Correct the request fields or protocol inputs. |
+| `CONTRACT_PAUSED` | `503` | Yes | Wait for dependency recovery, then retry. |
+| `ORACLE_ALREADY_REGISTERED` | `409` | No | Refresh state and resolve the conflict before retrying. |
+| `ORACLE_LIMIT_REACHED` | `409` | No | Refresh state and resolve the conflict before retrying. |
+| `ORACLE_NOT_FOUND` | `404` | No | Verify the identifier and fetch the current resource list. |
+| `INSUFFICIENT_ORACLE_QUORUM` | `502` | Yes | Retry with backoff; operators should check Stellar RPC/contract health. |
+| `INVALID_PRICE` | `400` | No | Correct the request fields or protocol inputs. |
+| `NOT_PAUSED` | `400` | No | Correct the request fields or protocol inputs. |
+| `REENTRANCY_GUARD` | `502` | Yes | Retry with backoff; operators should check Stellar RPC/contract health. |
+| `ALREADY_PAUSED` | `400` | No | Correct the request fields or protocol inputs. |
+| `ARITHMETIC_OVERFLOW` | `500` | Yes | Retry once; report the correlationId if it persists. |
+| `LIQUIDATOR_NOT_WHITELISTED` | `403` | No | Use an authorized wallet/role or request access from the owner/admin. |
+| `NO_UPGRADE_PENDING` | `400` | No | Correct the request fields or protocol inputs. |
+| `TIMELOCK_NOT_ELAPSED` | `400` | No | Correct the request fields or protocol inputs. |
+| `ORACLE_REQUIRED` | `400` | No | Correct the request fields or protocol inputs. |
+| `RATE_LIMITED` | `429` | Yes | Wait for Retry-After, then retry with exponential backoff. |
+| `SERVICE_UNAVAILABLE` | `503` | Yes | Wait for dependency recovery, then retry. |
+| `BAD_GATEWAY` | `502` | Yes | Retry with backoff; operators should check Stellar RPC/contract health. |
+| `IDEMPOTENCY_KEY_REQUIRED` | `400` | No | Correct the request fields or protocol inputs. |
+| `CONFLICT` | `409` | No | Refresh state and resolve the conflict before retrying. |
+| `RPC_ERROR` | `502` | Yes | Retry with backoff; operators should check Stellar RPC/contract health. |
+| `CONTRACT_CALL_FAILED` | `502` | Yes | Retry with backoff; operators should check Stellar RPC/contract health. |
+| `CONTRACT_INVALID_ARGUMENT` | `400` | No | Correct the request fields or protocol inputs. |
+| `CONTRACT_UNAUTHORIZED` | `403` | No | Use an authorized wallet/role or request access from the owner/admin. |
+| `CONTRACT_INSUFFICIENT_BALANCE` | `400` | No | Correct the request fields or protocol inputs. |
+| `CONTRACT_NOT_FOUND` | `404` | No | Verify the identifier and fetch the current resource list. |
+| `CONTRACT_STATE_ERROR` | `409` | No | Refresh state and resolve the conflict before retrying. |
+
+Preserve and provide `correlationId` when contacting support. Do not retry permanent client, authorization, validation, not-found, or conflict failures unchanged; correct the request or wallet state first.
+
+---
+
 ## HTTP Status Codes
 
 | Status | Meaning |

@@ -12,6 +12,13 @@
  * Refresh tokens expire in REFRESH_TTL_MS (default 7 days) and are stored in the DB as SHA-256 hashes.
  * Revoked/rotated tokens are stored in a blocklist to prevent reuse attacks.
  * All POST/PUT/DELETE routes (except auth endpoints) require a valid JWT.
+ *
+ * Key rotation (closes #1444):
+ *   New tokens are signed with the first key in JWT_KEYS (the current key).
+ *   Verification accepts any key in JWT_KEYS whose validUntil has not passed.
+ *   The `kid` header claim identifies which key was used to sign a token.
+ *   Rotating secrets does not require a service restart — reload keys by
+ *   updating JWT_KEYS in the environment and sending SIGHUP (or restarting).
  */
 import { Request, Response, NextFunction, Router } from 'express';
 import { createHmac, randomBytes } from 'crypto';
@@ -25,13 +32,67 @@ import logger from '../utils/logger';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const JWT_SECRET = process.env.JWT_SECRET ?? 'change-me-in-production-min-32-chars!!';
 /** Access token TTL in ms. Reads ACCESS_TTL_MS from config (default 15 min). */
 const ACCESS_TTL_MS = parseInt(config.ACCESS_TTL_MS, 10);
 /** Refresh token TTL in ms. Reads REFRESH_TTL_MS from config (default 7 days). */
 const REFRESH_TTL_MS = parseInt(config.REFRESH_TTL_MS, 10);
 const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const REFRESH_COOKIE = 'refreshToken';
+
+// ── Versioned JWT key store ───────────────────────────────────────────────────
+
+interface JwtKey {
+  /** Key identifier included as the `kid` header claim. */
+  kid: string;
+  /** HMAC-SHA256 signing secret. */
+  secret: string;
+  /**
+   * Optional Unix timestamp (ms) after which this key is no longer accepted
+   * for verification. When absent the key remains valid indefinitely.
+   */
+  validUntil?: number;
+}
+
+/**
+ * Load the ordered list of JWT keys from the environment.
+ *
+ * Priority:
+ *   1. JWT_KEYS — JSON array of { kid, secret, validUntil? } objects.
+ *   2. JWT_SECRET — single secret, exposed as kid="v1".
+ *   3. Hardcoded insecure default for local development only.
+ *
+ * The first key in the returned array is used to sign new tokens.
+ * All keys (subject to validUntil) are tried when verifying.
+ */
+function loadJwtKeys(): JwtKey[] {
+  if (config.JWT_KEYS) {
+    try {
+      const parsed = JSON.parse(config.JWT_KEYS) as unknown;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed as JwtKey[];
+      }
+    } catch (err) {
+      logger.error('Failed to parse JWT_KEYS — falling back to JWT_SECRET', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  const secret =
+    process.env.JWT_SECRET ?? 'change-me-in-production-min-32-chars!!';
+  return [{ kid: 'v1', secret }];
+}
+
+/** Mutable key store — can be replaced at runtime for hot-rotation. */
+let jwtKeys: JwtKey[] = loadJwtKeys();
+
+/**
+ * Replace the in-process key set without a restart.
+ * Call this after updating JWT_KEYS in the environment (e.g. via SIGHUP).
+ */
+export function reloadJwtKeys(): void {
+  jwtKeys = loadJwtKeys();
+  logger.info('JWT keys reloaded', { keyCount: jwtKeys.length, kids: jwtKeys.map((k) => k.kid) });
+}
 
 // ── Minimal JWT (HS256, no external dep) ─────────────────────────────────────
 
@@ -40,22 +101,71 @@ function b64url(buf: Buffer | string): string {
   return s.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
+/**
+ * Sign a JWT payload with the current (first) key.
+ * Includes a `kid` header claim so verifyJwt can find the right key.
+ */
 function signJwt(payload: object): string {
-  const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const signingKey = jwtKeys[0];
+  const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT', kid: signingKey.kid }));
   const body = b64url(JSON.stringify(payload));
-  const sig = b64url(createHmac('sha256', JWT_SECRET).update(`${header}.${body}`).digest());
+  const sig = b64url(
+    createHmac('sha256', signingKey.secret).update(`${header}.${body}`).digest(),
+  );
   return `${header}.${body}.${sig}`;
 }
 
+/**
+ * Verify a JWT, trying every currently-valid key in jwtKeys.
+ *
+ * Lookup order:
+ *   1. If the header contains a `kid`, find that key first.
+ *   2. Otherwise try all valid keys in order (backwards-compatibility).
+ *
+ * A key is "valid" when its validUntil is either absent or in the future.
+ */
 function verifyJwt(token: string): Record<string, unknown> {
   const parts = token.split('.');
   if (parts.length !== 3) throw new Error('malformed');
   const [header, body, sig] = parts;
-  const expected = b64url(createHmac('sha256', JWT_SECRET).update(`${header}.${body}`).digest());
-  if (sig !== expected) throw new Error('invalid signature');
-  const payload = JSON.parse(Buffer.from(body, 'base64').toString()) as Record<string, unknown>;
-  if (typeof payload.exp === 'number' && Math.floor(Date.now() / 1000) > payload.exp) throw new Error('expired');
-  return payload;
+
+  // Decode the header to extract kid (best-effort — invalid JSON → undefined).
+  let kid: string | undefined;
+  try {
+    const h = JSON.parse(Buffer.from(header, 'base64').toString()) as Record<string, unknown>;
+    if (typeof h.kid === 'string') kid = h.kid;
+  } catch {
+    // ignore — kid stays undefined
+  }
+
+  const now = Date.now();
+  const validKeys = jwtKeys.filter((k) => k.validUntil === undefined || k.validUntil > now);
+
+  // Build the ordered list to try: matching kid first, then the rest.
+  const orderedKeys = kid
+    ? [
+        ...validKeys.filter((k) => k.kid === kid),
+        ...validKeys.filter((k) => k.kid !== kid),
+      ]
+    : validKeys;
+
+  for (const key of orderedKeys) {
+    const expected = b64url(
+      createHmac('sha256', key.secret).update(`${header}.${body}`).digest(),
+    );
+    if (sig === expected) {
+      const payload = JSON.parse(Buffer.from(body, 'base64').toString()) as Record<
+        string,
+        unknown
+      >;
+      if (typeof payload.exp === 'number' && Math.floor(Date.now() / 1000) > payload.exp) {
+        throw new Error('expired');
+      }
+      return payload;
+    }
+  }
+
+  throw new Error('invalid signature');
 }
 
 // ── In-memory stores ──────────────────────────────────────────────────────────
@@ -321,7 +431,61 @@ authRouter.post('/refresh', asyncHandler(async (req: Request, res: Response) => 
   res.json({ accessToken, refreshToken: rawRefresh, expiresIn: ACCESS_TTL_MS / 1000 });
 }));
 
-// ── RBAC middleware ───────────────────────────────────────────────────────────
+/**
+ * @openapi
+ * /auth/rotate-keys:
+ *   post:
+ *     tags:
+ *       - auth
+ *     summary: Hot-reload JWT signing keys
+ *     description: |
+ *       Reloads the JWT_KEYS environment variable without a service restart.
+ *       Update JWT_KEYS in the environment (e.g. via your secrets manager),
+ *       then call this endpoint to apply the new key set immediately.
+ *       Tokens signed with old keys remain valid until their `validUntil`
+ *       timestamp expires, so active sessions are not invalidated.
+ *       Requires a valid ADMIN_API_KEY bearer token.
+ *     operationId: rotateJwtKeys
+ *     security:
+ *       - AdminApiKey: []
+ *     responses:
+ *       '200':
+ *         description: Keys reloaded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 ok:
+ *                   type: boolean
+ *                 keyCount:
+ *                   type: integer
+ *                 kids:
+ *                   type: array
+ *                   items:
+ *                     type: string
+ *       '401':
+ *         $ref: '#/components/responses/Unauthorized'
+ *       '403':
+ *         $ref: '#/components/responses/Forbidden'
+ */
+authRouter.post('/rotate-keys', (req: Request, res: Response) => {
+  const adminKey = config.ADMIN_API_KEY;
+  const authHeader = req.headers.authorization;
+  if (!adminKey || authHeader !== `Bearer ${adminKey}`) {
+    res.status(adminKey ? 403 : 501).json({
+      error: adminKey ? 'FORBIDDEN' : 'NOT_CONFIGURED',
+      message: adminKey ? 'Invalid admin API key' : 'ADMIN_API_KEY is not configured',
+    });
+    return;
+  }
+  reloadJwtKeys();
+  const kids = jwtKeys.map((k) => k.kid);
+  logger.info('JWT keys rotated via API', { keyCount: jwtKeys.length, kids });
+  res.json({ ok: true, keyCount: jwtKeys.length, kids });
+});
+
+
 
 /** Role values supported by the RBAC system. */
 export type Role = 'borrower' | 'admin';

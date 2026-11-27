@@ -1,4 +1,5 @@
 import logger from "./utils/logger";
+import { stellarkraalLoanStateTransitionsTotal } from "./metrics";
 
 export type LoanStatus = "pending" | "active" | "repaid" | "liquidated" | "at_risk";
 
@@ -51,6 +52,14 @@ export function logLoanStateTransition(fields: {
   triggeredBy?: string;
   timestamp: string;
 }): void {
+  // Increment the business-level transition counter. This is the single
+  // instrumentation point for all status changes — both the state-machine
+  // `transition()` path and the direct `updateLoan()` store path call this
+  // function, so every transition is captured exactly once.
+  stellarkraalLoanStateTransitionsTotal.inc({
+    from_state: fields.fromState,
+    to_state: fields.toState,
+  });
   logger.info("loan_state_transition", {
     loanId: fields.loanId,
     fromState: fields.fromState,

@@ -29,7 +29,7 @@ export default function SWRErrorToastConfig({ children }: { children: React.Reac
           const { message } = classifyApiError(error);
           const mutate = config?.mutate;
 
-          toast.error(message, {
+          toast.error(message, { duration: 5000,
             action:
               typeof mutate === "function" && key !== undefined
                 ? {

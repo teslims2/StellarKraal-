@@ -2,6 +2,13 @@
 
 Handsoff is a Soroban-based lending protocol with a React frontend for signing and submitting transactions.
 
+## In-app Notification Center
+
+- A notification bell icon in the header shows an unread count badge.
+- Clicking the bell opens a dropdown listing recent loan lifecycle events.
+- Each notification includes a timestamp, event description, and a link to the related loan.
+- Notifications can be marked as read individually or all at once.
+
 ## Loan State Machine
 
 The loan lifecycle is modeled as a state machine. Each transition is emitted as a Soroban contract event so that off-chain listeners can reconstruct loan state deterministically.

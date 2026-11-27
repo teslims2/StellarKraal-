@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import FocusTrap from "focus-trap-react";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 
 interface OnboardingModalProps {
   isOpen: boolean;
@@ -39,16 +39,21 @@ export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProp
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState(0);
   const [spotlight, setSpotlight] = useState<DOMRect | null>(null);
-  const triggerRef = useRef<Element | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  // Focus the step heading, trap Tab within the dialog, and restore focus on
+  // close — Issue #1454.
+  useDialogFocus({
+    isOpen,
+    containerRef: dialogRef,
+    headingRef,
+    onEscape: () => handleSkip(),
+  });
 
   // Reset to first step each time the modal opens
   useEffect(() => {
-    if (isOpen) {
-      setCurrentStep(0);
-      triggerRef.current = document.activeElement;
-    } else {
-      (triggerRef.current as HTMLElement | null)?.focus();
-    }
+    if (isOpen) setCurrentStep(0);
   }, [isOpen]);
 
   useEffect(() => {
@@ -107,18 +112,13 @@ export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProp
   const isLast = currentStep === ONBOARDING_STEPS.length - 1;
 
   return (
-    <FocusTrap active={isOpen} focusTrapOptions={{ allowOutsideClick: true, escapeDeactivates: false }}>
+    <>
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="onboarding-title"
         className="fixed inset-0 bg-brown-900/80 flex items-center justify-center z-50 p-4"
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            e.stopPropagation();
-            handleSkip();
-          }
-        }}
       >
         {spotlight ? (
           <>
@@ -158,7 +158,7 @@ export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProp
         <div className="text-center">
           <div className="mb-6 text-gold-600">{step.illustration}</div>
 
-          <h2 id="onboarding-title" className="text-2xl font-bold text-brown-700 dark:text-cream-50 mb-3">
+          <h2 id="onboarding-title" ref={headingRef} tabIndex={-1} className="text-2xl font-bold text-brown-700 dark:text-cream-50 mb-3">
             {step.title}
           </h2>
 
@@ -202,6 +202,6 @@ export default function OnboardingModal({ isOpen, onClose }: OnboardingModalProp
         </div>
         </div>
       </div>
-    </FocusTrap>
+    </>
   );
 }

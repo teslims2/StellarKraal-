@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { useWallet } from '@/context/WalletContext';
-import { loadFreighter } from '@/lib/freighterClient';
+import { loadFreighter } from '@/lib/freighter';
 
 export const WALLET_STORAGE_KEY = 'stellarkraal_wallet';
 
@@ -262,6 +262,13 @@ export function ConnectWalletModal({
         </div>
       ) : (
         <div className="space-y-4">
+          <div className="rounded-xl border border-[color:var(--token-border)] bg-[color:var(--token-surface-raised)] px-4 py-3 text-sm text-[color:var(--token-text)]">
+            <p className="font-semibold">Public-key access only</p>
+            <p className="mt-1 text-[color:var(--token-text-muted)]">
+              StellarKraal can read your public wallet address to identify your account. Your private
+              key never leaves Freighter and this app cannot access it.
+            </p>
+          </div>
           {isChecking ? (
             <div
               role="status"

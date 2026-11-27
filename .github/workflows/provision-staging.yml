@@ -1,0 +1,129 @@
+name: Provision Staging Infrastructure
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - infrastructure/**
+      - .github/workflows/provision-staging.yml
+  push:
+    branches: [main]
+    paths:
+      - infrastructure/**
+      - .github/workflows/provision-staging.yml
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+env:
+  TF_VERSION: '1.8.3'
+  WORKING_DIR: infrastructure
+  AWS_REGION: ${{ vars.AWS_REGION }}
+
+concurrency:
+  group: provision-staging-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan staging
+    runs-on: ubuntu-24.04
+    environment: staging
+    defaults:
+      run:
+        working-directory: infrastructure
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-TF-Staging-Plan
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}" \
+            -input=false
+
+      - name: Select staging workspace
+        run: terraform workspace select staging || terraform workspace new staging
+
+      - name: Terraform plan
+        id: plan
+        run: |
+          terraform plan \
+            -var-file="envs/staging.tfvars" \
+            -no-color \
+            -out=staging.tfplan \
+            -input=false | tee staging-plan.txt
+
+      - name: Post plan to pull request
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          PLAN_OUTPUT: ${{ steps.plan.outputs.stdout }}
+        with:
+          script: |
+            const output = process.env.PLAN_OUTPUT || 'Terraform plan completed; see the workflow log for details.';
+            const body = `## Staging Terraform plan\n\n<details><summary>Show plan output</summary>\n\n\`\`\`text\n${output.slice(0, 60000)}\n\`\`\`\n</details>`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+  apply:
+    name: Apply staging
+    needs: plan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: staging
+    defaults:
+      run:
+        working-directory: infrastructure
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-TF-Staging-Apply
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}" \
+            -input=false
+
+      - name: Select staging workspace
+        run: terraform workspace select staging || terraform workspace new staging
+
+      - name: Terraform plan for apply
+        run: terraform plan -var-file="envs/staging.tfvars" -out=staging.tfplan -input=false
+
+      - name: Terraform apply
+        run: terraform apply -input=false -auto-approve staging.tfplan

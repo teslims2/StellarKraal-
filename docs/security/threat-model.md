@@ -1,7 +1,7 @@
 # StellarKraal Threat Model
 
 **Status:** Living document — update when the attack surface changes significantly.  
-**Last reviewed:** 2026-09-27  
+**Last reviewed:** 2026-11-28  
 **Review requested from:** at least one maintainer with a security background before merging.
 
 ---
@@ -146,27 +146,35 @@ under-collateralized loans (too-high price) or unjust liquidations (too-low pric
    median aggregation is ineffective.
 
 **Current mitigations**
-- Multi-oracle median aggregation with a minimum quorum (up to 5 oracles). A single compromised
-  oracle cannot shift the median alone. See [ADR-006](../adr/ADR-006-oracle-design.md).
-- On-chain TWAP (time-weighted average price) smooths liquidation pricing over a configurable
-  window, preventing single-submission flash manipulation. See [ADR-007](../adr/ADR-007-oracle-twap.md).
-- On-chain deviation limits reject submissions that deviate too far from the current TWAP
-  (configurable `MAX_DEVIATION_BPS`).
-- On-chain staleness check: the contract rejects prices older than `PRICE_STALENESS_THRESHOLD`.
-- Oracle keys are managed separately from the backend application key; compromise of the
-  backend does not automatically compromise oracle submissions.
+- Multi-oracle median aggregation with a minimum quorum (`min(3, oracle_count)`, up to 5 oracles). A single compromised oracle cannot shift the median alone — an attacker must control a strict majority of responding oracles. See [ADR-006](../adr/ADR-006-oracle-design.md).
+- On-chain TWAP smooths liquidation pricing over a configurable window (default 1 hour). A single-block or even a 30-minute coordinated price submission cannot crash the effective collateral value enough to trigger profitable liquidation. Originations use spot price with a deviation guard (`max_deviation_bps`) that rejects submissions inflated beyond the TWAP by more than the configured threshold, preventing over-borrowing against a temporarily spiked spot price. See [ADR-007](../adr/ADR-007-oracle-twap.md).
+- On-chain price deviation limits (`max_deviation_bps`) reject individual submissions that deviate too far from the previous accepted price.
+- On-chain staleness check (`staleness_threshold` in `OracleConfig`): the contract rejects prices older than the configured threshold.
+- Per-submission `flagged_count` in `OracleReport`: submissions deviating > 50% from the multi-oracle median are flagged for off-chain monitoring without blocking the whole report, surfacing likely-bad actors.
+- Oracle keys are managed separately from the backend application key; compromise of the backend does not automatically compromise oracle submissions.
+
+**Flash loan attack vector — livestock-backed collateral**  
+Livestock collateral has no liquid on-chain DEX, so the classic flash loan attack (borrow, dump on DEX, liquidate, repay) cannot be executed directly on the collateral asset. However, the analogous off-chain vector is a *coordinated rapid oracle injection*: an attacker who controls one or more oracle keys submits a sharply depressed price in a short window to trigger liquidations on under-collateralized positions.
+
+The TWAP window is the primary defence: the liquidation price is the rolling arithmetic mean of all submissions within the window (default 1 hour). To move the TWAP enough to trigger a profitable liquidation, the attacker must sustain the manipulated price for the full window duration — not just one block. With the median quorum in place, the attacker must also control a majority of responding oracles for the entire window, compounding the difficulty.
+
+Residual exposure remains for a *gradual drift attack*: a colluding majority that incrementally walks the price down over multiple windows. The `flagged_count` monitoring and off-chain oracle governance are the mitigating controls.
 
 **Residual risks**
-- At the current stage, oracles are operated by the StellarKraal team. Quorum collusion is a
-  theoretical risk if all oracle operators are the same entity.
-- The TWAP window is a configurable parameter — a misconfigured short window reduces protection.
-- No automated alert is triggered when the oracle submission rate drops below a threshold
-  (i.e., impending staleness is not proactively surfaced).
+
+| Risk | Likelihood | Impact |
+|------|:----------:|:------:|
+| Single-team oracle quorum — StellarKraal team operates all oracles, so a compromised team member or key management failure breaks quorum resistance entirely | Medium | Critical |
+| TWAP window reset race — after a window expires with no submissions, the first new price is used as the entire TWAP until a second submission arrives; during this brief moment the TWAP equals the spot price | Low | High |
+| Short TWAP window misconfiguration — an admin accidentally sets a very short `twap_window` (e.g. 60 s), collapsing the temporal protection to near zero | Low | High |
+| Gradual multi-window drift by a colluding oracle majority — TWAP does not protect against sustained price movement over many windows | Low | Critical |
+| No automated Prometheus alert for oracle submission rate below threshold, so impending staleness is not proactively surfaced | Medium | Medium |
 
 **Recommended follow-up**
-- Add a Prometheus alert rule that fires when the last oracle submission is older than
-  `PRICE_STALENESS_THRESHOLD × 0.8` (early warning). See [observability/prometheus-rules.yml](../../observability/prometheus-rules.yml).
+- Add a Prometheus alert rule that fires when the last oracle submission is older than `PRICE_STALENESS_THRESHOLD × 0.8` (early warning). See [observability/prometheus-rules.yml](../../observability/prometheus-rules.yml).
 - Onboard at least one third-party oracle operator before mainnet to break the single-team quorum.
+- Require a minimum of two submissions before the TWAP is used for liquidations (guards the window-reset race); document this as a future contract improvement.
+- Monitor `flagged_count` from `OracleReport` and alert when it is non-zero in any poll cycle.
 
 ---
 
@@ -182,32 +190,36 @@ approval, duplicate disbursement, or double-spend on the consumer side.
   insecure consumer endpoint, or a MITM on HTTP — not HTTPS — consumers).
 
 **Attack vectors**
-1. Capture and replay a `loan.approved` event to trigger a duplicate disbursement on the
-   consumer side.
+1. Capture and replay a `loan.approved` event to trigger a duplicate disbursement on the consumer side.
 2. Replay a `collateral.registered` event to confuse consumer inventory systems.
 3. Tamper with the payload and forge a signature (requires knowledge of the webhook secret).
 
-**Current mitigations**
-- **HMAC-SHA256 per-delivery signature**: every POST includes `X-StellarKraal-Signature: sha256=<hex>` computed from the raw JSON body and the per-registration secret. Consumers must verify this header before processing. See [ADR-010](../adr/ADR-010-event-driven-architecture.md).
-- **Optional AES-256-GCM payload encryption**: key derived from the webhook secret via HKDF-SHA256, providing confidentiality for sensitive financial event payloads.
-- **TLS enforced on delivery**: the backend will not deliver to `http://` endpoints in production (configurable; rejected by default).
-- **Event idempotency key**: each event payload includes a unique `event_id` field. Consumers must implement idempotent processing keyed on `event_id`.
+**Current mitigations — HMAC-based signing**
+Every webhook delivery is protected by an HMAC-SHA256 per-delivery signature. The backend:
+
+1. Computes `HMAC-SHA256(key=subscriber_secret, message=raw_json_body)` and encodes the result as a lowercase hex string.
+2. Sends the result in the `X-StellarKraal-Signature: sha256=<hex>` header with every POST.
+3. The per-registration `subscriber_secret` is unique per consumer; compromise of one subscription secret does not affect others.
+
+Consumers must verify this header before processing any event (constant-time comparison to prevent timing attacks). An attacker who does not know the subscriber secret cannot forge a valid signature for a modified payload. See [ADR-008-webhooks](../adr/ADR-008-webhooks.md) and [docs/webhook-signing.md](../webhook-signing.md).
+
+Additional controls:
+- **Optional AES-256-GCM payload encryption**: key derived from the webhook secret via HKDF-SHA256, providing confidentiality for sensitive financial event payloads. See [docs/WEBHOOK_ENCRYPTION.md](../WEBHOOK_ENCRYPTION.md).
+- **TLS enforced on delivery**: the backend rejects `http://` endpoints in production, preventing network-layer interception.
+- **Event idempotency key**: each event payload includes a unique `event_id` field. Consumers must implement idempotent processing keyed on `event_id` to handle retries without side effects.
 
 **Residual risks**
-- The backend does not currently add a **timestamp** field to the HMAC payload. Without a
-  timestamp, there is no built-in replay window — a captured signature is valid indefinitely
-  against its exact payload.
-- Consumer-side idempotency is the consumer's responsibility. The backend cannot enforce it.
-- Webhook secrets are stored in-memory; a backend restart clears all registrations including
-  secrets, requiring consumers to re-register.
+
+| Risk | Likelihood | Impact |
+|------|:----------:|:------:|
+| No timestamp in HMAC payload — a captured signature is valid indefinitely against its exact payload; there is no built-in replay window | Medium | High |
+| Consumer-side idempotency not enforced by the backend — the backend sends `event_id` but cannot guarantee consumers honour it | Medium | High |
+| Webhook registrations stored in-memory — a backend restart clears all registrations including secrets, requiring consumers to re-register and creating a window of undelivered events | Medium | Medium |
 
 **Recommended follow-up**
-- Include a `X-StellarKraal-Timestamp` header (Unix epoch seconds) in every delivery and include
-  it in the HMAC calculation. Document a recommended replay window (e.g. ±5 minutes) for
-  consumers to verify.
+- Include a `X-StellarKraal-Timestamp` header (Unix epoch seconds) in every delivery and incorporate it into the HMAC calculation. Document a recommended replay window (e.g. ±5 minutes) for consumers to verify.
 - Persist webhook registrations to the database (SQLite table) so secrets survive restarts.
-- Add an example consumer verification snippet to [docs/guides/webhooks.md](webhooks.md) showing
-  timestamp + signature verification.
+- Add an example consumer verification snippet to [docs/guides/webhooks.md](webhooks.md) showing timestamp + signature verification.
 
 ---
 
@@ -253,13 +265,17 @@ graph TD
 
 ## 7. Residual Risk Register
 
-| Risk | Severity | Likelihood | Owner | Mitigation status |
-|------|:--------:|:----------:|-------|-------------------|
-| Token denylist not persisted across restarts | Medium | Medium | Backend team | Open — tracked in backlog |
-| No automated oracle staleness alert | Medium | Medium | DevOps | Open — prometheus rule needed |
-| Webhook replay window not enforced (no timestamp in HMAC) | Medium | Low | Backend team | Open — tracked in backlog |
-| Single-team oracle quorum (collusion risk) | High | Low | Protocol team | Partially mitigated (TWAP); third-party oracle onboarding planned |
-| Webhook registrations lost on restart | Medium | Medium | Backend team | Open — persistence to SQLite planned |
+| Risk | Severity | Likelihood | Impact | Owner | Mitigation status |
+|------|:--------:|:----------:|:------:|-------|-------------------|
+| Token denylist not persisted across restarts | Medium | Medium | Medium | Backend team | Open — tracked in backlog |
+| No automated oracle staleness alert | Medium | Medium | Medium | DevOps | Open — Prometheus rule needed |
+| Webhook replay window not enforced (no timestamp in HMAC) | Medium | Medium | High | Backend team | Open — tracked in backlog |
+| Single-team oracle quorum (collusion risk) | High | Medium | Critical | Protocol team | Partially mitigated (TWAP + median); third-party oracle onboarding planned for mainnet |
+| Webhook registrations lost on restart | Medium | Medium | Medium | Backend team | Open — persistence to SQLite planned |
+| TWAP window reset race (first post-expiry submission equals spot price) | Low | Low | High | Protocol team | Open — minimum-submissions guard not yet implemented |
+| Short TWAP window misconfiguration by admin | Low | Low | High | Protocol team | Open — governance / timelock controls recommended |
+| Gradual multi-window oracle price drift by colluding majority | Low | Low | Critical | Protocol team | Residual — requires third-party oracle onboarding to mitigate |
+| Flash loan equivalent (coordinated rapid oracle injection) specific to livestock collateral | Low | Low | High | Protocol team | Mitigated by TWAP (1-hour default window) and quorum majority requirement |
 
 ---
 

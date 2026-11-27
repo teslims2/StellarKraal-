@@ -1,6 +1,8 @@
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import HealthGauge from '../components/HealthGauge';
+import Modal from '../../components/Modal';
+import RepaymentModal from '../../components/RepaymentModal';
 
 // Mock the design tokens to avoid import issues
 jest.mock('@/lib/design-tokens', () => ({
@@ -63,5 +65,81 @@ describe('Accessibility Tests', () => {
     expect(circles.length).toBeGreaterThanOrEqual(2);
     expect(circles[0]).toHaveAttribute('aria-label');
     expect(circles[1]).toHaveAttribute('aria-label');
+  });
+});
+
+describe('Modal accessibility', () => {
+  test('Modal should not have accessibility violations when open', async () => {
+    const { container } = render(
+      <Modal isOpen={true} onClose={() => {}} title="Test Modal">
+        <p>Content</p>
+      </Modal>,
+    );
+    const results = await axe(container);
+    expect(results).toHaveNoViolations();
+  });
+
+  test('Modal should have role=dialog and aria-modal', () => {
+    render(
+      <Modal isOpen={true} onClose={() => {}} title="Test Modal">
+        <p>Content</p>
+      </Modal>,
+    );
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+  });
+
+  test('Modal close button is reachable by keyboard', () => {
+    render(
+      <Modal isOpen={true} onClose={() => {}} title="Test Modal">
+        <p>Content</p>
+      </Modal>,
+    );
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAttribute('tabIndex', '-1');
+  });
+});
+
+describe('RepaymentModal accessibility', () => {
+  test('RepaymentModal should not have accessibility violations when open', async () => {
+    const { container } = render(
+      <RepaymentModal
+        isOpen={true}
+        onClose={() => {}}
+        onConfirm={() => {}}
+        amount="500 XLM"
+      />,
+    );
+    const results = await axe(container);
+    expect(results).toHaveNoViolations();
+  });
+
+  test('RepaymentModal has aria-labelledby pointing to the title', () => {
+    const { container } = render(
+      <RepaymentModal
+        isOpen={true}
+        onClose={() => {}}
+        onConfirm={() => {}}
+        amount="500 XLM"
+      />,
+    );
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAttribute('aria-labelledby', 'repayment-modal-title');
+    const titleEl = container.querySelector('#repayment-modal-title');
+    expect(titleEl).toBeInTheDocument();
+  });
+
+  test('RepaymentModal Cancel and Confirm buttons are labelled', () => {
+    render(
+      <RepaymentModal
+        isOpen={true}
+        onClose={() => {}}
+        onConfirm={() => {}}
+        amount="500 XLM"
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
   });
 });

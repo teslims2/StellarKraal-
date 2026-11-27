@@ -95,3 +95,75 @@ groups:
           summary: "High Contract Invocation Failure Rate"
           runbook: "https://github.com/teslims2/StellarKraal-/blob/main/docs/runbooks/contract-invocation-failure.md"
           dashboard: "http://localhost:3000/d/stellarkraal-backend?var-alert=high-contract-invocation-failure-rate"
+
+  # ── SLO-based alert rules ──────────────────────────────────────────────────
+  # These rules fire directly against Prometheus metrics and do not rely on
+  # the push-based stellarkraal_alert_fired gauge pattern. They are the
+  # authoritative source for SLO breach detection.
+  - name: stellarkraal.slo
+    rules:
+      # SLO-1: HTTP 5xx error rate must stay below 1% over any 5-minute window.
+      # Threshold: >1% 5xx rate sustained for 5 minutes → critical page.
+      - alert: SLO_HighErrorRate
+        expr: >
+          (
+            sum(rate(http_requests_total{status_code=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total[5m]))
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          slo: "error_rate"
+        annotations:
+          summary: "SLO breach: HTTP 5xx rate exceeds 1% (current: {{ $value | humanizePercentage }})"
+          description: >
+            The HTTP 5xx error rate has exceeded 1% for 5 consecutive minutes.
+            Current rate: {{ $value | humanizePercentage }}.
+            SLO target: ≤1% 5xx responses over any 5-minute window.
+          runbook: "https://github.com/teslims2/StellarKraal-/blob/main/docs/runbooks/5xx-spike.md"
+          dashboard: "http://localhost:3000/d/stellarkraal-backend?var-alert=SLO_HighErrorRate"
+
+      # SLO-2: p99 request latency must stay below 2s over any 5-minute window.
+      # Threshold: p99 > 2s sustained for 5 minutes → critical page.
+      - alert: SLO_HighP99Latency
+        expr: >
+          histogram_quantile(
+            0.99,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 5m
+        labels:
+          severity: critical
+          slo: "latency_p99"
+        annotations:
+          summary: "SLO breach: p99 request latency exceeds 2s (current: {{ $value | humanizeDuration }})"
+          description: >
+            The p99 HTTP request latency has exceeded 2 seconds for 5 consecutive minutes.
+            Current p99: {{ $value | humanizeDuration }}.
+            SLO target: p99 ≤2s over any 5-minute window.
+          runbook: "https://github.com/teslims2/StellarKraal-/blob/main/docs/runbooks/high-latency.md"
+          dashboard: "http://localhost:3000/d/stellarkraal-backend?var-alert=SLO_HighP99Latency"
+
+      # SLO-3: Soroban contract RPC call failure rate must stay below 5%.
+      # Uses stellarkraal_contract_rpc_duration_seconds (labelled by method and status).
+      # Threshold: >5% error rate sustained for 5 minutes → critical page.
+      - alert: SLO_ContractRpcFailureRate
+        expr: >
+          (
+            sum(rate(stellarkraal_contract_rpc_duration_seconds_count{status="error"}[5m]))
+            /
+            clamp_min(sum(rate(stellarkraal_contract_rpc_duration_seconds_count[5m])), 1e-9)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          slo: "contract_rpc_failure_rate"
+        annotations:
+          summary: "SLO breach: contract RPC failure rate exceeds 5% (current: {{ $value | humanizePercentage }})"
+          description: >
+            The Soroban contract RPC call failure rate has exceeded 5% for 5 consecutive minutes.
+            Current rate: {{ $value | humanizePercentage }}.
+            SLO target: ≤5% RPC call failures over any 5-minute window.
+          runbook: "https://github.com/teslims2/StellarKraal-/blob/main/docs/runbooks/rpc-failure.md"
+          dashboard: "http://localhost:3000/d/stellarkraal-backend?var-alert=SLO_ContractRpcFailureRate"

@@ -1,29 +1,38 @@
 "use client";
 /**
- * ThemeToggle — sun/moon icon button that toggles between light and dark mode.
+ * ThemeToggle — cycles between light, dark, and system (OS preference) modes.
  *
- * Closes #1206:
- *  - Sun icon in dark mode, Moon icon in light mode — placed in the top navigation.
+ * Closes #1424:
+ *  - Three modes: light → dark → system (follows OS preference).
+ *  - Sun icon in dark mode, Moon icon in light mode, Monitor icon in system mode.
  *  - Defaults to `prefers-color-scheme` on first visit (handled by ThemeProvider +
  *    ThemeScript; this component just consumes the context).
- *  - User preference is persisted to `localStorage` via ThemeProvider.toggle().
+ *  - User preference is persisted to `localStorage` via ThemeProvider.
  *  - Keyboard accessible: inherits native <button> tab-stop, activates on Enter/Space.
  *  - Screen-reader friendly:
- *      • `aria-label` announces the *action* ("Switch to dark mode / light mode").
- *      • `aria-pressed` reflects the *current* dark-mode state so AT can read it.
- *      • A visually-hidden `aria-live="polite"` region announces the state
- *        *after* the toggle fires so users of screen readers get feedback.
- *  - `focus-visible` ring satisfies WCAG 2.4.7 (Focus Visible) and keeps the
- *    Lighthouse accessibility score ≥ 90.
+ *      • `aria-label` announces the *current* mode.
+ *      • A visually-hidden `aria-live="polite"` region announces state changes.
+ *  - `focus-visible` ring satisfies WCAG 2.4.7 (Focus Visible).
  */
 import { useEffect, useState } from "react";
-import { Sun, Moon } from "lucide-react";
+import { Sun, Moon, Monitor } from "lucide-react";
 import { Icon } from "@/components/Icon";
-import { useTheme } from "./ThemeProvider";
+import { useTheme, type ThemeMode } from "./ThemeProvider";
+
+const MODE_LABELS: Record<ThemeMode, string> = {
+  light: "Light mode",
+  dark: "Dark mode",
+  system: "System preference",
+};
+
+const MODE_ICONS: Record<ThemeMode, typeof Sun> = {
+  light: Sun,
+  dark: Moon,
+  system: Monitor,
+};
 
 export default function ThemeToggle() {
-  const { theme, toggle } = useTheme();
-  const isDark = theme === "dark";
+  const { mode, toggle } = useTheme();
 
   /**
    * Announcement string for the polite live region.
@@ -32,34 +41,32 @@ export default function ThemeToggle() {
   const [announcement, setAnnouncement] = useState<string>("");
 
   /**
-   * Update the live-region text whenever the theme changes so assistive
+   * Update the live-region text whenever the mode changes so assistive
    * technology announces the result of the toggle action.
    */
   useEffect(() => {
     if (announcement === "") return; // skip the initial mount — no user action yet
-    setAnnouncement(isDark ? "Dark mode enabled" : "Light mode enabled");
+    setAnnouncement(`Theme: ${MODE_LABELS[mode]}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDark]);
+  }, [mode]);
 
   function handleToggle() {
     toggle();
-    // Set the announcement synchronously — the effect above will also fire but
-    // we set it here too so fast successive presses still produce output.
-    setAnnouncement(!isDark ? "Dark mode enabled" : "Light mode enabled");
+    // Set the announcement now; the effect above fires too but this handles fast presses.
+    const labels: ThemeMode[] = ["light", "dark", "system"];
+    const nextMode = labels[(labels.indexOf(mode) + 1) % labels.length];
+    setAnnouncement(`Theme: ${MODE_LABELS[nextMode]}`);
   }
+
+  const CurrentIcon = MODE_ICONS[mode];
 
   return (
     <>
       <button
         type="button"
         onClick={handleToggle}
-        aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-        title={isDark ? "Switch to light mode" : "Switch to dark mode"}
-        /**
-         * aria-pressed=true when dark mode is ON — communicates the current
-         * toggle state to screen readers independently of the visual icon.
-         */
-        aria-pressed={isDark}
+        aria-label={`Theme: ${MODE_LABELS[mode]}. Click to cycle theme.`}
+        title={`Theme: ${MODE_LABELS[mode]}`}
         className={[
           "rounded-lg p-2 min-h-[44px] min-w-[44px] flex items-center justify-center",
           "transition-colors duration-200",
@@ -70,7 +77,7 @@ export default function ThemeToggle() {
       >
         {/* Icon is decorative; aria-label on the button conveys the action */}
         <Icon
-          icon={isDark ? Sun : Moon}
+          icon={CurrentIcon}
           size="md"
           className="text-[var(--color-text)]"
           aria-hidden={true}
@@ -80,9 +87,6 @@ export default function ThemeToggle() {
       {/*
        * Visually-hidden live region — announces the toggle result to screen
        * readers without disrupting the visual layout.
-       * `aria-live="polite"` waits for the current speech to finish before
-       * reading the announcement, which is the correct UX for a non-urgent
-       * state change.
        */}
       <span
         role="status"

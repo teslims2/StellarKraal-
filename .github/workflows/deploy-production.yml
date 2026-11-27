@@ -1,0 +1,81 @@
+name: Deploy to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_digest:
+        description: 'Immutable GHCR digest that passed staging (sha256:...)'
+        required: true
+        type: string
+  workflow_run:
+    workflows:
+      - Deploy to Staging (ECS Fargate)
+    types: [completed]
+    branches: [main]
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+  ECS_SERVICE: ${{ vars.ECS_PRODUCTION_SERVICE || vars.ECS_SERVICE }}
+  ECS_TASK_DEFINITION: ${{ vars.ECS_PRODUCTION_TASK_DEFINITION || vars.ECS_TASK_DEFINITION }}
+  CONTAINER_NAME: ${{ vars.ECS_CONTAINER_NAME }}
+  BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/stellarkraal-backend
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+    steps:
+      - name: Resolve staging-passed image digest
+        id: image
+        env:
+          REQUESTED_DIGEST: ${{ inputs.image_digest }}
+        run: |
+          set -euo pipefail
+          digest="$REQUESTED_DIGEST"
+          if [ -z "$digest" ]; then
+            digest=$(docker buildx imagetools inspect "$BACKEND_IMAGE:main" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          fi
+          case "$digest" in sha256:*) ;; *) echo 'image_digest must be a sha256 digest'; exit 1 ;; esac
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "image=$BACKEND_IMAGE@$digest" >> "$GITHUB_OUTPUT"
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Download current production task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "$ECS_TASK_DEFINITION" \
+            --query taskDefinition > task-definition.json
+      - name: Render digest-pinned task definition
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.image.outputs.image }}
+      - name: Deploy to ECS and wait for stability
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+      - name: Production smoke check
+        env:
+          HEALTHCHECK_URL: ${{ vars.PRODUCTION_HEALTHCHECK_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$HEALTHCHECK_URL"
+          curl --fail --silent --show-error --retry 5 --retry-delay 10 --max-time 20 "$HEALTHCHECK_URL" >/dev/null

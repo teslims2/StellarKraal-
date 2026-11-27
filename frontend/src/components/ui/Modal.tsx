@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import FocusTrap from "focus-trap-react";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 
 export type ModalSize = "sm" | "md" | "lg";
 
@@ -39,16 +39,17 @@ export default function Modal({
   titleId = "modal-title",
   role,
 }: ModalProps) {
-  const triggerRef = useRef<Element | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
-  // Remember the element that opened the modal so we can return focus on close
-  useEffect(() => {
-    if (open) {
-      triggerRef.current = document.activeElement;
-    } else {
-      (triggerRef.current as HTMLElement | null)?.focus();
-    }
-  }, [open]);
+  // Focus the title on open, trap Tab inside the panel, and return focus to
+  // the trigger on close — Issue #1454.
+  useDialogFocus({
+    isOpen: open,
+    containerRef: panelRef,
+    headingRef,
+    onEscape: onClose,
+  });
 
   // Prevent body scroll while open
   useEffect(() => {
@@ -59,7 +60,7 @@ export default function Modal({
   if (!open) return null;
 
   const modal = (
-    <FocusTrap active={open} focusTrapOptions={{ allowOutsideClick: true, escapeDeactivates: false }}>
+    <>
       {/*
        * Backdrop: frosted-glass effect (backdrop-blur-sm + semi-transparent dark fill).
        * Fade-in animation via animate-modal-backdrop (defined in globals.css).
@@ -81,18 +82,13 @@ export default function Modal({
         onMouseDown={(e) => {
           if (e.target === e.currentTarget) onClose();
         }}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            e.stopPropagation();
-            onClose();
-          }
-        }}
       >
         {/*
          * Panel: fade + scale-up animation via animate-modal-panel.
          * Starts at 95% scale / opacity 0, resolves to 100% / opacity 1.
          */}
         <div
+          ref={panelRef}
           className={[
             "relative w-full flex flex-col max-h-[90vh]",
             sizeClasses[size],
@@ -106,7 +102,7 @@ export default function Modal({
         >
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-brown-100 dark:border-brown-700">
-            <h2 id={titleId} className="text-lg font-bold text-brown-700 dark:text-cream-50" tabIndex={-1}>
+            <h2 id={titleId} ref={headingRef} className="text-lg font-bold text-brown-700 dark:text-cream-50" tabIndex={-1}>
               {title}
             </h2>
             <button
@@ -129,7 +125,7 @@ export default function Modal({
           )}
         </div>
       </div>
-    </FocusTrap>
+    </>
   );
 
   return createPortal(modal, document.body);

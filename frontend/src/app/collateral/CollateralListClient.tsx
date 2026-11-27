@@ -1,7 +1,8 @@
 'use client';
 import { Suspense, useCallback } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import SearchFilterBar from '@/components/SearchFilterBar';
+import EmptyState from '@/components/EmptyState';
 import HighlightText from '@/components/HighlightText';
 import PageTransition from '@/components/PageTransition';
 import ScrollToTopButton from '@/components/ScrollToTopButton';
@@ -27,10 +28,13 @@ const PAGE_SIZE = 20;
 
 function CollateralListContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const { t } = useI18n();
 
   const q = (searchParams.get('q') ?? '').toLowerCase();
   const types = searchParams.getAll('type');
+  const hasActiveFilters = Boolean(q || types.length > 0);
 
   /**
    * Fetch a page of collateral items from the backend.
@@ -113,9 +117,31 @@ function CollateralListContent() {
           {t('collateral.loadError', 'Could not load collateral. Please try again.')}
         </p>
       ) : filtered.length === 0 ? (
-        <p className="text-brown/60 text-sm">
-          {t('collateral.noResults', 'No collateral matches your filters.')}
-        </p>
+        <EmptyState
+          illustration="collateral"
+          title={
+            hasActiveFilters
+              ? t('collateral.noResults', 'No collateral matches your filters.')
+              : t('collateral.emptyTitle', 'No Collateral Registered')
+          }
+          description={
+            hasActiveFilters
+              ? t(
+                  'collateral.noResultsHint',
+                  'Try adjusting your search or filters to see more collateral.'
+                )
+              : t(
+                  'collateral.emptyDescription',
+                  'Register your livestock as collateral to unlock loans. Start by adding your first animal.'
+                )
+          }
+          ctaLabel={
+            hasActiveFilters ? undefined : t('collateral.registerCta', 'Register Collateral')
+          }
+          onCta={hasActiveFilters ? undefined : () => router.push('/collateral/new')}
+          isFiltered={hasActiveFilters}
+          onClearFilters={hasActiveFilters ? () => router.push(pathname) : undefined}
+        />
       ) : (
         <>
           <ul className="space-y-2" aria-label="Collateral list" aria-live="polite">
