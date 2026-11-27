@@ -25,6 +25,7 @@ import { useAtRiskLoans } from '@/hooks/useAtRiskLoans';
 import NotificationBadge from '@/components/NotificationBadge';
 import { NotificationBell, NotificationDrawer } from '@/components/NotificationDrawer';
 import { useNotifications } from '@/hooks/useNotifications';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { useShortcutsHelp } from '@/components/KeyboardShortcutsProvider';
 // i18n — Issue #1207
 import LanguageSwitcher from '@/components/LanguageSwitcher';
@@ -83,6 +84,8 @@ export default function Navbar() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
+  const drawerHeadingRef = useRef<HTMLHeadingElement>(null);
+  const notificationBellRef = useRef<HTMLButtonElement>(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const walletDropdownRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
@@ -96,6 +99,16 @@ export default function Navbar() {
   const shortcutsHelp = useShortcutsHelp();
   const { notifications, unreadCount, markRead, markAllRead, dismiss, dismissAll } =
     useNotifications();
+
+  // Move focus to the drawer heading, keep Tab inside the drawer and restore
+  // focus to the hamburger button on close — Issue #1454.
+  useDialogFocus({
+    isOpen: drawerOpen,
+    containerRef: drawerRef,
+    headingRef: drawerHeadingRef,
+    triggerRef: menuButtonRef,
+    onEscape: () => setDrawerOpen(false),
+  });
 
   /**
    * Full auth-clearing disconnect — Issue #1208 / #1509.
@@ -140,23 +153,15 @@ export default function Navbar() {
     setDrawerOpen(false);
   }, [pathname]);
 
-  // Mobile drawer: move focus into the panel on open, close on Escape or outside click — #1498.
+  // Mobile drawer: lock background scroll and close on outside click — #1498.
+  // Focus movement, trapping and restoration are handled by useDialogFocus.
   useEffect(() => {
     if (!drawerOpen) {
       document.body.style.overflow = '';
       return;
     }
 
-    // Prevent background scroll while the drawer is open.
     document.body.style.overflow = 'hidden';
-    drawerRef.current?.querySelector<HTMLElement>('a, button')?.focus();
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        setDrawerOpen(false);
-        menuButtonRef.current?.focus();
-      }
-    }
 
     function handlePointerDown(event: MouseEvent) {
       const target = event.target as Node;
@@ -165,11 +170,9 @@ export default function Navbar() {
       }
     }
 
-    document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('mousedown', handlePointerDown);
     return () => {
       document.body.style.overflow = '';
-      document.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('mousedown', handlePointerDown);
     };
   }, [drawerOpen]);
@@ -261,6 +264,7 @@ export default function Navbar() {
 
             {/* Notification bell — #1066 */}
             <NotificationBell
+              buttonRef={notificationBellRef}
               unreadCount={unreadCount}
               onClick={() => setNotifOpen((v) => !v)}
               isOpen={notifOpen}
@@ -270,6 +274,7 @@ export default function Navbar() {
             <NotificationDrawer
               open={notifOpen}
               onClose={() => setNotifOpen(false)}
+              triggerRef={notificationBellRef}
               notifications={notifications}
               unreadCount={unreadCount}
               onMarkRead={markRead}
@@ -348,6 +353,15 @@ export default function Navbar() {
           className="flex items-center justify-between px-4 h-14 border-b shrink-0"
           style={{ borderColor: 'var(--color-nav-border)' }}
         >
+          {/* Screen-reader heading that receives focus when the drawer opens (#1454). */}
+          <h2
+            ref={drawerHeadingRef}
+            id="mobile-nav-drawer-title"
+            tabIndex={-1}
+            className="sr-only"
+          >
+            Navigation menu
+          </h2>
           <Link
             href="/"
             onClick={() => setDrawerOpen(false)}

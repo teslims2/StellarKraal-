@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { useContractError } from '../hooks/useContractError';
 import { useToast } from '../hooks/useToast';
 
@@ -38,6 +39,15 @@ export default function RepayModal({
   const [result, setResult] = useState<{ healthFactor: number; remainingBalance: number } | null>(null);
   const { error, handleError, clearError } = useContractError();
   const { showSuccess, showError } = useToast();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  useDialogFocus({
+    isOpen,
+    containerRef: dialogRef,
+    headingRef,
+    onEscape: () => handleClose(),
+  });
 
   const isFullRepay = repayMode === 'full';
 
@@ -132,10 +142,18 @@ export default function RepayModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="repay-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+    >
       <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Repay Loan</h2>
+          <h2 id="repay-modal-title" ref={headingRef} tabIndex={-1} className="text-lg font-semibold">
+            Repay Loan
+          </h2>
           <button
             type="button"
             onClick={handleClose}

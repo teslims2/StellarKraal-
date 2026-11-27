@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 
 /**
  * Version string that uniquely identifies the current deployment.
@@ -83,61 +84,26 @@ export interface WhatsNewModalProps {
  */
 export default function WhatsNewModal({ isOpen, onClose }: WhatsNewModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const titleId = "whats-new-title";
 
-  // ── Focus trap ──────────────────────────────────────────────────────────────
-  const trapFocus = useCallback(
-    (e: KeyboardEvent) => {
-      if (!dialogRef.current) return;
+  // Focus the heading, trap Tab inside the dialog and restore focus to the
+  // triggering element on close — Issue #1454.
+  useDialogFocus({
+    isOpen,
+    containerRef: dialogRef,
+    headingRef,
+    onEscape: onClose,
+  });
 
-      const focusableSelectors = [
-        "a[href]",
-        "button:not([disabled])",
-        '[tabindex]:not([tabindex="-1"])',
-      ].join(", ");
-
-      const focusable = Array.from(
-        dialogRef.current.querySelectorAll<HTMLElement>(focusableSelectors)
-      ).filter((el) => el.offsetParent !== null);
-
-      if (focusable.length === 0) return;
-
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-
-      if (e.key === "Tab") {
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-
-      if (e.key === "Escape") {
-        onClose();
-      }
-    },
-    [onClose]
-  );
-
+  // Prevent body scroll while the dialog is open.
   useEffect(() => {
     if (!isOpen) return;
-
-    const firstFocusable = dialogRef.current?.querySelector<HTMLElement>(
-      "button, a[href], [tabindex]:not([tabindex='-1'])"
-    );
-    firstFocusable?.focus();
-
-    document.addEventListener("keydown", trapFocus);
     document.body.style.overflow = "hidden";
-
     return () => {
-      document.removeEventListener("keydown", trapFocus);
       document.body.style.overflow = "";
     };
-  }, [isOpen, trapFocus]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -175,6 +141,8 @@ export default function WhatsNewModal({ isOpen, onClose }: WhatsNewModalProps) {
                 </span>
                 <h2
                   id={titleId}
+                  ref={headingRef}
+                  tabIndex={-1}
                   className="text-xl font-bold text-brown dark:text-cream-100"
                 >
                   What&apos;s new in StellarKraal
