@@ -24,7 +24,7 @@ import {
 import { fireWebhooks } from "../webhooks";
 import { buildContractTx, CONTRACT_ID, NETWORK_PASSPHRASE } from "./contractTx";
 import rpcClient from "../utils/rpcClient";
-import { loanCreatedTotal, loanRepaidTotal, loanLiquidatedTotal } from "../metrics";
+import { loanCreatedTotal, loanRepaidTotal, loanLiquidatedTotal, timeStellarkraalContractRpc } from "../metrics";
 import { getCachedTwapPrice } from "../utils/twapCache";
 import { getOracleService } from "./OracleService";
 import { HealthFactorService } from "./HealthFactorService";
@@ -213,12 +213,14 @@ export async function requestLoan(input: LoanRequestInput): Promise<{ xdr: strin
     min_disbursement !== undefined
       ? nativeToScVal(BigInt(min_disbursement), { type: "i128" })
       : xdr.ScVal.scvVoid();
-  const xdrTx = await buildContractTx(borrower, "request_loan", [
-    new Address(borrower).toScVal(),
-    idsScVal,
-    nativeToScVal(BigInt(amount), { type: "i128" }),
-    minDisbursementScVal,
-  ]);
+  const xdrTx = await timeStellarkraalContractRpc("request_loan", () =>
+    buildContractTx(borrower, "request_loan", [
+      new Address(borrower).toScVal(),
+      idsScVal,
+      nativeToScVal(BigInt(amount), { type: "i128" }),
+      minDisbursementScVal,
+    ])
+  );
   
   // Increment metric
   loanCreatedTotal.inc({ collateral_type: collateralType, status: "active" });
@@ -244,11 +246,13 @@ export async function repayLoan(input: LoanRepayInput): Promise<{ xdr: string }>
   const collateralType = collateral?.animal_type ?? "unknown";
   const status = loan?.status ?? "unknown";
   
-  const xdrTx = await buildContractTx(borrower, "repay_loan", [
-    new Address(borrower).toScVal(),
-    nativeToScVal(BigInt(loan_id), { type: "u64" }),
-    nativeToScVal(BigInt(amount), { type: "i128" }),
-  ]);
+  const xdrTx = await timeStellarkraalContractRpc("repay_loan", () =>
+    buildContractTx(borrower, "repay_loan", [
+      new Address(borrower).toScVal(),
+      nativeToScVal(BigInt(loan_id), { type: "u64" }),
+      nativeToScVal(BigInt(amount), { type: "i128" }),
+    ])
+  );
   
   // Increment metric with repayment amount
   loanRepaidTotal.inc({ collateral_type: collateralType, status }, amount);

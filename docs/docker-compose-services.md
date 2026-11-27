@@ -22,34 +22,147 @@ resource limits.
 
 ---
 
-## Startup Order and Dependencies
+## Service Startup Order and `depends_on` Relationships
+
+### Startup order diagram
 
 ```
-postgres ──┐
-            ├─► backend ──► frontend
-redis ──────┘
+ ┌──────────┐    service_healthy     ┌─────────┐    service_healthy    ┌──────────┐
+ │ postgres │ ──────────────────────►│         │ ─────────────────────►│          │
+ └──────────┘                        │ backend │                        │ frontend │
+ ┌──────────┐    service_healthy     │         │                        │          │
+ │  redis   │ ──────────────────────►│         │                        │          │
+ └──────────┘                        └─────────┘                        └──────────┘
 
-loki ──► promtail
-loki ──┐
-       ├─► grafana
-prometheus ──┘  (prometheus depends on backend being up)
+ ┌──────┐   service_healthy   ┌──────────┐
+ │ loki │ ───────────────────►│ promtail │
+ └──────┘                     └──────────┘
+    │
+    │  service_started        ┌─────────────┐  service_started
+    └────────────────────────►│             │◄──────────────────┐
+                              │   grafana   │                   │
+                              │             │          ┌────────┴────┐
+                              └─────────────┘          │ prometheus  │
+                                                        │  (depends   │
+                                                        │  on backend │
+                                                        │  started)   │
+                                                        └─────────────┘
 ```
 
-- `backend` waits for `postgres` and `redis` to pass their health checks before starting.
-- `frontend` waits for `backend` to pass its health check.
-- `promtail` waits for `loki`.
-- `grafana` waits for both `loki` and `prometheus`.
+Each arrow is labelled with the `condition` Docker Compose enforces before the
+dependent service starts. Two conditions are used in this project:
+
+| Condition | Meaning |
+|-----------|---------|
+| `service_healthy` | Docker waits until the dependency's health check returns exit code 0 before starting the dependent container. The dependent service never starts if the dependency stays unhealthy beyond its `start_period + (retries × interval)`. |
+| `service_started` | Docker waits only until the dependency container is running (not necessarily passing its health check). Used where readiness is confirmed by another mechanism (e.g., Prometheus scrape retries). |
+
+### Full `depends_on` table
+
+| Service | Depends on | Condition |
+|---------|-----------|-----------|
+| `backend` | `postgres` | `service_healthy` |
+| `backend` | `redis` | `service_healthy` |
+| `frontend` | `backend` | `service_healthy` |
+| `promtail` | `loki` | `service_healthy` |
+| `grafana` | `loki` | `service_started` |
+| `grafana` | `prometheus` | `service_started` |
+| `prometheus` | `backend` | `service_started` |
+
+**What this means in practice:**
+
+- `backend` will not begin its own startup sequence until both `postgres` and
+  `redis` have passed their health checks. This eliminates the most common
+  race condition — the API trying to query the DB before it has finished
+  initialising.
+- `frontend` waits for `backend` to be healthy, so the Next.js dev server (or
+  production build) starts only once the API it proxies to is accepting
+  requests.
+- `promtail` waits for `loki` to be healthy so it does not attempt to push logs
+  to an endpoint that is not ready.
+- `prometheus` and `grafana` use `service_started` (not `service_healthy`)
+  because they can tolerate a brief period where their upstream targets are not
+  yet ready — Prometheus will simply retry the first scrape, and Grafana will
+  show "No data" briefly rather than failing to start.
 
 ---
 
 ## Health Checks
 
-| Service | Command | Interval | Retries |
-|---------|---------|----------|---------|
-| `postgres` | `pg_isready -U $POSTGRES_USER` | 10s | 5 |
-| `redis` | `redis-cli ping` | 10s | 5 |
-| `backend` | `wget -qO- http://localhost:3001/health` | 30s | 3 |
-| `frontend` | `wget -qO- http://localhost:3000` | 30s | 3 |
+### Full health check parameters
+
+| Service | Test command | Interval | Timeout | Retries | Start period |
+|---------|-------------|----------|---------|---------|-------------|
+| `postgres` | `pg_isready -U ${POSTGRES_USER:-postgres}` | 10s | 5s | 5 | 10s |
+| `redis` | `redis-cli ping` | 10s | 5s | 5 | 5s |
+| `backend` | `wget -qO- http://localhost:3001/health` | 30s | 10s | 3 | 15s |
+| `frontend` | `wget -qO- http://localhost:3000` | 30s | 10s | 3 | 20s |
+
+**Parameter meanings:**
+
+- **Interval** — how often Docker runs the test command after the previous
+  attempt completes.
+- **Timeout** — how long Docker waits for the test command before treating it
+  as a failure.
+- **Retries** — the number of consecutive failures needed before Docker marks
+  the container `unhealthy`.
+- **Start period** — a grace window during which failing health checks do not
+  count toward the retry limit. This allows the process time to initialise
+  before health checking begins in earnest.
+
+The backend health check calls the `/health` endpoint, which returns HTTP 200
+when the app is ready and HTTP 503 when the database is unreachable. `wget`
+exits non-zero on any non-2xx response, so a 503 correctly marks the container
+unhealthy and blocks dependent services.
+
+### How to customise health check intervals and thresholds
+
+Health check parameters are compiled into the image at build time via the
+`HEALTHCHECK` Dockerfile instruction and also set in `docker-compose.yml` under
+the `healthcheck:` key. The Compose declaration takes precedence over the
+Dockerfile instruction at runtime.
+
+Override any parameter for a specific service by adding (or modifying) the
+`healthcheck:` block in a local override file. Create
+`docker-compose.override.yml` (this file is auto-merged by Docker Compose and
+should not be committed for environment-specific values):
+
+```yaml
+# docker-compose.override.yml — local health check overrides
+services:
+  backend:
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 10s      # check more frequently during development
+      timeout: 5s
+      retries: 5
+      start_period: 5s   # shorter grace period if startup is fast locally
+
+  postgres:
+    healthcheck:
+      interval: 5s       # faster convergence when iterating on migrations
+      retries: 10        # more retries on slow machines
+```
+
+You can also disable the health check entirely for a service (not recommended
+for `postgres` or `redis`, since `backend` depends on them being healthy):
+
+```yaml
+services:
+  frontend:
+    healthcheck:
+      disable: true
+```
+
+**Tuning guidance:**
+
+| Situation | Recommended change |
+|-----------|-------------------|
+| Slow development machine (startup takes >15s) | Increase `start_period` for `backend` to 30–60s |
+| Flaky network causing spurious health check timeouts | Increase `timeout` to 15–20s |
+| Wanting faster feedback during active development | Decrease `interval` to 5–10s and `retries` to 2 |
+| CI environment with strict time budgets | Decrease `start_period` and `interval`; increase `retries` |
+| Production (tighter SLA for unhealthy detection) | Keep defaults or decrease `interval` to 15s |
 
 ---
 
@@ -57,27 +170,64 @@ prometheus ──┘  (prometheus depends on backend being up)
 
 ### Named volumes (persist across `docker-compose down`)
 
-| Volume | Service | Mount path | Description |
-|--------|---------|-----------|-------------|
-| `postgres_data` | `postgres` | `/var/lib/postgresql/data` | PostgreSQL data directory |
-| `redis-data` | `redis` | `/data` | Redis RDB/AOF persistence |
-| `loki-data` | `loki` | `/loki` | Loki log chunks |
-| `grafana-data` | `grafana` | `/var/lib/grafana` | Grafana dashboards and state |
-| `prometheus-data` | `prometheus` | `/prometheus` | Prometheus TSDB |
-| `cargo-cache` | `contract-builder` | `/usr/local/cargo/registry` | Rust dependency cache |
+| Volume | Service | Mount path | Purpose |
+|--------|---------|-----------|---------|
+| `postgres_data` | `postgres` | `/var/lib/postgresql/data` | PostgreSQL data files. All relational data (loans, collateral, users, migrations) lives here. Losing this volume is data loss. |
+| `redis-data` | `redis` | `/data` | Redis RDB snapshot and AOF journal. Used to cache TWAP oracle prices and store idempotency keys. Losing it causes a cold cache on restart — no data loss beyond in-flight cache entries. |
+| `loki-data` | `loki` | `/loki` | Loki log chunks and index. Losing it means historical logs are gone; new logs are written from the restart point. |
+| `grafana-data` | `grafana` | `/var/lib/grafana` | Grafana internal state: user accounts, manual dashboard edits, alert states, and organisation settings. Provisioned dashboards (from `grafana/dashboards/`) survive a volume reset because they are re-read from the bind-mounted directory. |
+| `prometheus-data` | `prometheus` | `/prometheus` | Prometheus TSDB blocks. Losing it resets all metric history. Active alerts may re-fire once Prometheus scrapes new data. |
+| `cargo-cache` | `contract-builder` | `/usr/local/cargo/registry` | Cached Rust crate downloads. Losing it only forces a re-download on the next build — no functional impact. |
 
-### Volume lifecycle
+### Read-only configuration bind mounts
+
+The observability services also receive several read-only bind mounts for
+configuration files. These are not named volumes — they are sourced directly
+from the repository and rebuilt from scratch whenever the files change:
+
+| Host path | Container path | Service |
+|-----------|---------------|---------|
+| `./observability/prometheus.yml` | `/etc/prometheus/prometheus.yml` | `prometheus` |
+| `./observability/prometheus-rules.yml` | `/etc/prometheus/rules/prometheus-rules.yml` | `prometheus` |
+| `./observability/grafana-datasources.yml` | `/etc/grafana/provisioning/datasources/datasources.yml` | `grafana` |
+| `./observability/grafana-dashboards.yml` | `/etc/grafana/provisioning/dashboards/dashboards.yml` | `grafana` |
+| `./grafana/dashboards` | `/var/lib/grafana/dashboards` | `grafana` |
+| `./observability/promtail-config.yml` | `/etc/promtail/config.yml` | `promtail` |
+
+Changes to these files take effect on the next container restart (or on a
+Prometheus config reload — see below). They do not require rebuilding images.
+
+### Volume lifecycle and reset procedures
 
 ```bash
-# Stop containers — volumes are preserved
+# Stop containers — all named volumes are preserved
 docker compose down
 
-# Stop containers AND delete all named volumes (destructive — loses DB data)
+# Stop containers AND delete all named volumes
+# WARNING: destroys postgres_data (all loan and collateral records),
+#          prometheus-data, loki-data, grafana-data, redis-data
 docker compose down -v
+
+# Remove a single volume without touching others
+docker volume rm stellarkraal_postgres_data
+
+# List all project volumes
+docker volume ls --filter name=stellarkraal
 ```
 
-> **Warning:** `docker compose down -v` permanently deletes the `postgres_data`
-> volume and all stored data. Only use it when you want a clean slate.
+**Selective reset procedures:**
+
+| Goal | Command |
+|------|---------|
+| Reset only the database (clean slate for development) | `docker compose down ; docker volume rm stellarkraal_-_postgres_data ; docker compose up` |
+| Reset Grafana customisations (keep provisioned dashboards) | `docker compose stop grafana ; docker volume rm stellarkraal_-_grafana-data ; docker compose start grafana` |
+| Reset Prometheus metric history | `docker compose stop prometheus ; docker volume rm stellarkraal_-_prometheus-data ; docker compose start prometheus` |
+| Flush the Redis cache (TWAP prices, idempotency keys) | `docker compose exec redis redis-cli FLUSHALL` — no volume removal needed |
+| Full clean slate (all data gone) | `docker compose down -v` |
+
+> **Warning:** `docker compose down -v` permanently deletes `postgres_data` and
+> all stored application data. Run migrations again after bringing the stack
+> back up: `docker compose exec backend npm run migrate:dev`.
 
 ---
 

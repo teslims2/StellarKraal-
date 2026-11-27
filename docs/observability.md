@@ -540,6 +540,55 @@ stated window.
 2. Look for long-running queries in the backend logs.
 3. If sustained, scale the pool size or investigate connection leaks.
 
+### Runbook: SLO_HighErrorRate
+
+**Meaning:** HTTP 5xx error rate exceeded 1% for 5 consecutive minutes (SLO breach).
+
+1. Open the **StellarKraal Backend** dashboard → error-rate panel to confirm
+   the spike and identify the affected `route`.
+2. In Grafana Explore, query the failing route's logs:
+   `{container="backend"} | json | level="error"`.
+3. Check backend health: `curl http://localhost:3001/api/v1/health`.
+4. If errors correlate with a recent deploy, roll back.
+5. If errors are DB-related, check the DB pool metrics (`db_pool_*`) and RDS status.
+6. If errors are contract-related, check the `stellarkraal_contract_rpc_duration_seconds`
+   histogram for elevated error counts — the RPC node may be degraded.
+
+### Runbook: SLO_HighP99Latency
+
+**Meaning:** p99 HTTP request latency exceeded 2 seconds for 5 consecutive minutes (SLO breach).
+
+1. Check the latency-percentile panel on the backend dashboard.
+2. Identify slow routes via `http_request_duration_seconds` breakdown by `route`.
+3. Inspect contract RPC latency with:
+   ```promql
+   histogram_quantile(0.99,
+     sum by (le, operation) (rate(stellarkraal_contract_rpc_duration_seconds_bucket[5m])))
+   ```
+4. Check DB pool saturation (`db_pool_*` metrics) — pool exhaustion inflates p99.
+5. If contract RPC latency is the bottleneck, verify `RPC_URL` points to a
+   low-latency endpoint and the circuit breaker is not repeatedly tripping.
+
+### Runbook: SLO_ContractRpcFailureRate
+
+**Meaning:** Soroban contract RPC call failure rate exceeded 5% for 5 consecutive minutes.
+
+1. Check the contract RPC error rate by operation:
+   ```promql
+   sum by (operation) (
+     rate(stellarkraal_contract_rpc_duration_seconds_count{status="error"}[5m]))
+   ```
+2. Identify which operation is failing (`request_loan`, `repay_loan`,
+   `liquidate`, `get_loan`, `health_factor`).
+3. Check the Soroban RPC node health:
+   `curl -s "$RPC_URL"/health`.
+4. Inspect backend logs for contract error codes:
+   `{container="backend"} | json | level="error" |= "contract"`.
+5. If the RPC node is down or degraded, failover to a backup endpoint or
+   contact the RPC provider.
+6. Check whether the circuit breaker (`opossum`) has opened — look for
+   `stellarkraal_alert_fired{rule="rpc-circuit-open"}`.
+
 > **Adding a runbook:** When you add a new alert, add a matching
 > `### Runbook: <AlertName>` section here and point the rule's
 > `runbook_url` annotation at its anchor.
@@ -682,3 +731,92 @@ sum(rate(contract_rpc_duration_seconds_count{status="error"}[5m]))
 Suggested alert: page when `active_loans_total{state="AtRisk"}` exceeds 20% of
 open loans for 15 minutes, or when p95 `contract_rpc_duration_seconds`
 exceeds 5 s for 10 minutes.
+
+#### Business-level metrics (`stellarkraal_` prefix)
+
+The metrics below use the `stellarkraal_` prefix to distinguish them from the
+infrastructure-level metrics above. They provide business-level observability
+for loan state transitions, contract RPC call durations by business operation,
+and the total active loan count. They are referenced by the SLO-based alert
+rules in [`observability/prometheus-rules.yml`](../observability/prometheus-rules.yml)
+(the `stellarkraal.slo` group).
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `stellarkraal_loan_state_transitions_total` | Counter | `from_state`, `to_state` | Incremented on every loan status change. Covers all transitions: `pending→active`, `active→repaid`, `active→liquidated`, `active→at_risk`, `at_risk→repaid`, `at_risk→liquidated`, `at_risk→active`. Instrumented in `logLoanStateTransition()` so both the state-machine `transition()` path and the direct `updateLoan()` store path are captured. |
+| `stellarkraal_contract_rpc_duration_seconds` | Histogram | `operation`, `status` (`success`, `error`) | Duration of Soroban contract RPC calls labelled by business operation: `request_loan`, `repay_loan`, `liquidate`, `get_loan`, `health_factor`, `get_twap_data`, `get_fee_config`. Buckets: 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10 s. Instrumented via `timeStellarkraalContractRpc()` in `loanService.ts`. |
+| `stellarkraal_active_loans_total` | Gauge | — | Current total number of active loans (status `active` or `at_risk`). A single scalar value (not segmented by state). Refreshed on every `/metrics` scrape alongside `active_loans_total`. |
+
+##### Example PromQL queries
+
+```promql
+# Loan state transition rate over the last hour, by transition type
+sum by (from_state, to_state) (increase(stellarkraal_loan_state_transitions_total[1h]))
+
+# Most common transition path (which loans are being liquidated vs repaid)
+topk(5, sum by (from_state, to_state) (
+  increase(stellarkraal_loan_state_transitions_total[24h])))
+
+# p99 contract RPC latency by business operation
+histogram_quantile(0.99,
+  sum by (le, operation) (
+    rate(stellarkraal_contract_rpc_duration_seconds_bucket[5m])
+  ))
+
+# Contract RPC error rate by operation
+sum by (operation) (
+  rate(stellarkraal_contract_rpc_duration_seconds_count{status="error"}[5m])
+)
+  /
+clamp_min(
+  sum by (operation) (
+    rate(stellarkraal_contract_rpc_duration_seconds_count[5m])
+  ), 1e-9
+)
+
+# Overall contract RPC failure rate (used by SLO_ContractRpcFailureRate alert)
+sum(rate(stellarkraal_contract_rpc_duration_seconds_count{status="error"}[5m]))
+  / clamp_min(sum(rate(stellarkraal_contract_rpc_duration_seconds_count[5m])), 1e-9)
+
+# Current active loan count (scalar)
+stellarkraal_active_loans_total
+
+# Active loan count trend (rate of change per minute)
+deriv(stellarkraal_active_loans_total[1h])
+
+# Liquidation rate as a share of all transitions from active
+sum(increase(stellarkraal_loan_state_transitions_total{from_state="active",to_state="liquidated"}[24h]))
+  / clamp_min(
+    sum(increase(stellarkraal_loan_state_transitions_total{from_state="active"}[24h])), 1
+  )
+```
+
+##### SLO alert rules
+
+The SLO-based alert rules live in the `stellarkraal.slo` group in
+[`observability/prometheus-rules.yml`](../observability/prometheus-rules.yml).
+Unlike the push-based `stellarkraal_alert_fired` rules, these evaluate
+directly against Prometheus metrics and do not depend on the backend's
+`fireAlert()` function.
+
+| Alert | SLO | Condition | `for` | Severity |
+|-------|-----|-----------|-------|----------|
+| `SLO_HighErrorRate` | Error rate ≤ 1% | `5xx rate > 1%` over 5m window | 5m | critical |
+| `SLO_HighP99Latency` | p99 latency ≤ 2s | `p99 latency > 2s` over 5m window | 5m | critical |
+| `SLO_ContractRpcFailureRate` | RPC failure ≤ 5% | `RPC error rate > 5%` over 5m window | 5m | critical |
+
+Unit tests for these rules are in
+[`observability/tests/slo-rules_test.yml`](../observability/tests/slo-rules_test.yml).
+Run them with:
+
+```bash
+promtool test rules observability/tests/slo-rules_test.yml
+```
+
+Validate rule syntax with:
+
+```bash
+promtool check rules observability/prometheus-rules.yml
+```
+
+---
