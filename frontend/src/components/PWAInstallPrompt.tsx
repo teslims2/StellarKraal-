@@ -1,4 +1,7 @@
-import { useEffect, useState } from 'react';
+"use client";
+
+import { useEffect, useRef, useState } from 'react';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -17,6 +20,15 @@ function isStandalone(): boolean {
 export default function PWAInstallPrompt() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [visible, setVisible] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  useDialogFocus({
+    isOpen: visible,
+    containerRef: dialogRef,
+    headingRef,
+    onEscape: () => handleDismiss(),
+  });
 
   useEffect(() => {
     if (isStandalone()) return;
@@ -74,12 +86,15 @@ export default function PWAInstallPrompt() {
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
-      aria-label="Install app"
+      aria-labelledby="pwa-install-title"
       className="fixed inset-x-0 bottom-0 z-50 mx-auto mb-4 flex max-w-md items-center gap-3 rounded-lg border border-gray-200 bg-white p-4 shadow-lg dark:border-gray-700 dark:bg-gray-800"
     >
       <div className="flex-1">
-        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Install this app</p>
+        <h2 id="pwa-install-title" ref={headingRef} tabIndex={-1} className="text-sm font-medium text-gray-900 dark:text-gray-100">
+          Install this app
+        </h2>
         <p className="text-xs text-gray-500 dark:text-gray-400">
           Add it to your home screen for a faster, offline-ready experience.
         </p>

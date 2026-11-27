@@ -108,7 +108,7 @@ import { apiKeyRouter } from './middleware/apiKey';
 import { deduplicationMiddleware } from './middleware/deduplication';
 import { v2Router } from './routes/v2';
 import { createGraphQLMiddleware } from './graphql/server';
-import { registry, httpActiveConnections, httpRequestDurationSeconds, httpRequestsTotal, updateActiveLoansGauge } from './metrics';
+import { registry, httpActiveConnections, httpRequestDurationSeconds, httpRequestsTotal, updateActiveLoansGauge, updateStellarkraalActiveLoansGauge } from './metrics';
 import { fireAlert } from './utils/alerting';
 import { rules } from './utils/alertRules';
 import { healthRouter } from './routes/health';
@@ -217,7 +217,9 @@ app.use('/api/v1/health', healthRouter);
  */
 app.get('/metrics', metricsAuthMiddleware, async (_req: Request, res: Response) => {
   try {
-    updateActiveLoansGauge(listActiveLoans());
+    const activeLoans = listActiveLoans();
+    updateActiveLoansGauge(activeLoans);
+    updateStellarkraalActiveLoansGauge(activeLoans);
     res.set('Content-Type', registry.contentType);
     res.end(await registry.metrics());
   } catch (err) {

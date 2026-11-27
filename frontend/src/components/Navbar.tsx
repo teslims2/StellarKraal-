@@ -25,9 +25,13 @@ import { useAtRiskLoans } from '@/hooks/useAtRiskLoans';
 import NotificationBadge from '@/components/NotificationBadge';
 import { NotificationBell, NotificationDrawer } from '@/components/NotificationDrawer';
 import { useNotifications } from '@/hooks/useNotifications';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { useShortcutsHelp } from '@/components/KeyboardShortcutsProvider';
 // i18n — Issue #1207
 import LanguageSwitcher from '@/components/LanguageSwitcher';
+// Wallet balance in nav — Issue #1428
+import { useWalletBalance } from '@/hooks/useWalletBalance';
+import { formatXlm } from '@/lib/formatMoney';
 
 const JWT_COOKIE_NAME = 'session';
 
@@ -83,6 +87,8 @@ export default function Navbar() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
+  const drawerHeadingRef = useRef<HTMLHeadingElement>(null);
+  const notificationBellRef = useRef<HTMLButtonElement>(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const walletDropdownRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
@@ -96,6 +102,18 @@ export default function Navbar() {
   const shortcutsHelp = useShortcutsHelp();
   const { notifications, unreadCount, markRead, markAllRead, dismiss, dismissAll } =
     useNotifications();
+  // Issue #1428 — wallet balance in nav
+  const { xlmBalance, loading: balanceLoading } = useWalletBalance(address);
+
+  // Move focus to the drawer heading, keep Tab inside the drawer and restore
+  // focus to the hamburger button on close — Issue #1454.
+  useDialogFocus({
+    isOpen: drawerOpen,
+    containerRef: drawerRef,
+    headingRef: drawerHeadingRef,
+    triggerRef: menuButtonRef,
+    onEscape: () => setDrawerOpen(false),
+  });
 
   /**
    * Full auth-clearing disconnect — Issue #1208 / #1509.
@@ -140,23 +158,15 @@ export default function Navbar() {
     setDrawerOpen(false);
   }, [pathname]);
 
-  // Mobile drawer: move focus into the panel on open, close on Escape or outside click — #1498.
+  // Mobile drawer: lock background scroll and close on outside click — #1498.
+  // Focus movement, trapping and restoration are handled by useDialogFocus.
   useEffect(() => {
     if (!drawerOpen) {
       document.body.style.overflow = '';
       return;
     }
 
-    // Prevent background scroll while the drawer is open.
     document.body.style.overflow = 'hidden';
-    drawerRef.current?.querySelector<HTMLElement>('a, button')?.focus();
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        setDrawerOpen(false);
-        menuButtonRef.current?.focus();
-      }
-    }
 
     function handlePointerDown(event: MouseEvent) {
       const target = event.target as Node;
@@ -165,11 +175,9 @@ export default function Navbar() {
       }
     }
 
-    document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('mousedown', handlePointerDown);
     return () => {
       document.body.style.overflow = '';
-      document.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('mousedown', handlePointerDown);
     };
   }, [drawerOpen]);
@@ -244,6 +252,30 @@ export default function Navbar() {
 
           {/* Right side: shortcuts help + notification bell + theme toggle + hamburger */}
           <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+            {/* Wallet XLM balance — Issue #1428: visible when connected, hidden otherwise */}
+            {address && (
+              <div
+                aria-label="Wallet XLM balance"
+                className="hidden sm:flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium"
+                style={{
+                  backgroundColor: 'color-mix(in srgb, var(--token-primary) 10%, transparent)',
+                  color: 'var(--token-primary)',
+                }}
+              >
+                <Icon icon={Wallet} size="xs" aria-hidden="true" className="text-current shrink-0" />
+                {balanceLoading ? (
+                  <span
+                    aria-label="Loading balance"
+                    className="inline-block h-3 w-14 animate-pulse rounded"
+                    style={{ backgroundColor: 'color-mix(in srgb, var(--token-primary) 20%, transparent)' }}
+                  />
+                ) : xlmBalance !== null ? (
+                  <span data-testid="nav-xlm-balance">{formatXlm(Number(xlmBalance))} XLM</span>
+                ) : (
+                  <span aria-label="Balance unavailable">—</span>
+                )}
+              </div>
+            )}
             {/* Keyboard shortcuts trigger — #531 */}
             <button
               onClick={() => shortcutsHelp?.openShortcutsHelp()}
@@ -261,6 +293,7 @@ export default function Navbar() {
 
             {/* Notification bell — #1066 */}
             <NotificationBell
+              buttonRef={notificationBellRef}
               unreadCount={unreadCount}
               onClick={() => setNotifOpen((v) => !v)}
               isOpen={notifOpen}
@@ -270,6 +303,7 @@ export default function Navbar() {
             <NotificationDrawer
               open={notifOpen}
               onClose={() => setNotifOpen(false)}
+              triggerRef={notificationBellRef}
               notifications={notifications}
               unreadCount={unreadCount}
               onMarkRead={markRead}
@@ -281,7 +315,7 @@ export default function Navbar() {
             {/* Theme toggle — visible on all screen sizes */}
             <ThemeToggle />
 
-            {/* Hamburger toggle — mobile only (#1498) */}
+            {/* Hamburger toggle — tablet only; phones use the bottom tab bar (#1088) */}
             <button
               ref={menuButtonRef}
               type="button"
@@ -289,7 +323,7 @@ export default function Navbar() {
               aria-expanded={drawerOpen}
               aria-controls={MOBILE_DRAWER_ID}
               aria-label={drawerOpen ? 'Close navigation menu' : 'Open navigation menu'}
-              className="lg:hidden flex items-center justify-center min-h-[44px] min-w-[44px] rounded-lg transition hover:bg-[var(--color-border)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--token-accent)]"
+              className="hidden md:flex lg:hidden items-center justify-center min-h-[44px] min-w-[44px] rounded-lg transition hover:bg-[var(--color-border)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--token-accent)]"
               style={{ color: 'var(--color-text)' }}
             >
               <Icon icon={drawerOpen ? X : Menu} size="md" className="text-current" />
@@ -320,7 +354,7 @@ export default function Navbar() {
       {/* Backdrop */}
       <div
         aria-hidden="true"
-        className={`lg:hidden fixed inset-0 z-40 transition-opacity duration-300 ${
+        className={`hidden md:block lg:hidden fixed inset-0 z-40 transition-opacity duration-300 ${
           drawerOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
         }`}
         style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
@@ -334,7 +368,7 @@ export default function Navbar() {
         aria-modal="true"
         aria-label="Navigation menu"
         className={[
-          'lg:hidden fixed top-0 right-0 h-[100dvh] w-72 max-w-[85vw] z-50 flex flex-col',
+          'hidden md:flex lg:hidden fixed top-0 right-0 h-[100dvh] w-72 max-w-[85vw] z-50 flex-col',
           'shadow-2xl transition-transform duration-300 ease-in-out',
           drawerOpen ? 'translate-x-0' : 'translate-x-full',
         ].join(' ')}
@@ -348,6 +382,15 @@ export default function Navbar() {
           className="flex items-center justify-between px-4 h-14 border-b shrink-0"
           style={{ borderColor: 'var(--color-nav-border)' }}
         >
+          {/* Screen-reader heading that receives focus when the drawer opens (#1454). */}
+          <h2
+            ref={drawerHeadingRef}
+            id="mobile-nav-drawer-title"
+            tabIndex={-1}
+            className="sr-only"
+          >
+            Navigation menu
+          </h2>
           <Link
             href="/"
             onClick={() => setDrawerOpen(false)}

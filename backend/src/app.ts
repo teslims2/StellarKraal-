@@ -16,7 +16,37 @@ import healthRoutes from './routes/health';
 const app = express();
 
 // Security and utility middleware
-app.use(helmet());
+const isProduction = config.NODE_ENV === 'production';
+app.disable('x-powered-by');
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        baseUri: ["'self'"],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'", 'https:', 'data:'],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+        imgSrc: ["'self'", 'data:', 'https:'],
+        objectSrc: ["'none'"],
+        scriptSrc: ["'self'"],
+        scriptSrcAttr: ["'none'"],
+        styleSrc: ["'self'"],
+      },
+    },
+    frameguard: { action: 'deny' },
+    hsts: isProduction ? { maxAge: 31_536_000, includeSubDomains: true } : false,
+    hidePoweredBy: true,
+    noSniff: true,
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  })
+);
+app.use((_req, res, next) => {
+  res.removeHeader('Server');
+  res.removeHeader('X-Powered-By');
+  next();
+});
 app.use(cors({ origin: config.corsOrigin, credentials: true }));
 app.use(compression());
 app.use(express.json({ limit: '10mb' }));

@@ -1,0 +1,186 @@
+{
+  "title": "StellarKraal — Loan Lifecycle",
+  "uid": "stellarkraal-loan-lifecycle",
+  "description": "End-to-end visibility into loan creation, repayment, liquidation, and collateral events. Provisioned via grafana/dashboards/ — do not edit in the UI.",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Loans Created (per minute)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(loans_created_total[1m]))",
+          "legendFormat": "loans/min"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0 }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Repayments (per minute)",
+      "type": "timeseries",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(loan_repayments_total[1m]))",
+          "legendFormat": "repayments/min"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0 }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Liquidations (per minute)",
+      "type": "timeseries",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(loan_liquidations_total[1m]))",
+          "legendFormat": "liquidations/min"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0 },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "liquidations/min" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+          }
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "title": "Active Loans (current count)",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 8, "w": 6, "h": 6 },
+      "targets": [
+        {
+          "expr": "loans_active_total",
+          "legendFormat": "active"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0 }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Overdue Loans (health factor < 1.0)",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 8, "w": 6, "h": 6 },
+      "targets": [
+        {
+          "expr": "loans_overdue_total",
+          "legendFormat": "overdue"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Total Collateral Registered",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 8, "w": 6, "h": 6 },
+      "targets": [
+        {
+          "expr": "collateral_registered_total",
+          "legendFormat": "collateral items"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0 }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Collateral Seizures (per minute)",
+      "type": "stat",
+      "gridPos": { "x": 18, "y": 8, "w": 6, "h": 6 },
+      "targets": [
+        {
+          "expr": "sum(rate(collateral_seizures_total[1m]))",
+          "legendFormat": "seizures/min"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.01 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Loan Status Breakdown",
+      "type": "piechart",
+      "gridPos": { "x": 0, "y": 14, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "loans_by_status",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "On-Chain Transaction Latency (p50 / p95)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 14, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(onchain_tx_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(onchain_tx_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Loan Event Stream (last 100)",
+      "type": "logs",
+      "gridPos": { "x": 0, "y": 22, "w": 24, "h": 8 },
+      "targets": [
+        {
+          "expr": "{service=\"backend\"} | json | event_type=~\"loan_created|loan_repaid|loan_liquidated|collateral_registered\"",
+          "legendFormat": ""
+        }
+      ]
+    }
+  ]
+}

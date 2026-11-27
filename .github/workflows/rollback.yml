@@ -1,0 +1,223 @@
+name: ECS Rollback
+
+# Triggered manually from the GitHub Actions UI.
+# Reverts the ECS service to a specific task-definition revision, or to the
+# previous revision when no tag is supplied (closes #1456).
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: >
+          ECR image tag to roll back to (e.g. abc1234). Leave blank to revert
+          to the previous ECS task-definition revision automatically.
+        required: false
+        default: ''
+      reason:
+        description: 'Short description of why this rollback is being triggered'
+        required: false
+        default: 'Manual rollback'
+
+# Production rollbacks must NEVER be cancelled mid-flight.
+concurrency:
+  group: rollback-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    name: Roll back ECS service
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required for OIDC-based AWS authentication
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Notify Slack — rollback started ────────────────────────────────
+      - name: Notify Slack — rollback started
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL not set; skipping notification"
+            exit 0
+          fi
+          TARGET="${{ inputs.image_tag }}"
+          if [ -z "$TARGET" ]; then
+            TARGET="previous revision (auto)"
+          fi
+          curl -sS -X POST -H 'Content-type: application/json' \
+            --data "{
+              \"text\": \":rewind: *ECS Rollback started* — ${{ github.repository }}\",
+              \"attachments\": [{
+                \"color\": \"warning\",
+                \"fields\": [
+                  {\"title\": \"Environment\",   \"value\": \"production\",                              \"short\": true},
+                  {\"title\": \"Target\",         \"value\": \"${TARGET}\",                              \"short\": true},
+                  {\"title\": \"Triggered by\",   \"value\": \"${{ github.actor }}\",                    \"short\": true},
+                  {\"title\": \"Reason\",         \"value\": \"${{ inputs.reason }}\",                   \"short\": true},
+                  {\"title\": \"Workflow run\",   \"value\": \"<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>\", \"short\": false}
+                ]
+              }]
+            }" \
+            "$SLACK_WEBHOOK_URL"
+
+      # ── 3. Configure AWS credentials ──────────────────────────────────────
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # ── 4. Determine target task-definition revision ───────────────────────
+      # When an image tag is supplied, build a new task-definition that pins
+      # that tag. Otherwise, find the previous active revision number and
+      # deploy it directly (no image rebuild required).
+      - name: Determine rollback target
+        id: target
+        env:
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$IMAGE_TAG" ]; then
+            echo "mode=image" >> "$GITHUB_OUTPUT"
+            echo "image=${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+            echo "Using supplied image tag: ${IMAGE_TAG}"
+          else
+            # List the two most-recent ACTIVE revisions and pick the second one.
+            REVISIONS=$(aws ecs list-task-definitions \
+              --family-prefix "$ECS_TASK_DEFINITION" \
+              --status ACTIVE \
+              --sort DESC \
+              --query 'taskDefinitionArns[:2]' \
+              --output text)
+
+            CURRENT_ARN=$(echo "$REVISIONS" | awk '{print $1}')
+            PREVIOUS_ARN=$(echo "$REVISIONS" | awk '{print $2}')
+
+            if [ -z "$PREVIOUS_ARN" ]; then
+              echo "::error::No previous task-definition revision found. Cannot auto-rollback."
+              exit 1
+            fi
+
+            echo "mode=revision" >> "$GITHUB_OUTPUT"
+            echo "task_def_arn=${PREVIOUS_ARN}" >> "$GITHUB_OUTPUT"
+            echo "Current ARN:  ${CURRENT_ARN}"
+            echo "Previous ARN: ${PREVIOUS_ARN}"
+          fi
+
+      # ── 5a. (image-tag mode) Render new task-definition with rolled-back image ─
+      - name: Download current task definition (image-tag mode)
+        if: steps.target.outputs.mode == 'image'
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${{ secrets.ECS_TASK_DEFINITION }}" \
+            --query taskDefinition > task-definition.json
+
+      - name: Render rolled-back task definition (image-tag mode)
+        id: render-task-def
+        if: steps.target.outputs.mode == 'image'
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ secrets.ECS_CONTAINER_NAME }}
+          image: ${{ steps.target.outputs.image }}
+
+      # ── 5b. (revision mode) Deploy the previous revision directly ─────────
+      - name: Deploy previous task-definition revision
+        if: steps.target.outputs.mode == 'revision'
+        run: |
+          set -euo pipefail
+          aws ecs update-service \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --service "${{ secrets.ECS_SERVICE }}" \
+            --task-definition "${{ steps.target.outputs.task_def_arn }}" \
+            --force-new-deployment \
+            --query 'service.{serviceName:serviceName,taskDef:taskDefinition,status:status}' \
+            --output table
+
+          echo "Waiting for service stability…"
+          aws ecs wait services-stable \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --services "${{ secrets.ECS_SERVICE }}"
+
+      # ── 5a-cont. (image-tag mode) Deploy the rendered task-definition ─────
+      - name: Deploy rolled-back image to ECS (image-tag mode)
+        if: steps.target.outputs.mode == 'image'
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+          service: ${{ secrets.ECS_SERVICE }}
+          cluster: ${{ secrets.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      # ── 6. Capture final deployed revision for the Slack summary ──────────
+      - name: Capture deployed revision
+        id: deployed
+        if: success()
+        run: |
+          REVISION=$(aws ecs describe-services \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --services "${{ secrets.ECS_SERVICE }}" \
+            --query 'services[0].taskDefinition' \
+            --output text)
+          echo "revision=${REVISION}" >> "$GITHUB_OUTPUT"
+
+      # ── 7. Notify Slack — rollback succeeded ──────────────────────────────
+      - name: Notify Slack — rollback succeeded
+        if: success()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL not set; skipping notification"
+            exit 0
+          fi
+          DEPLOYED_REV="${{ steps.deployed.outputs.revision }}"
+          curl -sS -X POST -H 'Content-type: application/json' \
+            --data "{
+              \"text\": \":white_check_mark: *ECS Rollback succeeded* — ${{ github.repository }}\",
+              \"attachments\": [{
+                \"color\": \"good\",
+                \"fields\": [
+                  {\"title\": \"Environment\",        \"value\": \"production\",                              \"short\": true},
+                  {\"title\": \"Deployed revision\",  \"value\": \"${DEPLOYED_REV}\",                        \"short\": true},
+                  {\"title\": \"Triggered by\",        \"value\": \"${{ github.actor }}\",                    \"short\": true},
+                  {\"title\": \"Reason\",              \"value\": \"${{ inputs.reason }}\",                   \"short\": true},
+                  {\"title\": \"Workflow run\",        \"value\": \"<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>\", \"short\": false}
+                ]
+              }]
+            }" \
+            "$SLACK_WEBHOOK_URL"
+
+      # ── 8. Notify Slack — rollback failed ─────────────────────────────────
+      - name: Notify Slack — rollback failed
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL not set; skipping notification"
+            exit 0
+          fi
+          curl -sS -X POST -H 'Content-type: application/json' \
+            --data "{
+              \"text\": \":x: *ECS Rollback FAILED* — ${{ github.repository }}\",
+              \"attachments\": [{
+                \"color\": \"danger\",
+                \"fields\": [
+                  {\"title\": \"Environment\",   \"value\": \"production\",  \"short\": true},
+                  {\"title\": \"Triggered by\",   \"value\": \"${{ github.actor }}\",  \"short\": true},
+                  {\"title\": \"Reason\",         \"value\": \"${{ inputs.reason }}\", \"short\": true},
+                  {\"title\": \"Failed run\",     \"value\": \"<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>\", \"short\": false}
+                ]
+              }]
+            }" \
+            "$SLACK_WEBHOOK_URL"

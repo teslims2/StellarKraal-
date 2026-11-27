@@ -292,7 +292,9 @@ cap prevents this, multiple sequential calls are required.
 3. **Preview the outcome.** Use `POST /loan/repayment-preview` to confirm the
    debt/collateral split before committing.
 4. **Trigger the liquidation.** Call `POST /loan/liquidate` with the loan ID and
-   the chosen `debtRepaid` amount. The endpoint repays the debt, seizes
+   optionally the chosen `debtRepaid` amount. Omitting the amount, or providing
+   the full outstanding debt, performs a full liquidation; a smaller amount
+   performs a partial liquidation and proportionally retains collateral. The endpoint repays the debt, seizes
    `debtRepaid × (1 + liquidationBonus)` of collateral, and records the
    transaction.
 5. **Profit.** The liquidator's gain is the bonus portion of the seized

@@ -36,10 +36,6 @@ interface CollateralListResponse {
   meta?: PaginationMeta;
 }
 
-interface OwnerCollateralResponse {
-  collaterals?: Collateral[];
-}
-
 const DEFAULT_META: PaginationMeta = { total: 0, page: 1, limit: 10, pages: 1 };
 
 function buildCollateralKey(params: CollateralListParams): string {
@@ -77,11 +73,12 @@ export function useCollateral(params: CollateralListParams) {
  * the request until a wallet address is connected.
  */
 export function useOwnerCollateral(owner: string | null) {
-  const key = owner ? `${API}/api/collateral/list?owner=${owner}` : null;
-  const { data, error, isLoading, mutate } = useSWR<OwnerCollateralResponse>(key, fetcher);
-
+  const key = owner
+    ? `${API}/api/collateral?ownerId=${encodeURIComponent(owner)}&page=1&limit=100`
+    : null;
+  const { data, error, isLoading, mutate } = useSWR<CollateralListResponse>(key, fetcher);
   return {
-    collaterals: data?.collaterals ?? [],
+    collaterals: Array.isArray(data?.data) ? data.data : [],
     isLoading,
     error: error ? (error as Error).message : null,
     refresh: () => mutate(),

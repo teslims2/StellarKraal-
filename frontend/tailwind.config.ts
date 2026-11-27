@@ -16,6 +16,9 @@ const config: Config = {
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
     "./lib/**/*.{js,ts,jsx,tsx,mdx}",
   ],
+  // Use the class strategy so the ThemeProvider can apply "dark" to <html>
+  // and avoid a flash of wrong theme on first paint.
+  darkMode: "class",
   theme: {
     extend: {
       colors: {

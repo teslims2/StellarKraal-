@@ -49,6 +49,7 @@ import {
   listLoansPaginated,
   LoanNotFoundError,
   LoanNotLiquidatableError,
+  LoanLiquidationAmountError,
   InvalidPaginationError,
 } from '../services/loanService';
 const APP_VERSION = process.env['npm_package_version'] || '1.0.0';
@@ -217,6 +218,9 @@ v1Router.post(
       }
       if (err instanceof LoanNotLiquidatableError) {
         return res.status(400).json({ error: err.message, health_factor: err.healthFactor });
+      }
+      if (err instanceof LoanLiquidationAmountError) {
+        return res.status(400).json({ error: err.message });
       }
       throw err;
     }

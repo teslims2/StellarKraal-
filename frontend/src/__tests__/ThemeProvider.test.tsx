@@ -46,8 +46,8 @@ describe('ThemeProvider (#572 – hydration)', () => {
   });
 });
 
-// #528: dark mode toggle persistence
-describe('ThemeScript (#528 – read-from-storage & system-preference fallback)', () => {
+// #528 / #1424: dark mode toggle persistence and system preference fallback
+describe('ThemeScript (#528 / #1424 – read-from-storage & system-preference fallback)', () => {
   afterEach(() => {
     document.documentElement.classList.remove('dark');
     localStorage.clear();
@@ -67,6 +67,20 @@ describe('ThemeScript (#528 – read-from-storage & system-preference fallback)'
     expect(document.documentElement.classList.contains('dark')).toBe(false);
   });
 
+  it('falls back to system preference (dark) when stored as "system"', () => {
+    localStorage.setItem('theme', 'system');
+    mockMatchMedia(true);
+    runThemeScript();
+    expect(document.documentElement.classList.contains('dark')).toBe(true);
+  });
+
+  it('falls back to system preference (light) when stored as "system"', () => {
+    localStorage.setItem('theme', 'system');
+    mockMatchMedia(false);
+    runThemeScript();
+    expect(document.documentElement.classList.contains('dark')).toBe(false);
+  });
+
   it('falls back to system preference (dark) when nothing is stored', () => {
     mockMatchMedia(true);
     runThemeScript();
@@ -80,46 +94,77 @@ describe('ThemeScript (#528 – read-from-storage & system-preference fallback)'
   });
 });
 
-describe('ThemeProvider (#528 – reads the class already applied by ThemeScript)', () => {
+describe('ThemeProvider (#528 / #1424 – reads the class already applied by ThemeScript)', () => {
   afterEach(() => {
     document.documentElement.classList.remove('dark');
+    localStorage.clear();
   });
 
   function ThemeLabel() {
-    const { theme } = useTheme();
-    return <span>{theme}</span>;
+    const { theme, mode } = useTheme();
+    return <span>{`${theme}:${mode}`}</span>;
   }
 
   it('picks up "dark" when ThemeScript has already applied the class before hydration', () => {
     document.documentElement.classList.add('dark');
+    localStorage.setItem('theme', 'dark');
     render(
       <ThemeProvider>
         <ThemeLabel />
       </ThemeProvider>
     );
-    expect(screen.getByText('dark')).toBeTruthy();
+    expect(screen.getByText('dark:dark')).toBeTruthy();
   });
 
   it('picks up "light" when no class was applied', () => {
+    localStorage.setItem('theme', 'light');
     render(
       <ThemeProvider>
         <ThemeLabel />
       </ThemeProvider>
     );
-    expect(screen.getByText('light')).toBeTruthy();
+    expect(screen.getByText('light:light')).toBeTruthy();
   });
 
-  it('writes the toggled preference to localStorage under the "theme" key', () => {
+  it('writes the toggled preference to localStorage and cycles light→dark→system', () => {
+    localStorage.setItem('theme', 'light');
+    document.documentElement.classList.remove('dark');
+
     function ToggleButton() {
-      const { toggle } = useTheme();
-      return <button onClick={toggle}>toggle</button>;
+      const { toggle, mode } = useTheme();
+      return <button onClick={toggle}>{mode}</button>;
     }
     render(
       <ThemeProvider>
         <ToggleButton />
       </ThemeProvider>
     );
-    fireEvent.click(screen.getByText('toggle'));
+
+    // light → dark
+    fireEvent.click(screen.getByText('light'));
     expect(localStorage.getItem('theme')).toBe('dark');
+
+    // dark → system
+    fireEvent.click(screen.getByText('dark'));
+    expect(localStorage.getItem('theme')).toBe('system');
+
+    // system → light
+    fireEvent.click(screen.getByText('system'));
+    expect(localStorage.getItem('theme')).toBe('light');
+  });
+
+  it('setMode("dark") applies dark class and persists the choice', () => {
+    function SetDarkButton() {
+      const { setMode } = useTheme();
+      return <button onClick={() => setMode('dark')}>set dark</button>;
+    }
+    render(
+      <ThemeProvider>
+        <SetDarkButton />
+      </ThemeProvider>
+    );
+    fireEvent.click(screen.getByText('set dark'));
+    expect(localStorage.getItem('theme')).toBe('dark');
+    expect(document.documentElement.classList.contains('dark')).toBe(true);
   });
 });

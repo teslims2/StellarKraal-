@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
 import Link from "next/link";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 
 interface HelpMenuProps {
   /** Called when the user clicks "Show Getting Started Guide" */
@@ -27,62 +28,17 @@ interface HelpMenuProps {
  */
 export default function HelpMenu({ onShowOnboarding, isOpen, onClose }: HelpMenuProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const titleId = "help-panel-title";
 
-  // ── Focus trap ──────────────────────────────────────────────────────────────
-  const trapFocus = useCallback((e: KeyboardEvent) => {
-    if (!panelRef.current) return;
-
-    const focusableSelectors = [
-      "a[href]",
-      "button:not([disabled])",
-      "input:not([disabled])",
-      "select:not([disabled])",
-      "textarea:not([disabled])",
-      '[tabindex]:not([tabindex="-1"])',
-    ].join(", ");
-
-    const focusable = Array.from(
-      panelRef.current.querySelectorAll<HTMLElement>(focusableSelectors)
-    ).filter((el) => el.offsetParent !== null); // only visible elements
-
-    if (focusable.length === 0) return;
-
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-
-    if (e.key === "Tab") {
-      if (e.shiftKey) {
-        if (document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        }
-      } else {
-        if (document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    }
-
-    if (e.key === "Escape") {
-      onClose();
-    }
-  }, [onClose]);
-
-  // Attach / detach keyboard handler when panel opens / closes
-  useEffect(() => {
-    if (!isOpen) return;
-
-    // Move focus into the panel
-    const firstFocusable = panelRef.current?.querySelector<HTMLElement>(
-      "button, a[href], [tabindex]:not([tabindex='-1'])"
-    );
-    firstFocusable?.focus();
-
-    document.addEventListener("keydown", trapFocus);
-    return () => document.removeEventListener("keydown", trapFocus);
-  }, [isOpen, trapFocus]);
+  // Focus the heading on open, trap Tab in the panel and restore focus to the
+  // trigger on close — Issue #1454.
+  useDialogFocus({
+    isOpen,
+    containerRef: panelRef,
+    headingRef,
+    onEscape: onClose,
+  });
 
   // Prevent body scroll while panel is open
   useEffect(() => {
@@ -121,6 +77,8 @@ export default function HelpMenu({ onShowOnboarding, isOpen, onClose }: HelpMenu
         <div className="flex items-center justify-between border-b border-brown/20 px-6 py-4 dark:border-brown/40">
           <h2
             id={titleId}
+            ref={headingRef}
+            tabIndex={-1}
             className="text-lg font-semibold text-brown dark:text-cream-100"
           >
             Help &amp; Support

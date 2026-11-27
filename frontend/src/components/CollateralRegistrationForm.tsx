@@ -21,6 +21,7 @@ import {
 } from '@/components/ui';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { useTransactionStatus, type TransactionStatus } from '@/hooks/useTransactionStatus';
+import TransactionProgress from '@/components/TransactionProgress';
 
 interface Props {
   walletAddress: string;
@@ -424,7 +425,7 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
     setPendingHash(null);
   }
 
-  useTransactionStatus(pendingHash, {
+  const transactionStatus = useTransactionStatus(pendingHash, {
     interval: 3000,
     onTerminal: handleTxTerminal,
   });
@@ -781,17 +782,7 @@ export default function CollateralRegistrationForm({ walletAddress, onSuccess }:
         </div>
       )}
 
-      {pendingHash && (
-        <div
-          className="p-3 rounded-xl text-sm bg-amber-50 border border-amber-200 text-amber-800"
-          role="status"
-          aria-live="polite"
-        >
-          <p className="font-medium">Transaction pending confirmation...</p>
-          <p className="font-mono text-xs mt-1 break-all">{pendingHash}</p>
-          {pendingError && <p className="text-red-600 mt-1">{pendingError}</p>}
-        </div>
-      )}
+      {pendingHash && <TransactionProgress phase={transactionStatus} hash={pendingHash} error={pendingError} />}
 
       <ConfirmDialog
         open={showConfirm}

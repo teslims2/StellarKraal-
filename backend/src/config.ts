@@ -38,6 +38,29 @@ const envSchema = z.object({
     .default('300000'),
   // JWT secret (min 32 chars recommended)
   JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters').optional(),
+  /**
+   * JSON array of versioned JWT signing keys for key rotation without
+   * invalidating active sessions. Each entry is an object with:
+   *   { "kid": "<version-id>", "secret": "<min-32-char-secret>", "validUntil"?: <unix-epoch-ms> }
+   *
+   * The first key in the array is used to sign new tokens. All keys in the
+   * array (subject to their optional validUntil expiry) are accepted when
+   * verifying incoming tokens.
+   *
+   * When JWT_KEYS is set it takes precedence over JWT_SECRET. The JWT_SECRET
+   * value is used as a fallback single key (kid="v1") when JWT_KEYS is absent.
+   *
+   * Example (JSON-encoded environment variable):
+   *   JWT_KEYS='[{"kid":"v2","secret":"new-secret-min-32-chars-long!!!"},{"kid":"v1","secret":"old-secret-min-32-chars-long!!!","validUntil":1700000000000}]'
+   */
+  JWT_KEYS: z.string().optional(),
+  /**
+   * Grace period in milliseconds for old key versions after rotation.
+   * Keys without an explicit validUntil are valid for this duration after a
+   * new key is added. Defaults to 7 days (604800000 ms).
+   * @default 604800000
+   */
+  JWT_KEY_GRACE_MS: z.string().regex(/^\d+$/, 'JWT_KEY_GRACE_MS must be a number').default('604800000'),
   /** Access token TTL in milliseconds. @default 900000 (15 min) */
   ACCESS_TTL_MS: z.string().regex(/^\d+$/, 'ACCESS_TTL_MS must be a number').default('900000'),
   /** Refresh token TTL in milliseconds. @default 604800000 (7 days) */

@@ -20,13 +20,27 @@
  * Unhandled events (Admin/*, fee/cfgUpd, whitelist/*, upgrade/*, TWAP/price,
  * Pause, Unpause, StaleThr) are logged at debug level but not persisted.
  * See docs/protocol/events.md §5–§23 for their full schemas.
+ *
+ * Ledger cursor persistence:
+ * On startup the listener reads the last processed ledger from the store via
+ * getLedgerCursor(contractId), falling back to GENESIS_LEDGER (default 0).
+ * After each successful poll the cursor is advanced to maxLedger + 1 and
+ * written back via setLedgerCursor so restarts resume without gaps.
  */
 
 import { rpc as SorobanRpc, xdr, Address, StrKey } from "@stellar/stellar-sdk";
 import { z } from "zod";
 import logger from "./utils/logger";
 import { rpcClient } from "./utils/rpcClient";
-import { insertCollateral, insertLoan, updateTransaction, updateLoan, insertLiquidationEvent, getLedgerCursor, setLedgerCursor } from "./db/store";
+import {
+  insertCollateral,
+  insertLoan,
+  updateTransaction,
+  updateLoan,
+  insertLiquidationEvent,
+  getLedgerCursor,
+  setLedgerCursor,
+} from "./db/store";
 
 const getContractId = () => process.env.CONTRACT_ID || "";
 const POLL_INTERVAL_MS = parseInt(process.env.EVENT_POLL_INTERVAL_MS || "5000", 10);
@@ -196,7 +210,13 @@ function handleEvent(event: SorobanRpc.Api.RawEventResponse): void {
     if (key === "collateral_registered") {
       // topics: [symbol("collateral_registered"), owner]
       // data: (id, animal_type, count, appraised_value)
-      const owner = (() => { try { return Address.fromScVal(topics[1]).toString(); } catch { return ""; } })();
+      const owner = (() => {
+        try {
+          return Address.fromScVal(topics[1]).toString();
+        } catch {
+          return "";
+        }
+      })();
       const vals = ((xdr.ScVal.fromXDR(event.value, "base64") as any).vec?.() ?? []) as any[];
       if (vals.length < 4) return;
       const id = vals[0].u64?.().toString() ?? "";
@@ -231,12 +251,136 @@ function handleEvent(event: SorobanRpc.Api.RawEventResponse): void {
       const interestPaid = Number(vals[2].i128?.().lo ?? 0);
       const repayAmount = principalPaid + interestPaid;
       updateTransaction(id, { status: "completed", amount: repayAmount });
-      logEvent("contract.event.loan_repaid_synced", event, { id, repayAmount, principalPaid, interestPaid });
-    } else if (key === "loan/liquidated") {
-      // data: (loan_id, liquidator, repay_amount, outstanding, status)
+      logEvent("contract.event.loan_repaid_synced", event, {
+        id,
+        repayAmount,
+        principalPaid,
+        interestPaid,
+      });
+    } else if (key === "loan_liquidated" || key === "loan/liquidated") {
+      // loan_liquidated:  topics: [loan_liquidated, borrower, liquidator]
+      //                   data:   (loan_id, repay_amount, collateral_seized)
+      // loan/liquidated:  topics: [loan, liquidated, ...]
+      //                   data:   (loan_id, repay_amount, collateral_seized)
       const vals = ((xdr.ScVal.fromXDR(event.value, "base64") as any).vec?.() ?? []) as any[];
       if (vals.length < 3) return;
       const id = vals[0].u64?.().toString() ?? "";
-      const liquidator = (() => { 
+      const repayAmount = Number(vals[1].i128?.().lo ?? 0);
+      // For loan_liquidated: liquidator is in topics[2].
+      // For loan/liquidated: liquidator may be in vals[1] (the second data field).
+      const liquidator = (() => {
+        if (key === "loan_liquidated" && topics.length >= 3) {
+          try {
+            return Address.fromScVal(topics[2]).toString();
+          } catch {
+            return "";
+          }
+        }
+        try {
+          return Address.fromScVal(vals[1]).toString();
+        } catch {
+          return "";
+        }
+      })();
+      updateLoan(id, { status: "liquidated" });
+      updateTransaction(id, { status: "completed", type: "liquidation" });
+      insertLiquidationEvent({ loan_id: id, liquidator, repay_amount: repayAmount });
+      logEvent("contract.event.loan_liquidated_synced", event, {
+        id,
+        liquidator,
+        repayAmount,
+      });
+    }
+  } catch (err) {
+    logEvent(
+      "contract.event.parse_error",
+      event,
+      undefined,
+      err instanceof Error ? err : new Error(String(err)),
+    );
+  }
+}
 
-/* … truncated 2376 chars — edit only what you need near the top … */
+/**
+ * Fetch new events from the RPC, process them, and advance the ledger cursor.
+ * Any error during the RPC call is caught and logged so the poll loop continues.
+ */
+async function poll(): Promise<void> {
+  const contractId = getContractId();
+  if (!contractId) return;
+
+  try {
+    const result = await rpcClient.getEvents({
+      startLedger: lastLedger,
+      filters: [{ type: "contract", contractIds: [contractId] }],
+    });
+
+    const events = (result as any).events ?? [];
+    let maxLedger = lastLedger;
+
+    for (const event of events) {
+      handleEvent(event);
+      const ledgerSeq = safeLedger(event.ledger);
+      if (ledgerSeq > maxLedger) maxLedger = ledgerSeq;
+    }
+
+    if (maxLedger > lastLedger) {
+      lastLedger = maxLedger + 1;
+      setLedgerCursor(contractId, lastLedger);
+    }
+  } catch (err) {
+    logger.error("contract_event_listener", {
+      eventType: "contract.listener.poll_error",
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Start the contract event listener.
+ *
+ * Reads the persisted ledger cursor from the store so polls resume without gaps
+ * after a restart. Falls back to GENESIS_LEDGER (default 0) when no cursor
+ * has been stored yet.
+ *
+ * @param intervalMs - Polling interval in milliseconds (default POLL_INTERVAL_MS).
+ */
+export function startContractEventListener(intervalMs = POLL_INTERVAL_MS): void {
+  const contractId = getContractId();
+  if (!contractId) {
+    logger.warn("event_listener_disabled", {
+      eventType: "contract.listener.disabled",
+      reason: "CONTRACT_ID not set",
+    });
+    return;
+  }
+
+  isStopping = false;
+
+  // Resume from persisted cursor, or fall back to configured genesis ledger.
+  const persisted = getLedgerCursor(contractId);
+  const genesis = parseInt(process.env.GENESIS_LEDGER || "0", 10);
+  lastLedger = persisted > 0 ? persisted : genesis;
+
+  logger.info("contract_event_listener", {
+    eventType: "contract.listener.start",
+    startLedger: lastLedger,
+    resumedFromCursor: persisted > 0,
+  });
+
+  function schedulePoll() {
+    if (isStopping) return;
+    inFlightProcessing = poll().finally(() => {
+      inFlightProcessing = null;
+      if (!isStopping) {
+        pollTimer = setTimeout(schedulePoll, intervalMs);
+      }
+    });
+  }
+
+  pollTimer = setTimeout(schedulePoll, intervalMs);
+}
+
+// Aliases used by tests and external callers.
+export const startEventListener = startContractEventListener;
+export const stopEventListener = stopContractEventListener;

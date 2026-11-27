@@ -1,6 +1,6 @@
 'use client';
 /**
- * LoansListClient — sortable, responsive loan list (closes #1244).
+ * LoansListClient — sortable, filterable, paginated loan list (closes #1244, #1430).
  *
  * Acceptance criteria:
  *  ✓ Sortable columns: Status, Amount, Created At, Health Factor
@@ -8,8 +8,9 @@
  *  ✓ Sort state reflected in URL query params (?sortBy=amount&sortDir=asc)
  *  ✓ On screens < 640 px, table switches to card layout
  *  ✓ Accessible: column headers use aria-sort
+ *  ✓ ARIA live region announces sort and filter changes to screen readers (#1430)
  */
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { motion, useReducedMotion } from 'framer-motion';
 import { Download } from 'lucide-react';
@@ -20,6 +21,7 @@ import Card from '@/components/Card';
 import ScrollToTopButton from '@/components/ScrollToTopButton';
 import Spinner from '@/components/Spinner';
 import Pagination from '@/components/Pagination';
+import EmptyState from '@/components/EmptyState';
 import { usePaginationParams } from '@/hooks/usePagination';
 import { badgeVariants } from '@/lib/animations';
 import { useScrollPosition } from '@/hooks/useScrollPosition';
@@ -329,7 +331,79 @@ function LoanListContent() {
   );
 
   // Filter state from URL
-  const { filters, debouncedQuery } = useSearchFilter();
+  const { filters, debouncedQuery, clearAll, hasActiveFilters } = useSearchFilter();
+
+  // ── ARIA live region: announce sort and filter changes (#1430) ─────────
+  const [announcement, setAnnouncement] = useState('');
+  // Track whether this is the initial render so we don't announce on mount.
+  const isMounted = useRef(false);
+
+  useEffect(() => {
+    if (!isMounted.current) {
+      isMounted.current = true;
+      return;
+    }
+    const colLabel =
+      SORTABLE_COLUMNS.find((c) => c.key === sortBy)?.label ?? sortBy;
+    const dirLabel = sortDir === 'asc' ? 'ascending' : 'descending';
+    setAnnouncement(`Sorted by ${colLabel}, ${dirLabel}`);
+  }, [sortBy, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Announce filter / search changes after debounce settles.
+  const prevQuery = useRef(debouncedQuery);
+  const prevStatuses = useRef(filters.statuses.join(','));
+  useEffect(() => {
+    const queryChanged = prevQuery.current !== debouncedQuery;
+    const statusesChanged = prevStatuses.current !== filters.statuses.join(',');
+    prevQuery.current = debouncedQuery;
+    prevStatuses.current = filters.statuses.join(',');
+    if (!isMounted.current) return;
+    if (!queryChanged && !statusesChanged) return;
+    // The result count is not yet calculated here, so just confirm the filter
+    // was applied; the result count announcement happens after sort below.
+    const parts: string[] = [];
+    if (debouncedQuery) parts.push(`search "${debouncedQuery}"`);
+    if (filters.statuses.length) parts.push(`status: ${filters.statuses.join(', ')}`);
+    setAnnouncement(
+      parts.length ? `Filters applied: ${parts.join('; ')}` : 'Filters cleared'
+    );
+  }, [debouncedQuery, filters.statuses]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── ARIA live region: announce sort and filter changes (#1430) ─────────
+  const [announcement, setAnnouncement] = useState('');
+  // Track whether this is the initial render so we don't announce on mount.
+  const isMounted = useRef(false);
+
+  useEffect(() => {
+    if (!isMounted.current) {
+      isMounted.current = true;
+      return;
+    }
+    const colLabel =
+      SORTABLE_COLUMNS.find((c) => c.key === sortBy)?.label ?? sortBy;
+    const dirLabel = sortDir === 'asc' ? 'ascending' : 'descending';
+    setAnnouncement(`Sorted by ${colLabel}, ${dirLabel}`);
+  }, [sortBy, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Announce filter / search changes after debounce settles.
+  const prevQuery = useRef(debouncedQuery);
+  const prevStatuses = useRef(filters.statuses.join(','));
+  useEffect(() => {
+    const queryChanged = prevQuery.current !== debouncedQuery;
+    const statusesChanged = prevStatuses.current !== filters.statuses.join(',');
+    prevQuery.current = debouncedQuery;
+    prevStatuses.current = filters.statuses.join(',');
+    if (!isMounted.current) return;
+    if (!queryChanged && !statusesChanged) return;
+    // The result count is not yet calculated here, so just confirm the filter
+    // was applied; the result count announcement happens after sort below.
+    const parts: string[] = [];
+    if (debouncedQuery) parts.push(`search "${debouncedQuery}"`);
+    if (filters.statuses.length) parts.push(`status: ${filters.statuses.join(', ')}`);
+    setAnnouncement(
+      parts.length ? `Filters applied: ${parts.join('; ')}` : 'Filters cleared'
+    );
+  }, [debouncedQuery, filters.statuses]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const controller = new AbortController();
@@ -398,6 +472,17 @@ function LoanListContent() {
 
   return (
     <div className="space-y-4">
+      {/* Screen-reader live region — announces sort and filter changes (#1430) */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+        data-testid="loans-sr-announcement"
+      >
+        {announcement}
+      </div>
+
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <SearchFilterBar
           statusOptions={STATUS_OPTIONS}
@@ -411,9 +496,31 @@ function LoanListContent() {
         <p className="text-brown/60 text-sm" role="status" aria-live="polite">
           {t('loans.loading', 'Loading…')}
         </p>
-      ) : visibleLoans.length === 0 ? (
-        /* Empty state with a CTA is rendered by DataTable's emptyState slot. */
-        <div data-testid="loans-table">{loansTable}</div>
+      ) : sorted.length === 0 ? (
+        hasActiveFilters ? (
+          <EmptyState
+            illustration="loans"
+            title={t('loans.noResults', 'No loans match your filters.')}
+            description={t(
+              'loans.noResultsHint',
+              'Try adjusting your search or filters to see more loans.'
+            )}
+            isFiltered
+            onClearFilters={clearAll}
+          />
+        ) : (
+          <EmptyState
+            illustration="loans"
+            title={t('loans.emptyTitle', 'No Loans Yet')}
+            description={t(
+              'loans.emptyDescription',
+              'You have not requested any loans yet. Request your first loan to get started.'
+            )}
+            ctaLabel={t('loans.firstLoanCta', 'Request Your First Loan')}
+            ctaAlias={t('loans.requestLoan', 'Request a Loan')}
+            onCta={() => router.push('/borrow')}
+          />
+        )
       ) : (
         <div
           aria-busy={loading}

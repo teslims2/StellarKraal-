@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import dynamic from 'next/dynamic';
+import { Inter } from 'next/font/google';
 import './globals.css';
 import KeyboardShortcutsProvider from '@/components/KeyboardShortcutsProvider';
 import Link from 'next/link';
@@ -10,6 +11,8 @@ import ThemeProvider, { ThemeScript } from '@/components/ThemeProvider';
 import { ToastProvider, ToastContainer } from '@/components/toast';
 import SWRErrorToastConfig from '@/components/SWRErrorToastConfig';
 import SkipToContent from '@/components/SkipToContent';
+import RouteFocusManager from '@/components/RouteFocusManager';
+import LiveRegion from '@/components/LiveRegion';
 import NetworkMismatchBanner from '@/components/NetworkMismatchBanner';
 // Global error boundary — Issue #1399
 import ErrorBoundary from '@/components/ErrorBoundary';
@@ -21,6 +24,9 @@ import HtmlDirSync from '@/components/HtmlDirSync';
 import { WalletProvider } from '@/context/WalletContext';
 // Route protection redirect-back — Issue #1500
 import ReturnUrlHandler from '@/components/ReturnUrlHandler';
+import SessionExpiredModal from '@/components/SessionExpiredModal';
+
+const inter = Inter({ subsets: ['latin'], display: 'swap' });
 
 /*
  * Performance — Issue #1472
@@ -90,6 +96,12 @@ export const metadata: Metadata = {
     follow: true,
     googleBot: { index: true, follow: true },
   },
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
 };
 
 /**
@@ -330,6 +342,8 @@ export default function RootLayout({
             <ToastProvider>
             <SWRErrorToastConfig>
               <SkipToContent />
+              {/* Move focus to the new page heading on route transitions — #1454 */}
+              <RouteFocusManager />
               <TopProgressBar />
               <SessionTimeoutBanner />
               {/* Reconnect prompt on session expiry / external wallet disconnect — #1509 */}
@@ -399,7 +413,7 @@ export default function RootLayout({
               </nav>
               <Navbar />
               <MobileBottomNav />
-              <main id="main-content" className="pb-20 md:pb-0">
+              <main id="main-content" className="mobile-nav-content">
                 {/* Global error boundary — Issue #1399 */}
                 <ErrorBoundary fullPage>{children}</ErrorBoundary>
               </main>

@@ -6,6 +6,7 @@ import { signTransaction } from '@/lib/freighterClient';
 import { submitSignedXdr } from '@/lib/stellarUtils';
 import { invalidateLoans } from '@/lib/api';
 import { useTransactionStatus } from '@/hooks/useTransactionStatus';
+import TransactionProgress from '@/components/TransactionProgress';
 import { Button } from '@/components/ui';
 import Spinner from '@/components/Spinner';
 import XlmAmount from '@/components/XlmAmount';
@@ -166,7 +167,7 @@ export default function StepConfirm({ walletAddress, onSubmitted }: Props) {
     setPendingHash(null);
   }
 
-  useTransactionStatus(pendingHash, {
+  const transactionStatus = useTransactionStatus(pendingHash, {
     interval: 3000,
     onTerminal: handleTxTerminal,
   });
@@ -223,15 +224,7 @@ export default function StepConfirm({ walletAddress, onSubmitted }: Props) {
             Your loan request has been submitted to the Stellar network. We&apos;re waiting for confirmation...
           </p>
         </div>
-        <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-4 text-left">
-          <p className="text-sm text-amber-700 font-medium">Transaction Hash</p>
-          <p className="font-mono text-brown break-all mt-1">{pendingHash}</p>
-        </div>
-        {pendingError && (
-          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-600 text-sm">
-            {pendingError}
-          </div>
-        )}
+        <TransactionProgress phase={transactionStatus} hash={pendingHash} error={pendingError} />
         <p className="text-xs text-brown/40">
           You can safely navigate away. We&apos;ll confirm this transaction shortly.
         </p>

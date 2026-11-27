@@ -22,13 +22,24 @@ scrape_configs:
       - source_labels: [__meta_docker_container_log_stream]
         target_label: stream
     pipeline_stages:
+      # Parse the log line as JSON and extract fields.
       - json:
           expressions:
             level: level
             message: message
             timestamp: timestamp
+            requestId: requestId
+            route: route
+      # Promote level, requestId, and route to Loki stream labels so they can
+      # be used in LogQL stream selectors, e.g.:
+      #   {service="backend", level="error"}
+      #   {service="backend", route="/api/v1/loans"}
       - labels:
           level:
+          requestId:
+          route:
+      # Parse the structured timestamp so Loki stores the original log time
+      # rather than the scrape time.
       - timestamp:
           source: timestamp
           format: RFC3339Nano

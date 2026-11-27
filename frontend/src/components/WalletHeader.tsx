@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWallet } from '@/hooks/useWallet';
 import { formatXlm } from '@/lib/formatMoney';
 import { useRouter } from 'next/navigation';
+import { useDialogFocus } from '@/hooks/useDialogFocus';
 
 const NETWORK = (process.env.NEXT_PUBLIC_NETWORK ?? 'TESTNET').toUpperCase();
 const HORIZON_URL =
@@ -36,6 +37,17 @@ export default function WalletHeader() {
 
   const popoverRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  // Focus the heading, trap Tab inside the popover and return focus to the
+  // trigger when it closes — Issue #1454.
+  useDialogFocus({
+    isOpen: open,
+    containerRef: popoverRef,
+    headingRef,
+    triggerRef,
+    onEscape: () => setOpen(false),
+  });
 
   // Fetch XLM balance whenever address changes
   useEffect(() => {
@@ -68,18 +80,7 @@ export default function WalletHeader() {
     };
   }, [address]);
 
-  // Close popover on Escape key
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && open) {
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
-    },
-    [open]
-  );
-
-  // Close popover on click outside
+  // Close popover on click outside (Escape is handled by useDialogFocus)
   const handleClickOutside = useCallback(
     (e: MouseEvent) => {
       if (
@@ -96,13 +97,11 @@ export default function WalletHeader() {
   );
 
   useEffect(() => {
-    document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('mousedown', handleClickOutside);
     return () => {
-      document.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [handleKeyDown, handleClickOutside]);
+  }, [handleClickOutside]);
 
   async function copyAddress() {
     if (!address) return;
@@ -209,6 +208,13 @@ export default function WalletHeader() {
               >
                 {/* Header row */}
                 <div className="px-4 pt-4 pb-2 flex items-center justify-between border-b border-color-border">
+                  <h2
+                    ref={headingRef}
+                    tabIndex={-1}
+                    className="sr-only"
+                  >
+                    Wallet details
+                  </h2>
                   <span className="text-xs font-semibold uppercase tracking-wider text-color-text-subtle">
                     Wallet
                   </span>
