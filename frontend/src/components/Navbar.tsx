@@ -29,6 +29,9 @@ import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { useShortcutsHelp } from '@/components/KeyboardShortcutsProvider';
 // i18n — Issue #1207
 import LanguageSwitcher from '@/components/LanguageSwitcher';
+// Wallet balance in nav — Issue #1428
+import { useWalletBalance } from '@/hooks/useWalletBalance';
+import { formatXlm } from '@/lib/formatMoney';
 
 const JWT_COOKIE_NAME = 'session';
 
@@ -99,6 +102,8 @@ export default function Navbar() {
   const shortcutsHelp = useShortcutsHelp();
   const { notifications, unreadCount, markRead, markAllRead, dismiss, dismissAll } =
     useNotifications();
+  // Issue #1428 — wallet balance in nav
+  const { xlmBalance, loading: balanceLoading } = useWalletBalance(address);
 
   // Move focus to the drawer heading, keep Tab inside the drawer and restore
   // focus to the hamburger button on close — Issue #1454.
@@ -247,6 +252,30 @@ export default function Navbar() {
 
           {/* Right side: shortcuts help + notification bell + theme toggle + hamburger */}
           <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+            {/* Wallet XLM balance — Issue #1428: visible when connected, hidden otherwise */}
+            {address && (
+              <div
+                aria-label="Wallet XLM balance"
+                className="hidden sm:flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium"
+                style={{
+                  backgroundColor: 'color-mix(in srgb, var(--token-primary) 10%, transparent)',
+                  color: 'var(--token-primary)',
+                }}
+              >
+                <Icon icon={Wallet} size="xs" aria-hidden="true" className="text-current shrink-0" />
+                {balanceLoading ? (
+                  <span
+                    aria-label="Loading balance"
+                    className="inline-block h-3 w-14 animate-pulse rounded"
+                    style={{ backgroundColor: 'color-mix(in srgb, var(--token-primary) 20%, transparent)' }}
+                  />
+                ) : xlmBalance !== null ? (
+                  <span data-testid="nav-xlm-balance">{formatXlm(Number(xlmBalance))} XLM</span>
+                ) : (
+                  <span aria-label="Balance unavailable">—</span>
+                )}
+              </div>
+            )}
             {/* Keyboard shortcuts trigger — #531 */}
             <button
               onClick={() => shortcutsHelp?.openShortcutsHelp()}

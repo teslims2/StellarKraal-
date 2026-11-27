@@ -255,6 +255,8 @@ services:
       - ./observability/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - ./grafana/dashboards/backend.json:/var/lib/grafana/dashboards/backend.json:ro
+      - ./grafana/dashboards/loan-lifecycle.json:/var/lib/grafana/dashboards/loan-lifecycle.json:ro
+      - ./grafana/dashboards/infrastructure.json:/var/lib/grafana/dashboards/infrastructure.json:ro
     depends_on:
       - loki
       - prometheus
